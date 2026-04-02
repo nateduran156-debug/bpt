@@ -20,7 +20,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildModeration
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.DirectMessages
   ]
 });
 
@@ -219,46 +220,52 @@ function buildGcRow(username, groups, page) {
 const gcCache  = new Map();
 const snipeCache = new Map();
 
+const GUILD_ONLY_COMMANDS = new Set([
+  'hb', 'ban', 'timeout', 'mute', 'unmute', 'hush',
+  'lock', 'unlock', 'say', 'cs', 'grouproles',
+  'setlog', 'whitelist'
+]);
+
 const slashCommands = [
-  new SlashCommandBuilder().setName('help').setDescription('shows the command list'),
-  new SlashCommandBuilder().setName('afk').setDescription('set urself as afk')
+  new SlashCommandBuilder().setName('help').setDescription('shows the command list').setDMPermission(true),
+  new SlashCommandBuilder().setName('afk').setDescription('set urself as afk').setDMPermission(true)
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('roblox').setDescription('look up a roblox user')
+  new SlashCommandBuilder().setName('roblox').setDescription('look up a roblox user').setDMPermission(true)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
-  new SlashCommandBuilder().setName('gc').setDescription('list roblox groups for a user')
+  new SlashCommandBuilder().setName('gc').setDescription('list roblox groups for a user').setDMPermission(true)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
-  new SlashCommandBuilder().setName('hb').setDescription('hardban a user')
+  new SlashCommandBuilder().setName('hb').setDescription('hardban a user').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(false))
     .addStringOption(o => o.setName('id').setDescription('user id if theyre not in the server').setRequired(false))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('ban').setDescription('ban a member')
+  new SlashCommandBuilder().setName('ban').setDescription('ban a member').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('timeout').setDescription('timeout a member')
+  new SlashCommandBuilder().setName('timeout').setDescription('timeout a member').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
     .addIntegerOption(o => o.setName('minutes').setDescription('how long in minutes').setRequired(false).setMinValue(1).setMaxValue(40320))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('mute').setDescription('mute a member indefinitely')
+  new SlashCommandBuilder().setName('mute').setDescription('mute a member indefinitely').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('unmute').setDescription('remove a mute')
+  new SlashCommandBuilder().setName('unmute').setDescription('remove a mute').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('hush').setDescription('toggle auto-delete on a user')
+  new SlashCommandBuilder().setName('hush').setDescription('toggle auto-delete on a user').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('lock').setDescription('lock the current channel'),
-  new SlashCommandBuilder().setName('unlock').setDescription('unlock the current channel'),
-  new SlashCommandBuilder().setName('say').setDescription('make the bot say something')
+  new SlashCommandBuilder().setName('lock').setDescription('lock the current channel').setDMPermission(true),
+  new SlashCommandBuilder().setName('unlock').setDescription('unlock the current channel').setDMPermission(true),
+  new SlashCommandBuilder().setName('say').setDescription('make the bot say something').setDMPermission(true)
     .addStringOption(o => o.setName('text').setDescription('what to say').setRequired(true)),
-  new SlashCommandBuilder().setName('cs').setDescription('show and clear the snipe'),
-  new SlashCommandBuilder().setName('grouproles').setDescription('list roblox group roles'),
-  new SlashCommandBuilder().setName('tag').setDescription('create a tag or rank someone')
+  new SlashCommandBuilder().setName('cs').setDescription('show and clear the snipe').setDMPermission(true),
+  new SlashCommandBuilder().setName('grouproles').setDescription('list roblox group roles').setDMPermission(true),
+  new SlashCommandBuilder().setName('tag').setDescription('create a tag or rank someone').setDMPermission(true)
     .addStringOption(o => o.setName('name').setDescription('tag name').setRequired(true))
     .addStringOption(o => o.setName('content').setDescription('role id for new tag, or leave empty to rank a user').setRequired(false))
     .addStringOption(o => o.setName('robloxuser').setDescription('roblox username to rank using this tag').setRequired(false)),
-  new SlashCommandBuilder().setName('reboot').setDescription('restart the bot'),
-  new SlashCommandBuilder().setName('prefix').setDescription('change or view the bot prefix')
+  new SlashCommandBuilder().setName('reboot').setDescription('restart the bot').setDMPermission(true),
+  new SlashCommandBuilder().setName('prefix').setDescription('change or view the bot prefix').setDMPermission(true)
     .addStringOption(o => o.setName('new').setDescription('new prefix').setRequired(false)),
-  new SlashCommandBuilder().setName('status').setDescription('change the bot status')
+  new SlashCommandBuilder().setName('status').setDescription('change the bot status').setDMPermission(true)
     .addStringOption(o => o.setName('type').setDescription('type').setRequired(true)
       .addChoices(
         { name: 'playing',   value: 'playing'   },
@@ -268,9 +275,9 @@ const slashCommands = [
         { name: 'custom',    value: 'custom'    }
       ))
     .addStringOption(o => o.setName('text').setDescription('status text').setRequired(true)),
-  new SlashCommandBuilder().setName('setlog').setDescription('set the log channel')
+  new SlashCommandBuilder().setName('setlog').setDescription('set the log channel').setDMPermission(true)
     .addChannelOption(o => o.setName('channel').setDescription('channel').setRequired(true)),
-  new SlashCommandBuilder().setName('whitelist').setDescription('manage the whitelist')
+  new SlashCommandBuilder().setName('whitelist').setDescription('manage the whitelist').setDMPermission(true)
     .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
       .addChoices(
         { name: 'add',    value: 'add'    },
@@ -347,6 +354,7 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName, member, guild, channel } = interaction;
+  const inDM = !guild;
 
   const cfg      = loadConfig();
   const whitelist = cfg.whitelist ?? [];
@@ -354,6 +362,10 @@ client.on('interactionCreate', async interaction => {
 
   if (!isWhitelisted) {
     return interaction.reply({ content: "ur not whitelisted for this bot lol", ephemeral: true });
+  }
+
+  if (inDM && GUILD_ONLY_COMMANDS.has(commandName)) {
+    return interaction.reply({ content: "that command only works in a server, not dms", ephemeral: true });
   }
 
   if (commandName === 'help') {
@@ -677,27 +689,9 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'cs') {
-    const snipe = snipeCache.get(channel.id);
-    await interaction.reply({ content: 'done', ephemeral: true });
-    if (!snipe) {
-      const msg = await channel.send({
-        embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription('nothing to snipe rn')]
-      });
-      setTimeout(() => msg.delete().catch(() => {}), 5000);
-      return;
-    }
+    const had = snipeCache.has(channel.id);
     snipeCache.delete(channel.id);
-    const msg = await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x2b2d31)
-          .setAuthor({ name: snipe.author, iconURL: snipe.avatarUrl ?? undefined })
-          .setDescription(snipe.content)
-          .setFooter({ text: 'sniped' })
-          .setTimestamp(snipe.deletedAt)
-      ]
-    });
-    setTimeout(() => msg.delete().catch(() => {}), 8000);
+    return interaction.reply({ content: had ? 'snipe cleared' : 'nothing to clear', ephemeral: true });
   }
 
   if (commandName === 'grouproles') {
@@ -728,7 +722,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'tag') {
-    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+    if (!inDM && !member.permissions.has(PermissionsBitField.Flags.ManageMessages))
       return interaction.reply({ content: 'u need manage messages for this', ephemeral: true });
 
     const name       = interaction.options.getString('name');
@@ -770,20 +764,22 @@ client.on('interactionCreate', async interaction => {
         if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
         await interaction.editReply({ embeds: [embed] });
 
-        const logEmbed = new EmbedBuilder()
-          .setTitle('rank log')
-          .setColor(0x5865f2)
-          .addFields(
-            { name: 'user',      value: result.displayName,             inline: true },
-            { name: 'tag',       value: name,                           inline: true },
-            { name: 'role id',   value: roleId,                         inline: true },
-            { name: 'ranked by', value: `<@${interaction.user.id}>`,    inline: true },
-            { name: 'channel',   value: `<#${channel.id}>`,             inline: true }
-          )
-          .setFooter({ text: `roblox id: ${result.userId}` })
-          .setTimestamp();
-        if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
-        await sendLog(guild, logEmbed);
+        if (!inDM) {
+          const logEmbed = new EmbedBuilder()
+            .setTitle('rank log')
+            .setColor(0x5865f2)
+            .addFields(
+              { name: 'user',      value: result.displayName,             inline: true },
+              { name: 'tag',       value: name,                           inline: true },
+              { name: 'role id',   value: roleId,                         inline: true },
+              { name: 'ranked by', value: `<@${interaction.user.id}>`,    inline: true },
+              { name: 'channel',   value: `<#${channel.id}>`,             inline: true }
+            )
+            .setFooter({ text: `roblox id: ${result.userId}` })
+            .setTimestamp();
+          if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
+          await sendLog(guild, logEmbed);
+        }
       } catch (err) {
         console.error(err);
         await interaction.editReply({
@@ -797,14 +793,14 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'reboot') {
-    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+    if (!inDM && !member.permissions.has(PermissionsBitField.Flags.Administrator))
       return interaction.reply({ content: 'u need admin for that', ephemeral: true });
     await interaction.reply({ content: 'rebooting rq...', ephemeral: true });
     process.exit(0);
   }
 
   if (commandName === 'prefix') {
-    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+    if (!inDM && !member.permissions.has(PermissionsBitField.Flags.Administrator))
       return interaction.reply({ content: 'u need admin for that', ephemeral: true });
 
     const newPrefix = interaction.options.getString('new');
@@ -823,7 +819,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'status') {
-    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+    if (!inDM && !member.permissions.has(PermissionsBitField.Flags.Administrator))
       return interaction.reply({ content: 'u need admin for that', ephemeral: true });
 
     const type       = interaction.options.getString('type');
@@ -1523,27 +1519,11 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'cs') {
-    const snipe = snipeCache.get(message.channel.id);
-    try { await message.delete(); } catch {}
-    if (!snipe) {
-      const reply = await message.channel.send({
-        embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription('nothing to snipe rn')]
-      });
-      setTimeout(() => reply.delete().catch(() => {}), 5000);
-      return;
-    }
+    const had = snipeCache.has(message.channel.id);
     snipeCache.delete(message.channel.id);
-    const reply = await message.channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x2b2d31)
-          .setAuthor({ name: snipe.author, iconURL: snipe.avatarUrl ?? undefined })
-          .setDescription(snipe.content)
-          .setFooter({ text: 'sniped' })
-          .setTimestamp(snipe.deletedAt)
-      ]
-    });
-    setTimeout(() => reply.delete().catch(() => {}), 8000);
+    try { await message.delete(); } catch {}
+    const reply = await message.channel.send(had ? 'snipe cleared' : 'nothing to clear');
+    setTimeout(() => reply.delete().catch(() => {}), 4000);
   }
 
   if (command === 'help') {
