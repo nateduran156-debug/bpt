@@ -6,7 +6,10 @@ const {
   ButtonBuilder,
   ButtonStyle,
   PermissionsBitField,
-  ActivityType
+  ActivityType,
+  SlashCommandBuilder,
+  REST,
+  Routes
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -128,65 +131,14 @@ async function rankRobloxUser(robloxUsername, roleId) {
   return { userId, displayName: userBasic.name, avatarUrl };
 }
 
-const COMMANDS = [
-  { name: '{p}help',                             description: 'Shows this help menu' },
-  { name: '{p}hb @user [reason]',                description: 'Hardban a user (works by ID, even if they left) — Ban Members' },
-  { name: '{p}reboot',                           description: 'Restart the bot — Whitelist only' },
-  { name: '{p}prefix [new prefix]',              description: 'Change the bot\'s command prefix — Whitelist only' },
-  { name: '{p}status [type] [text]',             description: 'Change bot status — playing/watching/listening/competing/custom' },
-  { name: '{p}afk [reason]',                     description: 'Set yourself as AFK' },
-  { name: '{p}gc [username]',                    description: 'List all Roblox groups a user is in' },
-  { name: '{p}tag [name] | [content]',           description: 'Create/update a tag — Manage Messages' },
-  { name: '{p}tag [robloxUser] [tagname]',       description: 'Rank a Roblox user using a saved tag — Manage Messages' },
-  { name: '{p}roblox [username]',                description: 'Look up a Roblox profile' },
-  { name: '{p}ban @user [reason]',               description: 'Ban a member — Ban Members' },
-  { name: '{p}grouproles',                       description: 'List all roles in your Roblox group with their IDs' },
-  { name: '{p}hush @user',                       description: 'Toggle message auto-delete on a user — Manage Messages' },
-  { name: '{p}timeout @user [minutes] [reason]', description: 'Timeout a member — Moderate Members' },
-  { name: '{p}mute @user [reason]',              description: 'Mute a member indefinitely — Moderate Members' },
-  { name: '{p}unmute @user',                     description: 'Remove a mute — Moderate Members' },
-  { name: '{p}setlog #channel',                  description: 'Set the channel for rank logs' },
-  { name: '{p}whitelist add @user',              description: 'Add someone to the bot whitelist' },
-  { name: '{p}whitelist remove @user',           description: 'Remove someone from the whitelist' },
-  { name: '{p}whitelist list',                   description: 'List all whitelisted users' },
-];
-
-const ITEMS_PER_PAGE = 7;
-const GC_PER_PAGE    = 10;
-
-function buildHelpEmbed(page) {
-  const p = getPrefix();
-  const totalPages = Math.ceil(COMMANDS.length / ITEMS_PER_PAGE);
-  const slice = COMMANDS.slice(page * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE + ITEMS_PER_PAGE);
-  return new EmbedBuilder()
-    .setTitle('Commands')
-    .setColor(0x2b2d31)
-    .setDescription(slice.map(c => `\`${c.name.replace('{p}', p)}\`\n${c.description}`).join('\n\n'))
-    .setFooter({ text: `Page ${page + 1} of ${totalPages}  ·  Prefix: ${p}` });
-}
-
-function buildHelpRow(page) {
-  const totalPages = Math.ceil(COMMANDS.length / ITEMS_PER_PAGE);
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`help_${page - 1}`)
-      .setLabel('Previous')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(page === 0),
-    new ButtonBuilder()
-      .setCustomId(`help_${page + 1}`)
-      .setLabel('Next')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(page === totalPages - 1)
-  );
-}
+const GC_PER_PAGE = 10;
 
 function buildGcEmbed(username, groups, avatarUrl, page) {
   const totalPages = Math.ceil(groups.length / GC_PER_PAGE);
   const slice = groups.slice(page * GC_PER_PAGE, page * GC_PER_PAGE + GC_PER_PAGE);
   const lines = slice.map((g, i) => `${page * GC_PER_PAGE + i + 1}. **${g.group.name}**`);
   const embed = new EmbedBuilder()
-    .setColor(0x2b2d31)
+    .setColor(0x2c2f33)
     .setTitle(`${username}'s Groups`)
     .setDescription(lines.join('\n'))
     .setFooter({ text: `Page ${page + 1} of ${totalPages}  ·  ${groups.length} groups total` });
@@ -212,10 +164,139 @@ function buildGcRow(username, groups, page) {
 
 const gcCache = new Map();
 
-client.once('clientReady', () => {
+const slashCommandDefs = [
+  new SlashCommandBuilder()
+    .setName('help')
+    .setDescription('Show all available commands and their usage'),
+
+  new SlashCommandBuilder()
+    .setName('ban')
+    .setDescription('Ban a member — requires Ban Members')
+    .addUserOption(o => o.setName('user').setDescription('Member to ban').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for the ban')),
+
+  new SlashCommandBuilder()
+    .setName('hb')
+    .setDescription('Hardban a user by mention or ID — requires Ban Members')
+    .addStringOption(o => o.setName('user').setDescription('User mention or ID').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for the hardban')),
+
+  new SlashCommandBuilder()
+    .setName('timeout')
+    .setDescription('Timeout a member — requires Moderate Members')
+    .addUserOption(o => o.setName('user').setDescription('Member to timeout').setRequired(true))
+    .addIntegerOption(o => o.setName('minutes').setDescription('Duration in minutes (default 5)').setMinValue(1).setMaxValue(40320))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for the timeout')),
+
+  new SlashCommandBuilder()
+    .setName('mute')
+    .setDescription('Mute a member indefinitely — requires Moderate Members')
+    .addUserOption(o => o.setName('user').setDescription('Member to mute').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for the mute')),
+
+  new SlashCommandBuilder()
+    .setName('unmute')
+    .setDescription('Remove a mute from a member — requires Moderate Members')
+    .addUserOption(o => o.setName('user').setDescription('Member to unmute').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('afk')
+    .setDescription('Set yourself as AFK with an optional reason')
+    .addStringOption(o => o.setName('reason').setDescription('AFK reason')),
+
+  new SlashCommandBuilder()
+    .setName('roblox')
+    .setDescription('Look up a Roblox profile by username')
+    .addStringOption(o => o.setName('username').setDescription('Roblox username').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('gc')
+    .setDescription('List all Roblox groups a user is in')
+    .addStringOption(o => o.setName('username').setDescription('Roblox username').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('tag')
+    .setDescription('Create a tag or rank a Roblox user with one — requires Manage Messages')
+    .addSubcommand(sub =>
+      sub.setName('create')
+        .setDescription('Create or update a tag')
+        .addStringOption(o => o.setName('name').setDescription('Tag name').setRequired(true))
+        .addStringOption(o => o.setName('content').setDescription('Tag content (role ID)').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('use')
+        .setDescription('Rank a Roblox user using a saved tag')
+        .addStringOption(o => o.setName('roblox_user').setDescription('Roblox username').setRequired(true))
+        .addStringOption(o => o.setName('tag_name').setDescription('Tag name').setRequired(true))
+    ),
+
+  new SlashCommandBuilder()
+    .setName('prefix')
+    .setDescription('Change the bot\'s command prefix — requires Administrator')
+    .addStringOption(o => o.setName('new_prefix').setDescription('New prefix (max 5 chars)').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('status')
+    .setDescription('Change the bot\'s activity status — requires Administrator')
+    .addStringOption(o =>
+      o.setName('type')
+        .setDescription('Activity type')
+        .setRequired(true)
+        .addChoices(
+          { name: 'playing',   value: 'playing' },
+          { name: 'watching',  value: 'watching' },
+          { name: 'listening', value: 'listening' },
+          { name: 'competing', value: 'competing' },
+          { name: 'custom',    value: 'custom' }
+        )
+    )
+    .addStringOption(o => o.setName('text').setDescription('Status text').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('whitelist')
+    .setDescription('Manage the bot whitelist — requires Administrator')
+    .addSubcommand(sub =>
+      sub.setName('add')
+        .setDescription('Add a user to the whitelist')
+        .addUserOption(o => o.setName('user').setDescription('User to add').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('remove')
+        .setDescription('Remove a user from the whitelist')
+        .addUserOption(o => o.setName('user').setDescription('User to remove').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('list')
+        .setDescription('List all whitelisted users')
+    ),
+
+  new SlashCommandBuilder()
+    .setName('setlog')
+    .setDescription('Set the channel for rank logs — requires Administrator')
+    .addChannelOption(o => o.setName('channel').setDescription('Log channel').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('grouproles')
+    .setDescription('List all roles in your Roblox group with their IDs'),
+
+  new SlashCommandBuilder()
+    .setName('hush')
+    .setDescription('Toggle message auto-delete on a user — requires Manage Messages')
+    .addUserOption(o => o.setName('user').setDescription('User to hush/unhush').setRequired(true)),
+].map(cmd => cmd.toJSON());
+
+client.once('clientReady', async () => {
   console.log(`logged in as ${client.user.tag}`);
   const cfg = loadConfig();
   if (cfg.status) applyStatus(cfg.status);
+
+  try {
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommandDefs });
+    console.log('slash commands registered globally');
+  } catch (err) {
+    console.error('failed to register slash commands:', err.message);
+  }
 });
 
 function applyStatus(statusData) {
@@ -232,23 +313,559 @@ function applyStatus(statusData) {
 }
 
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isButton()) return;
-
-  if (interaction.customId.startsWith('help_')) {
-    const page = parseInt(interaction.customId.split('_')[1]);
-    return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
+  // ── Button interactions ──────────────────────────────────────────────────
+  if (interaction.isButton()) {
+    if (interaction.customId.startsWith('gc_')) {
+      const parts    = interaction.customId.split('_');
+      const page     = parseInt(parts[1]);
+      const username = parts.slice(2).join('_');
+      const cached   = gcCache.get(username.toLowerCase());
+      if (!cached) return interaction.reply({ content: 'that expired, run it again', ephemeral: true });
+      return interaction.update({
+        embeds: [buildGcEmbed(cached.displayName, cached.groups, cached.avatarUrl, page)],
+        components: cached.groups.length > GC_PER_PAGE ? [buildGcRow(username, cached.groups, page)] : []
+      });
+    }
+    return;
   }
 
-  if (interaction.customId.startsWith('gc_')) {
-    const parts    = interaction.customId.split('_');
-    const page     = parseInt(parts[1]);
-    const username = parts.slice(2).join('_');
-    const cached   = gcCache.get(username.toLowerCase());
-    if (!cached) return interaction.reply({ content: 'that expired, run it again', ephemeral: true });
-    return interaction.update({
-      embeds: [buildGcEmbed(cached.displayName, cached.groups, cached.avatarUrl, page)],
-      components: cached.groups.length > GC_PER_PAGE ? [buildGcRow(username, cached.groups, page)] : []
+  // ── Slash command interactions ───────────────────────────────────────────
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName, member, guild, user, channel } = interaction;
+
+  // Whitelist gate — all slash commands require whitelist membership
+  const cfg        = loadConfig();
+  const whitelist  = cfg.whitelist ?? [];
+  if (!whitelist.includes(user.id)) {
+    return interaction.reply({ content: "you're not on the whitelist", ephemeral: true });
+  }
+
+  // ── /help ────────────────────────────────────────────────────────────────
+  if (commandName === 'help') {
+    const p = getPrefix();
+    const lines = [
+      `\`${p}ban @user [reason]\` — ban a member *(Ban Members)*`,
+      `\`${p}hb @user|id [reason]\` — hardban by mention or ID *(Ban Members)*`,
+      `\`${p}timeout @user [min] [reason]\` — timeout a member *(Moderate Members)*`,
+      `\`${p}mute @user [reason]\` — mute indefinitely *(Moderate Members)*`,
+      `\`${p}unmute @user\` — remove a mute *(Moderate Members)*`,
+      `\`${p}hush @user\` — toggle message auto-delete *(Manage Messages)*`,
+      `\`${p}afk [reason]\` — set yourself as AFK`,
+      `\`${p}roblox [username]\` — look up a Roblox profile`,
+      `\`${p}gc [username]\` — list a user's Roblox groups`,
+      `\`${p}tag [name] | [roleId]\` — create/update a tag *(Manage Messages)*`,
+      `\`${p}tag [robloxUser] [tagname]\` — rank a user with a tag *(Manage Messages)*`,
+      `\`${p}grouproles\` — list group roles with IDs`,
+      `\`${p}setlog #channel\` — set rank log channel *(Administrator)*`,
+      `\`${p}whitelist add|remove|list\` — manage whitelist *(Administrator)*`,
+      `\`${p}prefix [new]\` — change command prefix *(Administrator)*`,
+      `\`${p}status [type] [text]\` — change bot status *(Administrator)*`,
+      `\`${p}reboot\` — restart the bot *(Administrator)*`,
+      '',
+      'All commands are also available as slash commands.',
+    ];
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('commands')
+          .setColor(0x2c2f33)
+          .setDescription(lines.join('\n'))
+          .setFooter({ text: `prefix: ${p}` })
+      ],
+      ephemeral: true
     });
+  }
+
+  // ── /ban ─────────────────────────────────────────────────────────────────
+  if (commandName === 'ban') {
+    if (!member.permissions.has(PermissionsBitField.Flags.BanMembers))
+      return interaction.reply({ content: 'you need ban perms for this', ephemeral: true });
+    const target = interaction.options.getMember('user');
+    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target.bannable) return interaction.reply({ content: "can't ban that member (they might outrank me)", ephemeral: true });
+    const reason = interaction.options.getString('reason') || 'No reason provided';
+    await target.ban({ reason, deleteMessageSeconds: 86400 });
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("they're gone")
+          .setColor(0xed4245)
+          .setThumbnail(target.user.displayAvatarURL())
+          .addFields(
+            { name: 'user',   value: target.user.tag, inline: true },
+            { name: 'mod',    value: user.tag,         inline: true },
+            { name: 'reason', value: reason }
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // ── /hb ──────────────────────────────────────────────────────────────────
+  if (commandName === 'hb') {
+    if (!member.permissions.has(PermissionsBitField.Flags.BanMembers))
+      return interaction.reply({ content: 'you need ban perms for this', ephemeral: true });
+
+    const raw    = interaction.options.getString('user', true);
+    const userId = raw.replace(/[<@!>]/g, '');
+    const reason = interaction.options.getString('reason') || 'No reason provided';
+
+    if (!/^\d{17,19}$/.test(userId))
+      return interaction.reply({ content: "that doesn't look like a valid user ID or mention", ephemeral: true });
+
+    try {
+      await guild.members.ban(userId, {
+        reason: `Hardban by ${user.tag}: ${reason}`,
+        deleteMessageSeconds: 0
+      });
+      let username = userId;
+      try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {}
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("hardban'd")
+            .setColor(0xed4245)
+            .addFields(
+              { name: 'user',   value: username, inline: true },
+              { name: 'mod',    value: user.tag, inline: true },
+              { name: 'reason', value: reason }
+            )
+            .setTimestamp()
+        ]
+      });
+    } catch (err) {
+      return interaction.reply({ content: `couldn't ban that user — ${err.message}`, ephemeral: true });
+    }
+  }
+
+  // ── /timeout ─────────────────────────────────────────────────────────────
+  if (commandName === 'timeout') {
+    if (!member.permissions.has(PermissionsBitField.Flags.ModerateMembers))
+      return interaction.reply({ content: 'you need moderate members perms for this', ephemeral: true });
+    const target  = interaction.options.getMember('user');
+    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    const minutes = interaction.options.getInteger('minutes') ?? 5;
+    const reason  = interaction.options.getString('reason') || 'No reason provided';
+    try { await target.timeout(minutes * 60 * 1000, reason); }
+    catch { return interaction.reply({ content: "couldn't timeout that member (they might outrank me)", ephemeral: true }); }
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('timed out')
+          .setColor(0xfee75c)
+          .setThumbnail(target.user.displayAvatarURL())
+          .addFields(
+            { name: 'user',     value: target.user.tag, inline: true },
+            { name: 'duration', value: `${minutes}m`,   inline: true },
+            { name: 'mod',      value: user.tag,         inline: true },
+            { name: 'reason',   value: reason }
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // ── /mute ────────────────────────────────────────────────────────────────
+  if (commandName === 'mute') {
+    if (!member.permissions.has(PermissionsBitField.Flags.ModerateMembers))
+      return interaction.reply({ content: 'you need moderate members perms for this', ephemeral: true });
+    const target = interaction.options.getMember('user');
+    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    const reason = interaction.options.getString('reason') || 'No reason provided';
+    try { await target.timeout(28 * 24 * 60 * 60 * 1000, reason); }
+    catch { return interaction.reply({ content: "couldn't mute that member", ephemeral: true }); }
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('muted')
+          .setColor(0xed4245)
+          .setThumbnail(target.user.displayAvatarURL())
+          .addFields(
+            { name: 'user',   value: target.user.tag, inline: true },
+            { name: 'mod',    value: user.tag,         inline: true },
+            { name: 'reason', value: reason }
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // ── /unmute ──────────────────────────────────────────────────────────────
+  if (commandName === 'unmute') {
+    if (!member.permissions.has(PermissionsBitField.Flags.ModerateMembers))
+      return interaction.reply({ content: 'you need moderate members perms for this', ephemeral: true });
+    const target = interaction.options.getMember('user');
+    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    try { await target.timeout(null); }
+    catch { return interaction.reply({ content: "couldn't unmute that member", ephemeral: true }); }
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('unmuted')
+          .setColor(0x57f287)
+          .setThumbnail(target.user.displayAvatarURL())
+          .addFields(
+            { name: 'user', value: target.user.tag, inline: true },
+            { name: 'mod',  value: user.tag,         inline: true }
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // ── /hush ────────────────────────────────────────────────────────────────
+  if (commandName === 'hush') {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.reply({ content: 'you need manage messages perms for this', ephemeral: true });
+    const target     = interaction.options.getMember('user');
+    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    const hushedData = loadHushed();
+    if (hushedData[target.id]) {
+      delete hushedData[target.id];
+      saveHushed(hushedData);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('unhushed')
+            .setColor(0x57f287)
+            .setThumbnail(target.user.displayAvatarURL())
+            .addFields(
+              { name: 'user', value: target.user.tag, inline: true },
+              { name: 'mod',  value: user.tag,         inline: true }
+            )
+            .setTimestamp()
+        ]
+      });
+    } else {
+      hushedData[target.id] = { hushedBy: user.id, at: Date.now() };
+      saveHushed(hushedData);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('hushed')
+            .setColor(0xfee75c)
+            .setThumbnail(target.user.displayAvatarURL())
+            .setDescription('every message they send will be deleted lol')
+            .addFields(
+              { name: 'user', value: target.user.tag, inline: true },
+              { name: 'mod',  value: user.tag,         inline: true }
+            )
+            .setTimestamp()
+        ]
+      });
+    }
+  }
+
+  // ── /afk ─────────────────────────────────────────────────────────────────
+  if (commandName === 'afk') {
+    const reason = interaction.options.getString('reason') || null;
+    const afk    = loadAfk();
+    afk[user.id] = { reason, since: Date.now() };
+    saveAfk(afk);
+    return interaction.reply({
+      embeds: [new EmbedBuilder().setColor(0x2c2f33).setDescription(`you're afk now${reason ? `: ${reason}` : ''}`)],
+      allowedMentions: { repliedUser: false }
+    });
+  }
+
+  // ── /roblox ──────────────────────────────────────────────────────────────
+  if (commandName === 'roblox') {
+    const username = interaction.options.getString('username', true);
+    await interaction.deferReply();
+    try {
+      const lookup    = await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [username], excludeBannedUsers: false })
+      });
+      const userBasic = (await lookup.json()).data?.[0];
+      if (!userBasic) return interaction.editReply("couldn't find that user lol");
+      const userId     = userBasic.id;
+      const rUser      = await (await fetch(`https://users.roblox.com/v1/users/${userId}`)).json();
+      const created    = new Date(rUser.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const avatarUrl  = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
+      const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle(`${rUser.displayName} (@${rUser.name})`)
+            .setURL(profileUrl)
+            .setColor(0x2c2f33)
+            .addFields(
+              { name: 'Created', value: created,     inline: true },
+              { name: 'User ID', value: `${userId}`, inline: true }
+            )
+            .setThumbnail(avatarUrl)
+            .setTimestamp()
+        ],
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setLabel('Profile').setStyle(ButtonStyle.Link).setURL(profileUrl),
+          new ButtonBuilder().setLabel('Games').setStyle(ButtonStyle.Link).setURL(`${profileUrl}#sortName=Games`)
+        )]
+      });
+    } catch { return interaction.editReply("couldn't load that profile, try again"); }
+  }
+
+  // ── /gc ──────────────────────────────────────────────────────────────────
+  if (commandName === 'gc') {
+    const username = interaction.options.getString('username', true);
+    await interaction.deferReply();
+    try {
+      const lookup    = await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [username], excludeBannedUsers: false })
+      });
+      const userBasic = (await lookup.json()).data?.[0];
+      if (!userBasic) return interaction.editReply("couldn't find that user lol");
+      const userId    = userBasic.id;
+
+      const groupsData = await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json();
+      const groups     = (groupsData.data ?? []).sort((a, b) => a.group.name.localeCompare(b.group.name));
+
+      if (!groups.length) {
+        return interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x2c2f33)
+              .setTitle(`${userBasic.name}'s Groups`)
+              .setDescription("they're not in any roblox groups lol")
+          ]
+        });
+      }
+
+      const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
+
+      gcCache.set(username.toLowerCase(), { displayName: userBasic.name, groups, avatarUrl });
+      setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
+
+      const components = groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : [];
+      return interaction.editReply({
+        embeds: [buildGcEmbed(userBasic.name, groups, avatarUrl, 0)],
+        components
+      });
+    } catch { return interaction.editReply("couldn't load their groups, try again"); }
+  }
+
+  // ── /tag ─────────────────────────────────────────────────────────────────
+  if (commandName === 'tag') {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.reply({ content: 'you need manage messages perms for this', ephemeral: true });
+
+    const sub = interaction.options.getSubcommand();
+
+    if (sub === 'create') {
+      const name    = interaction.options.getString('name', true).toLowerCase();
+      const content = interaction.options.getString('content', true);
+      const tags    = loadTags();
+      const isNew   = !tags[name];
+      tags[name]    = content;
+      saveTags(tags);
+      return interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0x57f287).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}!`)]
+      });
+    }
+
+    if (sub === 'use') {
+      const robloxUser = interaction.options.getString('roblox_user', true);
+      const tagName    = interaction.options.getString('tag_name', true).toLowerCase();
+      const tags       = loadTags();
+      if (!tags[tagName])
+        return interaction.reply({ content: `no tag named **${tagName}**`, ephemeral: true });
+      const roleId = tags[tagName].trim();
+      if (isNaN(Number(roleId)))
+        return interaction.reply({ content: `tag **${tagName}** doesn't have a valid role ID (got: \`${roleId}\`)`, ephemeral: true });
+
+      await interaction.deferReply();
+      try {
+        const result = await rankRobloxUser(robloxUser, roleId);
+        const embed  = new EmbedBuilder()
+          .setTitle('got em ranked')
+          .setColor(0x57f287)
+          .addFields(
+            { name: 'user',    value: result.displayName, inline: true },
+            { name: 'tag',     value: tagName,            inline: true },
+            { name: 'role id', value: roleId,             inline: true }
+          )
+          .setFooter({ text: `ranked by ${user.tag}` })
+          .setTimestamp();
+        if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
+        await interaction.editReply({ embeds: [embed] });
+
+        const logEmbed = new EmbedBuilder()
+          .setTitle('rank log')
+          .setColor(0x5865f2)
+          .addFields(
+            { name: 'user',      value: result.displayName,    inline: true },
+            { name: 'tag',       value: tagName,               inline: true },
+            { name: 'role id',   value: roleId,                inline: true },
+            { name: 'ranked by', value: `<@${user.id}>`,       inline: true },
+            { name: 'channel',   value: `<#${channel.id}>`,    inline: true }
+          )
+          .setFooter({ text: `roblox id: ${result.userId}` })
+          .setTimestamp();
+        if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
+        await sendLog(guild, logEmbed);
+      } catch (err) {
+        console.error(err);
+        await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(`couldn't rank them - ${err.message}`)] });
+      }
+      return;
+    }
+  }
+
+  // ── /prefix ──────────────────────────────────────────────────────────────
+  if (commandName === 'prefix') {
+    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+      return interaction.reply({ content: 'you need admin perms to change the prefix', ephemeral: true });
+    const newPrefix = interaction.options.getString('new_prefix', true);
+    if (newPrefix.length > 5)
+      return interaction.reply({ content: "prefix can't be longer than 5 characters", ephemeral: true });
+    const c = loadConfig();
+    c.prefix = newPrefix;
+    saveConfig(c);
+    return interaction.reply({
+      embeds: [new EmbedBuilder().setColor(0x57f287).setDescription(`prefix is now \`${newPrefix}\` btw`)]
+    });
+  }
+
+  // ── /status ──────────────────────────────────────────────────────────────
+  if (commandName === 'status') {
+    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+      return interaction.reply({ content: 'you need admin perms for that', ephemeral: true });
+    const type       = interaction.options.getString('type', true);
+    const text       = interaction.options.getString('text', true);
+    const statusData = { type, text };
+    applyStatus(statusData);
+    const c = loadConfig();
+    c.status = statusData;
+    saveConfig(c);
+    return interaction.reply({
+      embeds: [new EmbedBuilder().setColor(0x57f287).setDescription(`status changed to **${type}** - ${text}`)]
+    });
+  }
+
+  // ── /whitelist ───────────────────────────────────────────────────────────
+  if (commandName === 'whitelist') {
+    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+      return interaction.reply({ content: 'you need admin perms for that', ephemeral: true });
+    const sub = interaction.options.getSubcommand();
+    const c   = loadConfig();
+    c.whitelist = c.whitelist ?? [];
+
+    if (sub === 'add') {
+      const target = interaction.options.getMember('user');
+      if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+      if (c.whitelist.includes(target.id))
+        return interaction.reply({ content: `**${target.user.tag}** is already on the whitelist`, ephemeral: true });
+      c.whitelist.push(target.id);
+      saveConfig(c);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('whitelisted')
+            .setColor(0x57f287)
+            .setThumbnail(target.user.displayAvatarURL())
+            .addFields(
+              { name: 'user',     value: target.user.tag, inline: true },
+              { name: 'added by', value: user.tag,         inline: true }
+            )
+            .setTimestamp()
+        ]
+      });
+    }
+
+    if (sub === 'remove') {
+      const target = interaction.options.getMember('user');
+      if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+      if (!c.whitelist.includes(target.id))
+        return interaction.reply({ content: `**${target.user.tag}** isn't on the whitelist`, ephemeral: true });
+      c.whitelist = c.whitelist.filter(id => id !== target.id);
+      saveConfig(c);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('removed from whitelist')
+            .setColor(0xed4245)
+            .setThumbnail(target.user.displayAvatarURL())
+            .addFields(
+              { name: 'user',       value: target.user.tag, inline: true },
+              { name: 'removed by', value: user.tag,         inline: true }
+            )
+            .setTimestamp()
+        ]
+      });
+    }
+
+    if (sub === 'list') {
+      if (!c.whitelist.length) {
+        return interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle('whitelist')
+              .setColor(0x2c2f33)
+              .setDescription('nobody on the whitelist rn')
+          ],
+          ephemeral: true
+        });
+      }
+      const lines = c.whitelist.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('whitelist')
+            .setColor(0x2c2f33)
+            .setDescription(lines.join('\n'))
+            .setTimestamp()
+        ],
+        ephemeral: true
+      });
+    }
+  }
+
+  // ── /setlog ──────────────────────────────────────────────────────────────
+  if (commandName === 'setlog') {
+    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+      return interaction.reply({ content: 'you need admin perms for that', ephemeral: true });
+    const ch = interaction.options.getChannel('channel', true);
+    if (!ch.isTextBased()) return interaction.reply({ content: 'that channel needs to be a text channel', ephemeral: true });
+    const c = loadConfig();
+    c.logChannelId = ch.id;
+    saveConfig(c);
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('log channel set')
+          .setColor(0x57f287)
+          .setDescription(`rank logs will go to ${ch} now`)
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // ── /grouproles ──────────────────────────────────────────────────────────
+  if (commandName === 'grouproles') {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.reply({ content: 'you need manage messages perms for this', ephemeral: true });
+    const groupId = process.env.ROBLOX_GROUP_ID;
+    if (!groupId) return interaction.reply({ content: '`ROBLOX_GROUP_ID` isn\'t configured', ephemeral: true });
+    await interaction.deferReply();
+    try {
+      const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
+      if (!data.roles?.length) return interaction.editReply('no roles found for this group');
+      const lines = data.roles
+        .sort((a, b) => a.rank - b.rank)
+        .map(r => `\`${String(r.rank).padStart(3, '0')}\`  **${r.name}**  —  ID: \`${r.id}\``);
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('group roles')
+            .setColor(0x2c2f33)
+            .setDescription(lines.join('\n'))
+            .setFooter({ text: `group id: ${groupId}  ·  use the role id in tags` })
+            .setTimestamp()
+        ]
+      });
+    } catch { return interaction.editReply("couldn't load group roles, try again"); }
   }
 });
 
@@ -270,7 +887,7 @@ client.on('messageCreate', async message => {
       await message.reply({
         embeds: [
           new EmbedBuilder()
-            .setColor(0x2b2d31)
+            .setColor(0x2c2f33)
             .setDescription(`**${mentioned.username}** is AFK: ${entry.reason || 'no reason'}\n<t:${since}:R>`)
         ]
       });
@@ -387,7 +1004,7 @@ client.on('messageCreate', async message => {
     afk[message.author.id] = { reason, since: Date.now() };
     saveAfk(afk);
     return message.reply({
-      embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(`you're afk now${reason ? `: ${reason}` : ''}`)],
+      embeds: [new EmbedBuilder().setColor(0x2c2f33).setDescription(`you're afk now${reason ? `: ${reason}` : ''}`)],
       allowedMentions: { repliedUser: false }
     });
   }
@@ -434,7 +1051,7 @@ client.on('messageCreate', async message => {
       return message.reply(`Tag **${tagName}** doesn't have a valid role ID (got: \`${roleId}\`).`);
 
     const status = await message.reply({
-      embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(`ranking **${robloxUser}**...`)]
+      embeds: [new EmbedBuilder().setColor(0x2c2f33).setDescription(`ranking **${robloxUser}**...`)]
     });
 
     try {
@@ -493,7 +1110,7 @@ client.on('messageCreate', async message => {
           new EmbedBuilder()
             .setTitle(`${user.displayName} (@${user.name})`)
             .setURL(profileUrl)
-            .setColor(0x2b2d31)
+            .setColor(0x2c2f33)
             .addFields(
               { name: 'Created', value: created,     inline: true },
               { name: 'User ID', value: `${userId}`, inline: true }
@@ -528,7 +1145,7 @@ client.on('messageCreate', async message => {
         return message.reply({
           embeds: [
             new EmbedBuilder()
-              .setColor(0x2b2d31)
+              .setColor(0x2c2f33)
               .setTitle(`${userBasic.name}'s Groups`)
               .setDescription("they're not in any roblox groups lol")
           ]
@@ -587,7 +1204,7 @@ client.on('messageCreate', async message => {
         embeds: [
           new EmbedBuilder()
             .setTitle('group roles')
-            .setColor(0x2b2d31)
+            .setColor(0x2c2f33)
             .setDescription(lines.join('\n'))
             .setFooter({ text: `group id: ${groupId}  ·  use the role id in tags` })
             .setTimestamp()
@@ -766,7 +1383,7 @@ client.on('messageCreate', async message => {
           embeds: [
             new EmbedBuilder()
               .setTitle('whitelist')
-              .setColor(0x2b2d31)
+              .setColor(0x2c2f33)
               .setDescription('nobody on the whitelist rn')
           ]
         });
@@ -776,7 +1393,7 @@ client.on('messageCreate', async message => {
         embeds: [
           new EmbedBuilder()
             .setTitle('whitelist')
-            .setColor(0x2b2d31)
+            .setColor(0x2c2f33)
             .setDescription(lines.join('\n'))
             .setTimestamp()
         ]
@@ -805,9 +1422,6 @@ client.on('messageCreate', async message => {
     });
   }
 
-  if (command === 'help') {
-    return message.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
-  }
 });
 
 const token = process.env.DISCORD_TOKEN;
