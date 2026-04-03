@@ -21,9 +21,9 @@ const {
   createAudioResource,
   AudioPlayerStatus,
   VoiceConnectionStatus,
-  getVoiceConnection,
-  StreamType
+  getVoiceConnection
 } = require('@discordjs/voice');
+const play = require('play-dl');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -179,43 +179,8 @@ async function rankRobloxUser(robloxUsername, roleId) {
   return { userId, displayName: userBasic.name, avatarUrl };
 }
 
-// ─── Music system ───────────────────────────────────────────────────────────
+// ─── Music system (play-dl) ──────────────────────────────────────────────────
 const guildQueues = new Map();
-
-// Run yt-dlp and return parsed JSON for a single video/search result
-function ytdlpJson(args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('yt-dlp', [...args, '--dump-json', '--no-warnings', '--quiet'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    proc.stdout.on('data', d => { out += d; });
-    proc.stderr.on('data', d => { err += d; });
-    proc.on('close', code => {
-      const line = out.trim().split('\n')[0];
-      if (!line) return reject(new Error(err.trim() || 'yt-dlp returned no output'));
-      try { resolve(JSON.parse(line)); }
-      catch { reject(new Error('failed to parse yt-dlp output')); }
-    });
-    proc.on('error', e => reject(new Error(`yt-dlp not found: ${e.message} — make sure yt-dlp is installed`)));
-  });
-}
-
-// Get the best audio CDN URL for a given playable URL
-function ytdlpGetUrl(url) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('yt-dlp', ['-f', 'bestaudio', '-g', '--no-playlist', '--no-warnings', '--quiet', url], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    proc.stdout.on('data', d => { out += d; });
-    proc.stderr.on('data', d => { err += d; });
-    proc.on('close', code => {
-      const line = out.trim().split('\n')[0];
-      if (code === 0 && line) resolve(line);
-      else reject(new Error(err.trim() || 'yt-dlp failed to get stream url'));
-    });
-    proc.on('error', e => reject(new Error(`yt-dlp not found: ${e.message}`)));
-  });
-}
 
 async function resolveSong(query) {
   const isUrl = /^https?:\/\//i.test(query);
@@ -228,8 +193,9 @@ async function resolveSong(query) {
         if (!oembed.ok) throw new Error("couldn't get spotify track info");
         const { title } = await oembed.json();
         if (!title) throw new Error("no title returned from spotify");
-        const info = await ytdlpJson([`ytsearch1:${title}`]);
-        return { title: info.title, url: info.webpage_url };
+        const results = await play.search(title, { source: { youtube: 'video' }, limit: 1 });
+        if (!results.length) throw new Error("couldn't find that on YouTube");
+        return { title: results[0].title, url: results[0].url };
       } catch (err) {
         throw new Error(err.message || "couldn't handle that spotify link");
       }
@@ -238,7 +204,6 @@ async function resolveSong(query) {
     // ── Apple Music ───────────────────────────────────────────────────────────
     if (query.includes('music.apple.com')) {
       try {
-        // Extract the track ID from the URL (?i=TRACKID or /TRACKID at end)
         const trackIdMatch = query.match(/[?&]i=(\d+)/) || query.match(/\/(\d+)(?:[?#]|$)/);
         if (!trackIdMatch) throw new Error("couldn't parse apple music url");
         const trackId = trackIdMatch[1];
@@ -248,8 +213,9 @@ async function resolveSong(query) {
         const track = data.results?.find(r => r.wrapperType === 'track') ?? data.results?.[0];
         if (!track?.trackName) throw new Error("couldn't get track info from apple music");
         const searchQuery = `${track.trackName} ${track.artistName}`;
-        const info = await ytdlpJson([`ytsearch1:${searchQuery}`]);
-        return { title: info.title, url: info.webpage_url };
+        const results = await play.search(searchQuery, { source: { youtube: 'video' }, limit: 1 });
+        if (!results.length) throw new Error("couldn't find that on YouTube");
+        return { title: results[0].title, url: results[0].url };
       } catch (err) {
         throw new Error(err.message || "couldn't handle that apple music link");
       }
@@ -258,37 +224,51 @@ async function resolveSong(query) {
     // ── SoundCloud ────────────────────────────────────────────────────────────
     if (query.includes('soundcloud.com')) {
       try {
-        const info = await ytdlpJson([query]);
-        return { title: info.title || 'unknown', url: query };
+        const soInfo = await play.soundcloud(query);
+        return { title: soInfo.name || 'unknown', url: query };
       } catch {
         throw new Error("couldn't load that soundcloud track");
       }
     }
 
     // ── YouTube playlist ──────────────────────────────────────────────────────
-    if (query.includes('list=')) {
+    if (play.yt_validate(query) === 'playlist') {
       try {
-        const info = await ytdlpJson(['--flat-playlist', '--playlist-items', '1', query]);
-        const videoUrl = info.url || info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`;
-        return { title: info.title || 'unknown', url: videoUrl };
+        const playlist = await play.playlist_info(query, { incomplete: true });
+        const videos   = await playlist.all_videos();
+        const first    = videos[0];
+        if (!first) throw new Error("playlist is empty");
+        return { title: first.title, url: first.url };
       } catch (err) {
         throw new Error(err.message || "couldn't load playlist");
       }
     }
 
     // ── YouTube video or any other direct URL ─────────────────────────────────
+    if (play.yt_validate(query) === 'video') {
+      try {
+        const info = await play.video_info(query);
+        return { title: info.video_details.title, url: info.video_details.url };
+      } catch {
+        throw new Error("couldn't get info for that video");
+      }
+    }
+
+    // ── Fallback: try searching as-is ─────────────────────────────────────────
     try {
-      const info = await ytdlpJson([query]);
-      return { title: info.title || 'unknown', url: info.webpage_url || query };
+      const results = await play.search(query, { source: { youtube: 'video' }, limit: 1 });
+      if (!results.length) throw new Error("nothing found");
+      return { title: results[0].title, url: results[0].url };
     } catch {
-      throw new Error("couldn't get info for that video");
+      throw new Error("couldn't find anything for that url");
     }
   }
 
   // ── Plain text search → YouTube ───────────────────────────────────────────
   try {
-    const info = await ytdlpJson([`ytsearch1:${query}`]);
-    return { title: info.title, url: info.webpage_url };
+    const results = await play.search(query, { source: { youtube: 'video' }, limit: 1 });
+    if (!results.length) throw new Error("couldn't find anything for that");
+    return { title: results[0].title, url: results[0].url };
   } catch {
     throw new Error("couldn't find anything for that");
   }
@@ -299,28 +279,12 @@ async function streamSong(guildId, song) {
   if (!queue) return;
   queue.currentSong = song;
 
-  // Kill any previous ffmpeg process
-  try { if (queue.ffmpegProc) queue.ffmpegProc.kill('SIGKILL'); } catch {}
-  queue.ffmpegProc = null;
-
   try {
-    const audioUrl = await ytdlpGetUrl(song.url);
-
-    const ffmpeg = spawn('ffmpeg', [
-      '-reconnect',        '1',
-      '-reconnect_streamed','1',
-      '-reconnect_delay_max','5',
-      '-i',                audioUrl,
-      '-vn',
-      '-f',                's16le',
-      '-ar',               '48000',
-      '-ac',               '2',
-      'pipe:1'
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
-
-    queue.ffmpegProc = ffmpeg;
-
-    const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
+    const stream   = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType:    stream.type,
+      inlineVolume: true
+    });
     resource.volume?.setVolume(queue.volume ?? 1);
     queue.currentResource = resource;
     queue.player.play(resource);
@@ -358,7 +322,6 @@ function createQueue(guildId, voiceChannel, textChannel) {
     songs:           [],
     currentSong:     null,
     currentResource: null,
-    ffmpegProc:      null,
     repeat:          false,
     skipNext:        false,
     volume:          1,
@@ -389,11 +352,9 @@ function createQueue(guildId, voiceChannel, textChannel) {
   });
 
   connection.on(VoiceConnectionStatus.Disconnected, () => {
-    // only clean up if queue still exists (leave command deletes it first)
     const q = guildQueues.get(guildId);
     if (q) {
       try { q.player.stop(true); } catch {}
-      try { if (q.ffmpegProc) q.ffmpegProc.kill('SIGKILL'); } catch {}
       guildQueues.delete(guildId);
     }
   });
@@ -750,7 +711,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   const guildId     = newState.guild?.id ?? oldState.guild?.id;
   const guildCfg    = vmConfig[guildId];
 
-  // user joined the "Create VC" trigger channel
   if (guildCfg && newState.channelId === guildCfg.createChannelId && newState.member) {
     const guild  = newState.guild;
     const member = newState.member;
@@ -779,7 +739,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
   }
 
-  // user left a VM-managed channel — delete if empty
   if (oldState.channelId && vmChannels[oldState.channelId]) {
     const ch = oldState.channel;
     if (ch && ch.members.size === 0) {
@@ -792,7 +751,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
 // ─── Interaction handler ────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
-  // ── Modal submissions ────────────────────────────────────────────────────
   if (interaction.isModalSubmit() && interaction.customId === 'vm_rename_modal') {
     const newName = interaction.fields.getTextInputValue('vm_rename_input');
     const vc = interaction.member?.voice?.channel;
@@ -826,7 +784,6 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    // ── VoiceMaster buttons ───────────────────────────────────────────────
     if (interaction.customId.startsWith('vm_')) {
       const vmChannels = loadVmChannels();
       const vc  = interaction.member?.voice?.channel;
@@ -917,7 +874,6 @@ client.on('interactionCreate', async interaction => {
   const { commandName, member, guild, channel } = interaction;
   const inDM = !guild;
 
-  // roblox and gc open to everyone
   if (commandName === 'roblox') {
     await interaction.deferReply();
     const username = interaction.options.getString('username');
@@ -993,16 +949,28 @@ client.on('interactionCreate', async interaction => {
     } catch { return interaction.editReply("couldn't load their groups, try again"); }
   }
 
-  // ─── Music slash commands (open to everyone in guild) ─────────────────────
+  if (commandName === 'mhelp') {
+    return interaction.reply({ embeds: [buildMusicHelpEmbed()] });
+  }
+
+  if (commandName === 'vmhelp') {
+    return interaction.reply({ embeds: [buildVmHelpEmbed()] });
+  }
+
+  // ── Music slash commands (open to everyone in guilds) ─────────────────────
   if (commandName === 'play') {
-    await interaction.deferReply();
-    const query = interaction.options.getString('query');
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const query       = interaction.options.getString('query');
     const voiceChannel = member?.voice?.channel;
-    if (!voiceChannel) return interaction.editReply("you need to be in a vc first");
+    if (!voiceChannel) return interaction.reply({ content: "you need to be in a vc first", ephemeral: true });
+
+    await interaction.deferReply();
 
     let songInfo;
     try { songInfo = await resolveSong(query); }
-    catch (err) { return interaction.editReply(err.message); }
+    catch (err) {
+      return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(err.message)] });
+    }
 
     let queue = guildQueues.get(guild.id);
     if (!queue) queue = createQueue(guild.id, voiceChannel, channel);
@@ -1013,16 +981,31 @@ client.on('interactionCreate', async interaction => {
       const next = queue.songs.shift();
       await streamSong(guild.id, next);
       return interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(`now playing **${songInfo.title}**`)]
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x2b2d31)
+            .setTitle('now playing')
+            .setDescription(`**${songInfo.title}**`)
+            .setFooter({ text: `requested by ${interaction.user.tag}` })
+        ]
       });
     }
+
     return interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(`added to queue: **${songInfo.title}**\nposition #${queue.songs.length}`)]
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x2b2d31)
+          .setTitle('added to queue')
+          .setDescription(`**${songInfo.title}**`)
+          .addFields({ name: 'position', value: `#${queue.songs.length}`, inline: true })
+          .setFooter({ text: `requested by ${interaction.user.tag}` })
+      ]
     });
   }
 
   if (commandName === 'pause') {
-    const queue = guildQueues.get(guild?.id);
+    if (!guild) return;
+    const queue = guildQueues.get(guild.id);
     if (!queue?.currentSong) return interaction.reply({ content: "nothing's playing", ephemeral: true });
     if (queue.player.state.status === AudioPlayerStatus.Paused) {
       queue.player.unpause();
@@ -1033,7 +1016,8 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'skip') {
-    const queue = guildQueues.get(guild?.id);
+    if (!guild) return;
+    const queue = guildQueues.get(guild.id);
     if (!queue?.currentSong) return interaction.reply({ content: "nothing's playing", ephemeral: true });
     const skipped = queue.currentSong.title;
     queue.skipNext = true;
@@ -1042,9 +1026,11 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'queue') {
-    const queue = guildQueues.get(guild?.id);
+    if (!guild) return;
+    const queue = guildQueues.get(guild.id);
     if (!queue || (!queue.currentSong && !queue.songs.length))
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setTitle('queue').setDescription('queue is empty')], ephemeral: true });
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setTitle('queue').setDescription('queue is empty rn')] });
+
     const lines = [];
     if (queue.currentSong) {
       lines.push(`**now playing:** ${queue.currentSong.title}${queue.repeat ? ' 🔁' : ''}`);
@@ -1059,14 +1045,16 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'repeat') {
-    const queue = guildQueues.get(guild?.id);
+    if (!guild) return;
+    const queue = guildQueues.get(guild.id);
     if (!queue) return interaction.reply({ content: "not playing anything", ephemeral: true });
     queue.repeat = !queue.repeat;
     return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(`repeat is now **${queue.repeat ? 'on 🔁' : 'off'}**`)] });
   }
 
   if (commandName === 'volume') {
-    const queue = guildQueues.get(guild?.id);
+    if (!guild) return;
+    const queue = guildQueues.get(guild.id);
     if (!queue) return interaction.reply({ content: "not playing anything", ephemeral: true });
     const input = interaction.options.getInteger('level');
     queue.volume = input / 100;
@@ -1074,24 +1062,16 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(`🔊 volume set to **${input}%**`)] });
   }
 
-  if (commandName === 'mhelp') {
-    return interaction.reply({ embeds: [buildMusicHelpEmbed(getPrefix())] });
-  }
-
-  if (commandName === 'vmhelp') {
-    return interaction.reply({ embeds: [buildVmHelpEmbed(getPrefix())] });
-  }
-
   if (commandName === 'leave') {
-    const queue = guildQueues.get(guild?.id);
+    if (!guild) return;
+    const queue = guildQueues.get(guild.id);
     if (queue) {
-      guildQueues.delete(guild.id);          // delete first so Disconnected handler is a no-op
+      guildQueues.delete(guild.id);
       try { queue.player.stop(true); } catch {}
-      try { if (queue.ffmpegProc) queue.ffmpegProc.kill('SIGKILL'); } catch {}
       try { queue.connection.destroy(); } catch {}
     }
     try {
-      const conn = getVoiceConnection(guild?.id);
+      const conn = getVoiceConnection(guild.id);
       if (conn) conn.destroy();
     } catch {}
     return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription('left the vc')] });
@@ -1784,7 +1764,6 @@ client.on('messageCreate', async message => {
       }
     }
 
-    // remaining vm subcommands need user to be in a vm channel
     const vc = message.member?.voice?.channel;
     if (!vc) return message.reply('you need to be in your voice channel');
     const vmChannels = loadVmChannels();
@@ -1966,9 +1945,8 @@ client.on('messageCreate', async message => {
     if (!message.guild) return;
     const queue = guildQueues.get(message.guild.id);
     if (queue) {
-      guildQueues.delete(message.guild.id);    // delete first so Disconnected handler is a no-op
+      guildQueues.delete(message.guild.id);
       try { queue.player.stop(true); } catch {}
-      try { if (queue.ffmpegProc) queue.ffmpegProc.kill('SIGKILL'); } catch {}
       try { queue.connection.destroy(); } catch {}
     }
     try {
@@ -2388,32 +2366,16 @@ client.on('messageCreate', async message => {
     } catch { return message.reply("couldn't load group roles, try again"); }
   }
 
-  if (command === 'purge') {
-    const amount = parseInt(args[0]);
-    if (isNaN(amount) || amount < 1 || amount > 100)
-      return message.reply('give me a number between 1 and 100');
-    try {
-      await message.delete();
-      const deleted = await message.channel.bulkDelete(amount, true);
-      const reply = await message.channel.send(`deleted ${deleted.size} message${deleted.size !== 1 ? 's' : ''}`);
-      setTimeout(() => reply.delete().catch(() => {}), 3000);
-    } catch (err) {
-      return message.channel.send(`couldn't purge — ${err.message}`);
-    }
-    return;
-  }
-
-  if (command === 'snipe') {
-    const snipe = snipeCache.get(message.channel.id);
-    if (!snipe) return message.reply('nothing to snipe rn');
-    const deletedAgo = Math.floor((Date.now() - snipe.deletedAt) / 1000);
+  if (command === 'setlog') {
+    const ch = message.mentions.channels?.first();
+    if (!ch?.isTextBased()) return message.reply('mention a text channel');
+    const cfg2 = loadConfig(); cfg2.logChannelId = ch.id; saveConfig(cfg2);
     return message.reply({
       embeds: [
         new EmbedBuilder()
-          .setColor(0x2b2d31)
-          .setAuthor({ name: snipe.author, iconURL: snipe.avatarUrl ?? undefined })
-          .setDescription(snipe.content)
-          .setFooter({ text: `deleted ${deletedAgo}s ago` })
+          .setTitle('log channel set')
+          .setColor(0x57f287)
+          .setDescription(`logs going to ${ch} now`)
           .setTimestamp()
       ]
     });
@@ -2428,9 +2390,9 @@ client.on('messageCreate', async message => {
     const wl  = loadWhitelist();
 
     if (sub === 'add') {
-      const target = message.mentions.members.first();
-      if (!target) return message.reply('mention someone');
-      if (wl.includes(target.id)) return message.reply(`**${target.user.tag}** is already on the whitelist`);
+      const target = message.mentions.users.first();
+      if (!target) return message.reply('mention a user');
+      if (wl.includes(target.id)) return message.reply(`**${target.tag}** is already on the whitelist`);
       wl.push(target.id);
       saveWhitelist(wl);
       return message.reply({
@@ -2438,9 +2400,9 @@ client.on('messageCreate', async message => {
           new EmbedBuilder()
             .setTitle('whitelisted')
             .setColor(0x57f287)
-            .setThumbnail(target.user.displayAvatarURL())
+            .setThumbnail(target.displayAvatarURL())
             .addFields(
-              { name: 'user',     value: target.user.tag,    inline: true },
+              { name: 'user',     value: target.tag,         inline: true },
               { name: 'added by', value: message.author.tag, inline: true }
             )
             .setTimestamp()
@@ -2449,18 +2411,18 @@ client.on('messageCreate', async message => {
     }
 
     if (sub === 'remove') {
-      const target = message.mentions.members.first();
-      if (!target) return message.reply('mention someone');
-      if (!wl.includes(target.id)) return message.reply(`**${target.user.tag}** isn't on the whitelist`);
+      const target = message.mentions.users.first();
+      if (!target) return message.reply('mention a user');
+      if (!wl.includes(target.id)) return message.reply(`**${target.tag}** isn't on the whitelist`);
       saveWhitelist(wl.filter(id => id !== target.id));
       return message.reply({
         embeds: [
           new EmbedBuilder()
             .setTitle('removed from whitelist')
             .setColor(0xed4245)
-            .setThumbnail(target.user.displayAvatarURL())
+            .setThumbnail(target.displayAvatarURL())
             .addFields(
-              { name: 'user',       value: target.user.tag,    inline: true },
+              { name: 'user',       value: target.tag,         inline: true },
               { name: 'removed by', value: message.author.tag, inline: true }
             )
             .setTimestamp()
@@ -2469,35 +2431,14 @@ client.on('messageCreate', async message => {
     }
 
     if (sub === 'list') {
-      if (!wl.length) {
+      if (!wl.length)
         return message.reply({ embeds: [new EmbedBuilder().setTitle('whitelist').setColor(0x2b2d31).setDescription('nobody on the whitelist rn')] });
-      }
       const lines = wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
       return message.reply({ embeds: [new EmbedBuilder().setTitle('whitelist').setColor(0x2b2d31).setDescription(lines.join('\n')).setTimestamp()] });
     }
 
-    return message.reply(`do: \`${prefix}whitelist add/remove/list\``);
-  }
-
-  if (command === 'setlog') {
-    const ch = message.mentions.channels.first();
-    if (!ch || !ch.isTextBased()) return message.reply('mention a channel');
-    const cfg = loadConfig(); cfg.logChannelId = ch.id; saveConfig(cfg);
-    return message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle('log channel set')
-          .setColor(0x57f287)
-          .setDescription(`logs going to ${ch} now`)
-          .setTimestamp()
-      ]
-    });
+    return message.reply(`usage: \`${prefix}whitelist add/remove/list @user\``);
   }
 });
-
-if (!process.env.DISCORD_TOKEN) {
-  console.error('DISCORD_TOKEN is not set. Please set it in your environment variables.');
-  process.exit(1);
-}
 
 client.login(process.env.DISCORD_TOKEN);
