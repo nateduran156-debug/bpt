@@ -13,6 +13,7 @@ const {
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const client = new Client({
   intents: [
@@ -25,10 +26,12 @@ const client = new Client({
   ]
 });
 
-const TAGS_FILE   = path.join(__dirname, 'tags.json');
-const HUSHED_FILE = path.join(__dirname, 'hushed.json');
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const AFK_FILE    = path.join(__dirname, 'afk.json');
+const TAGS_FILE      = path.join(__dirname, 'tags.json');
+const HUSHED_FILE    = path.join(__dirname, 'hushed.json');
+const CONFIG_FILE    = path.join(__dirname, 'config.json');
+const AFK_FILE       = path.join(__dirname, 'afk.json');
+const WHITELIST_FILE = path.join(__dirname, 'whitelist.json');
+const REBOOT_FILE    = path.join(__dirname, 'reboot_msg.json');
 
 function loadJSON(file) {
   if (!fs.existsSync(file)) return {};
@@ -38,25 +41,46 @@ function saveJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
-function loadTags()   { return loadJSON(TAGS_FILE); }
-function saveTags(t)  { saveJSON(TAGS_FILE, t); }
-function loadHushed() { return loadJSON(HUSHED_FILE); }
-function saveHushed(h){ saveJSON(HUSHED_FILE, h); }
-function loadConfig() { return loadJSON(CONFIG_FILE); }
-function saveConfig(c){ saveJSON(CONFIG_FILE, c); }
-function loadAfk()    { return loadJSON(AFK_FILE); }
-function saveAfk(a)   { saveJSON(AFK_FILE, a); }
+function loadTags()      { return loadJSON(TAGS_FILE); }
+function saveTags(t)     { saveJSON(TAGS_FILE, t); }
+function loadHushed()    { return loadJSON(HUSHED_FILE); }
+function saveHushed(h)   { saveJSON(HUSHED_FILE, h); }
+function loadConfig()    { return loadJSON(CONFIG_FILE); }
+function saveConfig(c)   { saveJSON(CONFIG_FILE, c); }
+function loadAfk()       { return loadJSON(AFK_FILE); }
+function saveAfk(a)      { saveJSON(AFK_FILE, a); }
+function loadWhitelist() {
+  const data = loadJSON(WHITELIST_FILE);
+  return Array.isArray(data.ids) ? data.ids : [];
+}
+function saveWhitelist(ids) {
+  saveJSON(WHITELIST_FILE, { ids });
+}
 
 (function initConfig() {
   if (!fs.existsSync(CONFIG_FILE)) {
-    saveJSON(CONFIG_FILE, { whitelist: [], logChannelId: null, prefix: '.', status: null });
+    saveJSON(CONFIG_FILE, { logChannelId: null, prefix: '.', status: null });
     console.log('created config.json');
   } else {
     const cfg = loadConfig();
     let changed = false;
-    if (!Array.isArray(cfg.whitelist)) { cfg.whitelist = []; changed = true; }
+    // migrate whitelist out of config.json into whitelist.json
+    if (Array.isArray(cfg.whitelist) && cfg.whitelist.length > 0) {
+      const existing = loadWhitelist();
+      const merged = [...new Set([...existing, ...cfg.whitelist])];
+      saveWhitelist(merged);
+      delete cfg.whitelist;
+      changed = true;
+    } else if ('whitelist' in cfg) {
+      delete cfg.whitelist;
+      changed = true;
+    }
     if (!cfg.prefix) { cfg.prefix = '.'; changed = true; }
     if (changed) saveConfig(cfg);
+  }
+  if (!fs.existsSync(WHITELIST_FILE)) {
+    saveWhitelist([]);
+    console.log('created whitelist.json');
   }
 })();
 
@@ -132,48 +156,62 @@ async function rankRobloxUser(robloxUsername, roleId) {
   return { userId, displayName: userBasic.name, avatarUrl };
 }
 
-const COMMANDS = [
-  { name: '{p}help' },
-  { name: '{p}hb @user [reason]' },
-  { name: '{p}reboot' },
-  { name: '{p}prefix [new prefix]' },
-  { name: '{p}status [type] [text]' },
-  { name: '{p}afk [reason]' },
-  { name: '{p}gc [username]' },
-  { name: '{p}tag [name] | [content]' },
-  { name: '{p}tag [robloxUser] [tagname]' },
-  { name: '{p}roblox [username]' },
-  { name: '{p}ban @user [reason]' },
-  { name: '{p}grouproles' },
-  { name: '{p}hush @user' },
-  { name: '{p}timeout @user [minutes] [reason]' },
-  { name: '{p}mute @user [reason]' },
-  { name: '{p}unmute @user' },
-  { name: '{p}setlog #channel' },
-  { name: '{p}whitelist add @user' },
-  { name: '{p}whitelist remove @user' },
-  { name: '{p}whitelist list' },
-  { name: '{p}lock' },
-  { name: '{p}unlock' },
-  { name: '{p}say [text]' },
-  { name: '{p}cs' },
+const COMMAND_PAGES = [
+  {
+    title: 'perms',
+    cmds: [
+      '{p}hb @user [reason]',
+      '{p}ban @user [reason]',
+      '{p}kick @user [reason]',
+      '{p}mute @user [reason]',
+      '{p}unmute @user',
+      '{p}timeout @user [minutes] [reason]',
+      '{p}untime @user',
+      '{p}hush @user',
+    ],
+  },
+  {
+    title: null,
+    cmds: [
+      '{p}tag [robloxUser] [tagname]',
+      '{p}tag [name] | [roleId]',
+      '{p}roblox [username]',
+      '{p}gc [username]',
+      '{p}grouproles',
+      '{p}setlog #channel',
+    ],
+  },
+  {
+    title: 'perms',
+    cmds: [
+      '{p}whitelist add @user',
+      '{p}whitelist remove @user',
+      '{p}whitelist list',
+      '{p}lock',
+      '{p}unlock',
+      '{p}hush @user',
+      '{p}afk [reason]',
+      '{p}prefix [new prefix]',
+      '{p}status [type] [text]',
+    ],
+  },
 ];
 
-const ITEMS_PER_PAGE = 7;
-const GC_PER_PAGE    = 10;
+const GC_PER_PAGE = 10;
 
 function buildHelpEmbed(page) {
-  const p = getPrefix();
-  const totalPages = Math.ceil(COMMANDS.length / ITEMS_PER_PAGE);
-  const slice = COMMANDS.slice(page * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE + ITEMS_PER_PAGE);
-  return new EmbedBuilder()
+  const p      = getPrefix();
+  const entry  = COMMAND_PAGES[page] ?? { title: null, cmds: [] };
+  const embed  = new EmbedBuilder()
     .setColor(0x2b2d31)
-    .setDescription(slice.map(c => `\`${c.name.replace('{p}', p)}\``).join('\n'))
-    .setFooter({ text: `page ${page + 1}/${totalPages}` });
+    .setDescription(entry.cmds.map(c => `\`${c.replace('{p}', p)}\``).join('\n'))
+    .setFooter({ text: `page ${page + 1}/${COMMAND_PAGES.length}` });
+  if (entry.title) embed.setTitle(entry.title);
+  return embed;
 }
 
 function buildHelpRow(page) {
-  const totalPages = Math.ceil(COMMANDS.length / ITEMS_PER_PAGE);
+  const totalPages = COMMAND_PAGES.length;
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`help_${page - 1}`)
@@ -221,7 +259,7 @@ const gcCache  = new Map();
 const snipeCache = new Map();
 
 const GUILD_ONLY_COMMANDS = new Set([
-  'ban', 'timeout', 'mute', 'unmute', 'hush',
+  'ban', 'kick', 'unban', 'purge', 'snipe', 'timeout', 'mute', 'unmute', 'hush',
   'lock', 'unlock', 'setlog'
 ]);
 
@@ -240,6 +278,15 @@ const slashCommands = [
   new SlashCommandBuilder().setName('ban').setDescription('ban a member').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
+  new SlashCommandBuilder().setName('kick').setDescription('kick a member').setDMPermission(true)
+    .addUserOption(o => o.setName('user').setDescription('user to kick').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
+  new SlashCommandBuilder().setName('unban').setDescription('unban a user by id').setDMPermission(true)
+    .addStringOption(o => o.setName('id').setDescription('user id to unban').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
+  new SlashCommandBuilder().setName('purge').setDescription('delete messages in bulk').setDMPermission(false)
+    .addIntegerOption(o => o.setName('amount').setDescription('how many messages to delete (1-100)').setRequired(true).setMinValue(1).setMaxValue(100)),
+  new SlashCommandBuilder().setName('snipe').setDescription('show the last deleted message in this channel').setDMPermission(false),
   new SlashCommandBuilder().setName('timeout').setDescription('timeout a member').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
     .addIntegerOption(o => o.setName('minutes').setDescription('how long in minutes').setRequired(false).setMinValue(1).setMaxValue(40320))
@@ -303,6 +350,16 @@ client.once('clientReady', async () => {
   console.log(`logged in as ${client.user.tag}`);
   const cfg = loadConfig();
   if (cfg.status) applyStatus(cfg.status);
+
+  if (fs.existsSync(REBOOT_FILE)) {
+    const { channelId, messageId } = loadJSON(REBOOT_FILE);
+    fs.unlinkSync(REBOOT_FILE);
+    try {
+      const ch  = await client.channels.fetch(channelId);
+      const msg = await ch.messages.fetch(messageId);
+      await msg.edit('reboot successfull ✅');
+    } catch {}
+  }
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
@@ -432,8 +489,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   // all other commands require whitelist
-  const cfg      = loadConfig();
-  const whitelist = cfg.whitelist ?? [];
+  const whitelist = loadWhitelist();
   const isWhitelisted = whitelist.includes(interaction.user.id);
 
   if (!isWhitelisted) {
@@ -521,6 +577,92 @@ client.on('interactionCreate', async interaction => {
             { name: 'mod',    value: interaction.user.tag,  inline: true },
             { name: 'reason', value: reason }
           )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // kick — whitelisted users don't need kick perms
+  if (commandName === 'kick') {
+    const target = interaction.options.getMember('user');
+    const reason = interaction.options.getString('reason') || 'no reason';
+
+    if (!target) return interaction.reply({ content: 'that user isnt in this server', ephemeral: true });
+    if (!target.kickable) return interaction.reply({ content: "can't kick them, they might be above me", ephemeral: true });
+
+    await interaction.deferReply();
+    await target.kick(reason);
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('kicked')
+          .setColor(0xed4245)
+          .setThumbnail(target.user.displayAvatarURL())
+          .addFields(
+            { name: 'user',   value: target.user.tag,      inline: true },
+            { name: 'mod',    value: interaction.user.tag, inline: true },
+            { name: 'reason', value: reason }
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // unban — whitelisted users don't need ban perms
+  if (commandName === 'unban') {
+    const userId = interaction.options.getString('id');
+    const reason = interaction.options.getString('reason') || 'no reason';
+
+    if (!/^\d{17,19}$/.test(userId))
+      return interaction.reply({ content: "that doesn't look like a real id", ephemeral: true });
+
+    await interaction.deferReply();
+    try {
+      await guild.members.unban(userId, reason);
+      let username = userId;
+      try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {}
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('unbanned')
+            .setColor(0x57f287)
+            .addFields(
+              { name: 'user',   value: username,             inline: true },
+              { name: 'mod',    value: interaction.user.tag, inline: true },
+              { name: 'reason', value: reason }
+            )
+            .setTimestamp()
+        ]
+      });
+    } catch (err) {
+      return interaction.editReply(`couldn't unban — ${err.message}`);
+    }
+  }
+
+  // purge — delete bulk messages
+  if (commandName === 'purge') {
+    const amount = interaction.options.getInteger('amount');
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const deleted = await channel.bulkDelete(amount, true);
+      return interaction.editReply({ content: `deleted ${deleted.size} message${deleted.size !== 1 ? 's' : ''}` });
+    } catch (err) {
+      return interaction.editReply({ content: `couldn't purge — ${err.message}` });
+    }
+  }
+
+  // snipe — show last deleted message
+  if (commandName === 'snipe') {
+    const snipe = snipeCache.get(channel.id);
+    if (!snipe) return interaction.reply({ content: 'nothing to snipe rn', ephemeral: true });
+    const deletedAgo = Math.floor((Date.now() - snipe.deletedAt) / 1000);
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x2b2d31)
+          .setAuthor({ name: snipe.author, iconURL: snipe.avatarUrl ?? undefined })
+          .setDescription(snipe.content)
+          .setFooter({ text: `deleted ${deletedAgo}s ago` })
           .setTimestamp()
       ]
     });
@@ -779,8 +921,18 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'reboot') {
-    await interaction.reply({ content: 'rebooting rq...', ephemeral: true });
-    process.exit(0);
+    await interaction.reply({ content: 'rebooting rq...' });
+    const sent = await interaction.fetchReply();
+    saveJSON(REBOOT_FILE, { channelId: sent.channelId, messageId: sent.id });
+    setTimeout(() => {
+      const child = spawn(process.execPath, process.argv.slice(1), {
+        detached: true,
+        stdio: 'inherit',
+        env: process.env
+      });
+      child.unref();
+      process.exit(0);
+    }, 500);
   }
 
   if (commandName === 'prefix') {
@@ -832,20 +984,19 @@ client.on('interactionCreate', async interaction => {
 
   // whitelist management — works in DMs too; uses getUser so it doesn't need guild context
   if (commandName === 'whitelist') {
-    const WHITELIST_MANAGERS = ['1461174388006326354', '1472482602215538779'];
+    const WHITELIST_MANAGERS = ['1461174388006326354', '1472482602215538779', '1481790710310240389'];
     if (!WHITELIST_MANAGERS.includes(interaction.user.id))
       return interaction.reply({ content: "ur not allowed to manage the whitelist", ephemeral: true });
-    const sub    = interaction.options.getString('action');
-    const cfg2   = loadConfig();
-    cfg2.whitelist = cfg2.whitelist ?? [];
+    const sub = interaction.options.getString('action');
+    const wl  = loadWhitelist();
 
     if (sub === 'add') {
       const target = interaction.options.getUser('user');
       if (!target) return interaction.reply({ content: 'give me a user', ephemeral: true });
-      if (cfg2.whitelist.includes(target.id))
+      if (wl.includes(target.id))
         return interaction.reply({ content: `**${target.tag}** is already on the whitelist`, ephemeral: true });
-      cfg2.whitelist.push(target.id);
-      saveConfig(cfg2);
+      wl.push(target.id);
+      saveWhitelist(wl);
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
@@ -864,10 +1015,9 @@ client.on('interactionCreate', async interaction => {
     if (sub === 'remove') {
       const target = interaction.options.getUser('user');
       if (!target) return interaction.reply({ content: 'give me a user', ephemeral: true });
-      if (!cfg2.whitelist.includes(target.id))
+      if (!wl.includes(target.id))
         return interaction.reply({ content: `**${target.tag}** isn't on the whitelist`, ephemeral: true });
-      cfg2.whitelist = cfg2.whitelist.filter(id => id !== target.id);
-      saveConfig(cfg2);
+      saveWhitelist(wl.filter(id => id !== target.id));
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
@@ -884,7 +1034,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (sub === 'list') {
-      if (!cfg2.whitelist.length) {
+      if (!wl.length) {
         return interaction.reply({
           embeds: [
             new EmbedBuilder()
@@ -894,7 +1044,7 @@ client.on('interactionCreate', async interaction => {
           ]
         });
       }
-      const lines = cfg2.whitelist.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
+      const lines = wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
@@ -1024,9 +1174,7 @@ client.on('messageCreate', async message => {
   }
 
   // all other prefix commands require whitelist
-  const cfg2      = loadConfig();
-  const whitelist = cfg2.whitelist ?? [];
-  if (!whitelist.includes(message.author.id)) return;
+  if (!loadWhitelist().includes(message.author.id)) return;
 
   // hb — whitelisted users don't need ban perms
   if (command === 'hb') {
@@ -1117,8 +1265,17 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'reboot') {
-    await message.reply('rebooting rq...');
-    process.exit(0);
+    const sent = await message.reply('rebooting rq...');
+    saveJSON(REBOOT_FILE, { channelId: sent.channelId, messageId: sent.id });
+    setTimeout(() => {
+      const child = spawn(process.execPath, process.argv.slice(1), {
+        detached: true,
+        stdio: 'inherit',
+        env: process.env
+      });
+      child.unref();
+      process.exit(0);
+    }, 500);
   }
 
   // tag — whitelisted users don't need manage messages perm
@@ -1211,6 +1368,90 @@ client.on('messageCreate', async message => {
             { name: 'mod',    value: message.author.tag, inline: true },
             { name: 'reason', value: reason }
           )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // kick — whitelisted users don't need kick perms
+  if (command === 'kick') {
+    const target = message.mentions.members.first();
+    if (!target) return message.reply('mention someone');
+    if (!target.kickable) return message.reply("can't kick them, they might be above me");
+    const reason = args.slice(1).join(' ') || 'no reason';
+    try { await target.kick(reason); } catch { return message.reply("couldn't kick them"); }
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('kicked')
+          .setColor(0xed4245)
+          .setThumbnail(target.user.displayAvatarURL())
+          .addFields(
+            { name: 'user',   value: target.user.tag,    inline: true },
+            { name: 'mod',    value: message.author.tag, inline: true },
+            { name: 'reason', value: reason }
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  // unban — whitelisted users don't need ban perms
+  if (command === 'unban') {
+    const userId = args[0];
+    const reason = args.slice(1).join(' ') || 'no reason';
+    if (!userId || !/^\d{17,19}$/.test(userId))
+      return message.reply('give me a valid user id');
+    try {
+      await message.guild.members.unban(userId, reason);
+      let username = userId;
+      try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {}
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('unbanned')
+            .setColor(0x57f287)
+            .addFields(
+              { name: 'user',   value: username,           inline: true },
+              { name: 'mod',    value: message.author.tag, inline: true },
+              { name: 'reason', value: reason }
+            )
+            .setTimestamp()
+        ]
+      });
+    } catch (err) {
+      return message.reply(`couldn't unban — ${err.message}`);
+    }
+  }
+
+  // purge — delete bulk messages
+  if (command === 'purge') {
+    const amount = parseInt(args[0]);
+    if (isNaN(amount) || amount < 1 || amount > 100)
+      return message.reply('give me a number between 1 and 100');
+    try {
+      await message.delete();
+      const deleted = await message.channel.bulkDelete(amount, true);
+      const reply = await message.channel.send(`deleted ${deleted.size} message${deleted.size !== 1 ? 's' : ''}`);
+      setTimeout(() => reply.delete().catch(() => {}), 3000);
+    } catch (err) {
+      return message.channel.send(`couldn't purge — ${err.message}`);
+    }
+    return;
+  }
+
+  // snipe — show last deleted message
+  if (command === 'snipe') {
+    const snipe = snipeCache.get(message.channel.id);
+    if (!snipe) return message.reply('nothing to snipe rn');
+    const deletedAgo = Math.floor((Date.now() - snipe.deletedAt) / 1000);
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x2b2d31)
+          .setAuthor({ name: snipe.author, iconURL: snipe.avatarUrl ?? undefined })
+          .setDescription(snipe.content)
+          .setFooter({ text: `deleted ${deletedAgo}s ago` })
           .setTimestamp()
       ]
     });
@@ -1352,19 +1593,18 @@ client.on('messageCreate', async message => {
 
   // whitelist management — only specific IDs can manage it
   if (command === 'whitelist') {
-    const WHITELIST_MANAGERS = ['1461174388006326354', '1472482602215538779'];
+    const WHITELIST_MANAGERS = ['1461174388006326354', '1472482602215538779', '1481790710310240389'];
     if (!WHITELIST_MANAGERS.includes(message.author.id))
       return message.reply("ur not allowed to manage the whitelist");
     const sub = args[0]?.toLowerCase();
-    const cfg = loadConfig();
-    cfg.whitelist = cfg.whitelist ?? [];
+    const wl  = loadWhitelist();
 
     if (sub === 'add') {
       const target = message.mentions.members.first();
       if (!target) return message.reply('mention someone');
-      if (cfg.whitelist.includes(target.id)) return message.reply(`**${target.user.tag}** is already on the whitelist`);
-      cfg.whitelist.push(target.id);
-      saveConfig(cfg);
+      if (wl.includes(target.id)) return message.reply(`**${target.user.tag}** is already on the whitelist`);
+      wl.push(target.id);
+      saveWhitelist(wl);
       return message.reply({
         embeds: [
           new EmbedBuilder()
@@ -1383,9 +1623,8 @@ client.on('messageCreate', async message => {
     if (sub === 'remove') {
       const target = message.mentions.members.first();
       if (!target) return message.reply('mention someone');
-      if (!cfg.whitelist.includes(target.id)) return message.reply(`**${target.user.tag}** isn't on the whitelist`);
-      cfg.whitelist = cfg.whitelist.filter(id => id !== target.id);
-      saveConfig(cfg);
+      if (!wl.includes(target.id)) return message.reply(`**${target.user.tag}** isn't on the whitelist`);
+      saveWhitelist(wl.filter(id => id !== target.id));
       return message.reply({
         embeds: [
           new EmbedBuilder()
@@ -1402,7 +1641,7 @@ client.on('messageCreate', async message => {
     }
 
     if (sub === 'list') {
-      if (!cfg.whitelist.length) {
+      if (!wl.length) {
         return message.reply({
           embeds: [
             new EmbedBuilder()
@@ -1412,7 +1651,7 @@ client.on('messageCreate', async message => {
           ]
         });
       }
-      const lines = cfg.whitelist.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
+      const lines = wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
       return message.reply({
         embeds: [
           new EmbedBuilder()
