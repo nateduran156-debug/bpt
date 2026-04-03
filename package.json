@@ -1,17 +1,18 @@
 {
   "name": "discord-bot",
   "version": "1.0.0",
-  "description": "Discord bot with music, moderation, and Roblox tools",
+  "description": "Discord bot with music, moderation, Roblox, and VoiceMaster",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3",
-    "@discordjs/voice": "^0.18.0",
-    "play-dl": "^1.9.7",
-    "@distube/ytdl-core": "^4.16.8",
-    "opusscript": "^0.1.1",
-    "tweetnacl": "^1.0.3"
+    "@discordjs/voice": "^0.17.0",
+    "@discordjs/opus": "^0.9.0",
+    "discord-player": "^6.7.1",
+    "discord-player-youtubei": "^1.2.10",
+    "ffmpeg-static": "^5.2.0",
+    "sodium-native": "^4.1.1"
   }
 }
