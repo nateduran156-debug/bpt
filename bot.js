@@ -26,16 +26,12 @@ const client = new Client({
   ]
 });
 
-const TAGS_FILE      = path.join(__dirname, 'data', 'tags.json');
-const HUSHED_FILE    = path.join(__dirname, 'data', 'hushed.json');
-const CONFIG_FILE    = path.join(__dirname, 'data', 'config.json');
-const AFK_FILE       = path.join(__dirname, 'data', 'afk.json');
-const WHITELIST_FILE = path.join(__dirname, 'data', 'whitelist.json');
-const REBOOT_FILE    = path.join(__dirname, 'data', 'reboot_msg.json');
-
-if (!fs.existsSync(path.join(__dirname, 'data'))) {
-  fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
-}
+const TAGS_FILE      = path.join(__dirname, 'tags.json');
+const HUSHED_FILE    = path.join(__dirname, 'hushed.json');
+const CONFIG_FILE    = path.join(__dirname, 'config.json');
+const AFK_FILE       = path.join(__dirname, 'afk.json');
+const WHITELIST_FILE = path.join(__dirname, 'whitelist.json');
+const REBOOT_FILE    = path.join(__dirname, 'reboot_msg.json');
 
 function loadJSON(file) {
   if (!fs.existsSync(file)) return {};
@@ -1214,12 +1210,12 @@ client.on('messageCreate', async message => {
     } catch { return message.reply("couldn't load their groups, try again"); }
   }
 
-  // all other prefix commands require whitelist
-  if (!loadWhitelist().includes(message.author.id)) return;
-
   if (command === 'help') {
     return message.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
   }
+
+  // all other prefix commands require whitelist
+  if (!loadWhitelist().includes(message.author.id)) return;
 
   if (command === 'hb') {
     const target = message.mentions.users.first();
