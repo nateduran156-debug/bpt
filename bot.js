@@ -208,12 +208,12 @@ async function resolveSong(query) {
 
   if (urlType && String(urlType).startsWith('sp_')) {
     try {
-      const spData = await playdl.spotify(query);
-      let searchTerm = spData.name || '';
-      if (spData.type === 'track' && spData.artists?.length) {
-        searchTerm += ' ' + spData.artists.map(a => a.name).join(' ');
-      }
-      const results = await playdl.search(searchTerm.trim(), { source: { youtube: 'video' }, limit: 1 });
+      // Use Spotify's public oEmbed API — no credentials required
+      const oembed = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(query)}`);
+      if (!oembed.ok) throw new Error("couldn't get spotify track info");
+      const { title } = await oembed.json();
+      if (!title) throw new Error("no title returned from spotify");
+      const results = await playdl.search(title, { source: { youtube: 'video' }, limit: 1 });
       if (!results.length) throw new Error("couldn't find this on youtube");
       return { title: results[0].title, url: results[0].url };
     } catch (err) {
@@ -310,9 +310,10 @@ function createQueue(guildId, voiceChannel, textChannel) {
   });
 
   connection.on(VoiceConnectionStatus.Disconnected, () => {
+    // only clean up if queue still exists (leave command deletes it first)
     const q = guildQueues.get(guildId);
     if (q) {
-      q.player.stop(true);
+      try { q.player.stop(true); } catch {}
       guildQueues.delete(guildId);
     }
   });
@@ -1004,13 +1005,14 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'leave') {
     const queue = guildQueues.get(guild?.id);
     if (queue) {
-      queue.player.stop(true);
-      queue.connection.destroy();
-      guildQueues.delete(guild.id);
-    } else {
+      guildQueues.delete(guild.id);          // delete first so Disconnected handler is a no-op
+      try { queue.player.stop(true); } catch {}
+      try { queue.connection.destroy(); } catch {}
+    }
+    try {
       const conn = getVoiceConnection(guild?.id);
       if (conn) conn.destroy();
-    }
+    } catch {}
     return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription('left the vc')] });
   }
 
@@ -1883,13 +1885,14 @@ client.on('messageCreate', async message => {
     if (!message.guild) return;
     const queue = guildQueues.get(message.guild.id);
     if (queue) {
-      queue.player.stop(true);
-      queue.connection.destroy();
-      guildQueues.delete(message.guild.id);
-    } else {
+      guildQueues.delete(message.guild.id);    // delete first so Disconnected handler is a no-op
+      try { queue.player.stop(true); } catch {}
+      try { queue.connection.destroy(); } catch {}
+    }
+    try {
       const conn = getVoiceConnection(message.guild.id);
       if (conn) conn.destroy();
-    }
+    } catch {}
     return message.reply({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription('left the vc')] });
   }
 
