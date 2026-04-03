@@ -10,6 +10,7 @@
     "discord.js": "^14.16.3",
     "@discordjs/voice": "^0.18.0",
     "play-dl": "^1.9.7",
+    "@distube/ytdl-core": "^4.16.8",
     "opusscript": "^0.1.1",
     "tweetnacl": "^1.0.3"
   }
