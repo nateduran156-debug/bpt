@@ -179,8 +179,72 @@ async function rankRobloxUser(robloxUsername, roleId) {
   return { userId, displayName: userBasic.name, avatarUrl };
 }
 
-// ─── Music system (play-dl) ──────────────────────────────────────────────────
+// ─── Music system (yt-dlp) ───────────────────────────────────────────────────
 const guildQueues = new Map();
+
+function ytdlpSearch(searchQuery) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error("search timed out — try again"));
+    }, 15000);
+
+    let output = '';
+    const proc = spawn('yt-dlp', [
+      '--dump-json',
+      '--no-playlist',
+      '--default-search', 'ytsearch',
+      `ytsearch1:${searchQuery}`
+    ]);
+
+    proc.stdout.on('data', d => { output += d.toString(); });
+    proc.stderr.on('data', () => {});
+    proc.on('close', code => {
+      clearTimeout(timer);
+      if (!output.trim()) return reject(new Error("nothing found for that search"));
+      try {
+        const info = JSON.parse(output.trim().split('\n')[0]);
+        if (!info?.webpage_url) return reject(new Error("couldn't parse search result"));
+        resolve({ title: info.title || 'unknown', url: info.webpage_url });
+      } catch {
+        reject(new Error("couldn't parse search result"));
+      }
+    });
+    proc.on('error', () => {
+      clearTimeout(timer);
+      reject(new Error("yt-dlp not available — can't search"));
+    });
+  });
+}
+
+function ytdlpInfo(url) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error("lookup timed out — try again"));
+    }, 15000);
+
+    let output = '';
+    const proc = spawn('yt-dlp', ['--dump-json', '--no-playlist', url]);
+    proc.stdout.on('data', d => { output += d.toString(); });
+    proc.stderr.on('data', () => {});
+    proc.on('close', () => {
+      clearTimeout(timer);
+      if (!output.trim()) return reject(new Error("couldn't get video info"));
+      try {
+        const info = JSON.parse(output.trim().split('\n')[0]);
+        if (!info?.webpage_url) return reject(new Error("couldn't parse video info"));
+        resolve({ title: info.title || 'unknown', url: info.webpage_url });
+      } catch {
+        reject(new Error("couldn't parse video info"));
+      }
+    });
+    proc.on('error', () => {
+      clearTimeout(timer);
+      reject(new Error("yt-dlp not available"));
+    });
+  });
+}
 
 async function resolveSong(query) {
   const isUrl = /^https?:\/\//i.test(query);
@@ -193,9 +257,7 @@ async function resolveSong(query) {
         if (!oembed.ok) throw new Error("couldn't get spotify track info");
         const { title } = await oembed.json();
         if (!title) throw new Error("no title returned from spotify");
-        const results = await play.search(title, { source: { youtube: 'video' }, limit: 1 });
-        if (!results.length) throw new Error("couldn't find that on YouTube");
-        return { title: results[0].title, url: results[0].url };
+        return await ytdlpSearch(title);
       } catch (err) {
         throw new Error(err.message || "couldn't handle that spotify link");
       }
@@ -212,10 +274,7 @@ async function resolveSong(query) {
         const data = await res.json();
         const track = data.results?.find(r => r.wrapperType === 'track') ?? data.results?.[0];
         if (!track?.trackName) throw new Error("couldn't get track info from apple music");
-        const searchQuery = `${track.trackName} ${track.artistName}`;
-        const results = await play.search(searchQuery, { source: { youtube: 'video' }, limit: 1 });
-        if (!results.length) throw new Error("couldn't find that on YouTube");
-        return { title: results[0].title, url: results[0].url };
+        return await ytdlpSearch(`${track.trackName} ${track.artistName}`);
       } catch (err) {
         throw new Error(err.message || "couldn't handle that apple music link");
       }
@@ -224,53 +283,34 @@ async function resolveSong(query) {
     // ── SoundCloud ────────────────────────────────────────────────────────────
     if (query.includes('soundcloud.com')) {
       try {
-        const soInfo = await play.soundcloud(query);
-        return { title: soInfo.name || 'unknown', url: query };
+        return await ytdlpInfo(query);
       } catch {
         throw new Error("couldn't load that soundcloud track");
       }
     }
 
-    // ── YouTube playlist ──────────────────────────────────────────────────────
-    if (play.yt_validate(query) === 'playlist') {
+    // ── YouTube video / playlist URL ──────────────────────────────────────────
+    if (query.includes('youtube.com') || query.includes('youtu.be')) {
       try {
-        const playlist = await play.playlist_info(query, { incomplete: true });
-        const videos   = await playlist.all_videos();
-        const first    = videos[0];
-        if (!first) throw new Error("playlist is empty");
-        return { title: first.title, url: first.url };
+        return await ytdlpInfo(query);
       } catch (err) {
-        throw new Error(err.message || "couldn't load playlist");
+        throw new Error(err.message || "couldn't get info for that video");
       }
     }
 
-    // ── YouTube video or any other direct URL ─────────────────────────────────
-    if (play.yt_validate(query) === 'video') {
-      try {
-        const info = await play.video_info(query);
-        return { title: info.video_details.title, url: info.video_details.url };
-      } catch {
-        throw new Error("couldn't get info for that video");
-      }
-    }
-
-    // ── Fallback: try searching as-is ─────────────────────────────────────────
+    // ── Any other URL — try yt-dlp directly ──────────────────────────────────
     try {
-      const results = await play.search(query, { source: { youtube: 'video' }, limit: 1 });
-      if (!results.length) throw new Error("nothing found");
-      return { title: results[0].title, url: results[0].url };
+      return await ytdlpInfo(query);
     } catch {
       throw new Error("couldn't find anything for that url");
     }
   }
 
-  // ── Plain text search → YouTube ───────────────────────────────────────────
+  // ── Plain text search → YouTube via yt-dlp ───────────────────────────────
   try {
-    const results = await play.search(query, { source: { youtube: 'video' }, limit: 1 });
-    if (!results.length) throw new Error("couldn't find anything for that");
-    return { title: results[0].title, url: results[0].url };
-  } catch {
-    throw new Error("couldn't find anything for that");
+    return await ytdlpSearch(query);
+  } catch (err) {
+    throw new Error(err.message || "couldn't find anything for that");
   }
 }
 
@@ -280,13 +320,26 @@ async function streamSong(guildId, song) {
   queue.currentSong = song;
 
   try {
-    const stream   = await play.stream(song.url);
-    const resource = createAudioResource(stream.stream, {
-      inputType:    stream.type,
+    const ytdlp = spawn('yt-dlp', [
+      '-f', 'bestaudio[ext=webm]/bestaudio/best',
+      '--no-playlist',
+      '-o', '-',
+      '--quiet',
+      song.url
+    ]);
+
+    const resource = createAudioResource(ytdlp.stdout, {
+      inputType: 'arbitrary',
       inlineVolume: true
     });
+
     resource.volume?.setVolume(queue.volume ?? 1);
     queue.currentResource = resource;
+
+    ytdlp.on('error', err => {
+      console.error('yt-dlp spawn error:', err.message);
+    });
+
     queue.player.play(resource);
   } catch (err) {
     console.error('stream error:', err.message);
