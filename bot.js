@@ -1,4 +1,4 @@
-const {
+import {
   Client,
   GatewayIntentBits,
   EmbedBuilder,
@@ -14,11 +14,13 @@ const {
   REST,
   Routes,
   SlashCommandBuilder
-} = require('discord.js');
-const { Player, QueryType, useQueue, usePlayer } = require('discord-player');
-const { YoutubeiExtractor } = require('discord-player-youtubei');
-const fs   = require('fs');
-const path = require('path');
+} from 'discord.js';
+import { Player, QueryType, useQueue, usePlayer, QueueRepeatMode } from 'discord-player';
+import { YoutubeiExtractor } from 'discord-player-youtubei';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Client ──────────────────────────────────────────────────────────────────
 const client = new Client({
@@ -41,7 +43,11 @@ const player = new Player(client, {
   }
 });
 
-player.extractors.register(YoutubeiExtractor, {});
+player.extractors.register(YoutubeiExtractor, {
+  streamOptions: {
+    useClient: 'WEB_EMBEDDED',
+  },
+});
 
 player.events.on('playerStart', (queue, track) => {
   queue.metadata?.channel?.send({
@@ -260,6 +266,7 @@ const COMMAND_PAGES = [
       '{p}unjail @user',
       '{p}lock',
       '{p}unlock',
+      '{p}nuke',
     ],
   },
   {
@@ -403,7 +410,7 @@ const gcCache    = new Map();
 const snipeCache = new Map();
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
-const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'snipe', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'setlog']);
+const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'snipe', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'setlog', 'nuke']);
 
 const slashCommands = [
   new SlashCommandBuilder().setName('help').setDescription('shows the command list').setDMPermission(true),
@@ -446,6 +453,7 @@ const slashCommands = [
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
   new SlashCommandBuilder().setName('unhush').setDescription('remove auto-delete from a user').setDMPermission(true)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
+  new SlashCommandBuilder().setName('nuke').setDescription('delete and recreate the channel (clears all messages)').setDMPermission(false),
   new SlashCommandBuilder().setName('lock').setDescription('lock the current channel').setDMPermission(true),
   new SlashCommandBuilder().setName('unlock').setDescription('unlock the current channel').setDMPermission(true),
   new SlashCommandBuilder().setName('say').setDescription('make the bot say something').setDMPermission(true)
@@ -783,7 +791,6 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return;
     const queue = useQueue(guild.id);
     if (!queue) return interaction.reply({ content: "nothing is playing", ephemeral: true });
-    const { QueueRepeatMode } = require('discord-player');
     const modeArg = interaction.options.getString('mode');
     const modeMap = { off: QueueRepeatMode.OFF, track: QueueRepeatMode.TRACK, queue: QueueRepeatMode.QUEUE };
     const newMode = modeArg ? modeMap[modeArg] : (queue.repeatMode === QueueRepeatMode.OFF ? QueueRepeatMode.TRACK : QueueRepeatMode.OFF);
@@ -971,6 +978,34 @@ client.on('interactionCreate', async interaction => {
       await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null });
       return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setDescription('🔓 channel unlocked')] });
     } catch { return interaction.reply({ content: "couldn't unlock the channel, check my perms", ephemeral: true }); }
+  }
+
+  if (commandName === 'nuke') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    try {
+      const ch = channel;
+      const newCh = await ch.clone({
+        name:     ch.name,
+        topic:    ch.topic,
+        nsfw:     ch.nsfw,
+        parent:   ch.parentId,
+        position: ch.rawPosition,
+        permissionOverwrites: ch.permissionOverwrites.cache
+      });
+      await ch.delete();
+      await newCh.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x2b2d31)
+            .setTitle('channel nuked')
+            .setDescription(`nuked by **${interaction.user.tag}**`)
+            .setTimestamp()
+        ]
+      });
+    } catch (err) {
+      return interaction.reply({ content: `couldn't nuke — ${err.message}`, ephemeral: true }).catch(() => {});
+    }
+    return;
   }
 
   if (commandName === 'say') {
@@ -1362,7 +1397,6 @@ client.on('messageCreate', async message => {
     if (!message.guild) return;
     const queue = useQueue(message.guild.id);
     if (!queue) return message.reply("not playing anything");
-    const { QueueRepeatMode } = require('discord-player');
     const modeArg = args[0]?.toLowerCase();
     const modeMap = { off: QueueRepeatMode.OFF, track: QueueRepeatMode.TRACK, queue: QueueRepeatMode.QUEUE };
     let newMode;
@@ -1518,6 +1552,35 @@ client.on('messageCreate', async message => {
   if (command === 'unlock') {
     try { await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null }); return message.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setDescription('🔓 channel unlocked')] }); }
     catch { return message.reply("couldn't unlock the channel, check my perms"); }
+  }
+
+  if (command === 'nuke') {
+    if (!message.guild) return;
+    try {
+      const ch = message.channel;
+      const nuker = message.author.tag;
+      const newCh = await ch.clone({
+        name:     ch.name,
+        topic:    ch.topic,
+        nsfw:     ch.nsfw,
+        parent:   ch.parentId,
+        position: ch.rawPosition,
+        permissionOverwrites: ch.permissionOverwrites.cache
+      });
+      await ch.delete();
+      await newCh.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x2b2d31)
+            .setTitle('channel nuked')
+            .setDescription(`nuked by **${nuker}**`)
+            .setTimestamp()
+        ]
+      });
+    } catch (err) {
+      return message.reply(`couldn't nuke — ${err.message}`);
+    }
+    return;
   }
 
   if (command === 'prefix') {
