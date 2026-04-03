@@ -21,9 +21,9 @@ const {
   createAudioResource,
   AudioPlayerStatus,
   VoiceConnectionStatus,
-  getVoiceConnection
+  getVoiceConnection,
+  StreamType
 } = require('@discordjs/voice');
-const playdl = require('play-dl');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -182,67 +182,145 @@ async function rankRobloxUser(robloxUsername, roleId) {
 // ─── Music system ───────────────────────────────────────────────────────────
 const guildQueues = new Map();
 
-async function resolveSong(query) {
-  let urlType = false;
-  try { urlType = await playdl.validate(query); } catch {}
+// Run yt-dlp and return parsed JSON for a single video/search result
+function ytdlpJson(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('yt-dlp', [...args, '--dump-json', '--no-warnings', '--quiet'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', d => { out += d; });
+    proc.stderr.on('data', d => { err += d; });
+    proc.on('close', code => {
+      const line = out.trim().split('\n')[0];
+      if (!line) return reject(new Error(err.trim() || 'yt-dlp returned no output'));
+      try { resolve(JSON.parse(line)); }
+      catch { reject(new Error('failed to parse yt-dlp output')); }
+    });
+    proc.on('error', e => reject(new Error(`yt-dlp not found: ${e.message} — make sure yt-dlp is installed`)));
+  });
+}
 
-  if (urlType === 'yt_video') {
+// Get the best audio CDN URL for a given playable URL
+function ytdlpGetUrl(url) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('yt-dlp', ['-f', 'bestaudio', '-g', '--no-playlist', '--no-warnings', '--quiet', url], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', d => { out += d; });
+    proc.stderr.on('data', d => { err += d; });
+    proc.on('close', code => {
+      const line = out.trim().split('\n')[0];
+      if (code === 0 && line) resolve(line);
+      else reject(new Error(err.trim() || 'yt-dlp failed to get stream url'));
+    });
+    proc.on('error', e => reject(new Error(`yt-dlp not found: ${e.message}`)));
+  });
+}
+
+async function resolveSong(query) {
+  const isUrl = /^https?:\/\//i.test(query);
+
+  if (isUrl) {
+    // ── Spotify ──────────────────────────────────────────────────────────────
+    if (query.includes('open.spotify.com')) {
+      try {
+        const oembed = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(query)}`);
+        if (!oembed.ok) throw new Error("couldn't get spotify track info");
+        const { title } = await oembed.json();
+        if (!title) throw new Error("no title returned from spotify");
+        const info = await ytdlpJson([`ytsearch1:${title}`]);
+        return { title: info.title, url: info.webpage_url };
+      } catch (err) {
+        throw new Error(err.message || "couldn't handle that spotify link");
+      }
+    }
+
+    // ── Apple Music ───────────────────────────────────────────────────────────
+    if (query.includes('music.apple.com')) {
+      try {
+        // Extract the track ID from the URL (?i=TRACKID or /TRACKID at end)
+        const trackIdMatch = query.match(/[?&]i=(\d+)/) || query.match(/\/(\d+)(?:[?#]|$)/);
+        if (!trackIdMatch) throw new Error("couldn't parse apple music url");
+        const trackId = trackIdMatch[1];
+        const res = await fetch(`https://itunes.apple.com/lookup?id=${trackId}&entity=song`);
+        if (!res.ok) throw new Error("itunes lookup failed");
+        const data = await res.json();
+        const track = data.results?.find(r => r.wrapperType === 'track') ?? data.results?.[0];
+        if (!track?.trackName) throw new Error("couldn't get track info from apple music");
+        const searchQuery = `${track.trackName} ${track.artistName}`;
+        const info = await ytdlpJson([`ytsearch1:${searchQuery}`]);
+        return { title: info.title, url: info.webpage_url };
+      } catch (err) {
+        throw new Error(err.message || "couldn't handle that apple music link");
+      }
+    }
+
+    // ── SoundCloud ────────────────────────────────────────────────────────────
+    if (query.includes('soundcloud.com')) {
+      try {
+        const info = await ytdlpJson([query]);
+        return { title: info.title || 'unknown', url: query };
+      } catch {
+        throw new Error("couldn't load that soundcloud track");
+      }
+    }
+
+    // ── YouTube playlist ──────────────────────────────────────────────────────
+    if (query.includes('list=')) {
+      try {
+        const info = await ytdlpJson(['--flat-playlist', '--playlist-items', '1', query]);
+        const videoUrl = info.url || info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`;
+        return { title: info.title || 'unknown', url: videoUrl };
+      } catch (err) {
+        throw new Error(err.message || "couldn't load playlist");
+      }
+    }
+
+    // ── YouTube video or any other direct URL ─────────────────────────────────
     try {
-      const info = await playdl.video_info(query);
-      return { title: info.video_details.title || 'unknown', url: query };
+      const info = await ytdlpJson([query]);
+      return { title: info.title || 'unknown', url: info.webpage_url || query };
     } catch {
       throw new Error("couldn't get info for that video");
     }
   }
 
-  if (urlType === 'yt_playlist') {
-    try {
-      const playlist = await playdl.playlist_info(query, { incomplete: true });
-      const first = playlist.videos?.[0];
-      if (!first) throw new Error("playlist is empty");
-      return { title: first.title || 'unknown', url: first.url };
-    } catch (err) {
-      throw new Error(err.message || "couldn't load playlist");
-    }
+  // ── Plain text search → YouTube ───────────────────────────────────────────
+  try {
+    const info = await ytdlpJson([`ytsearch1:${query}`]);
+    return { title: info.title, url: info.webpage_url };
+  } catch {
+    throw new Error("couldn't find anything for that");
   }
-
-  if (urlType && String(urlType).startsWith('sp_')) {
-    try {
-      // Use Spotify's public oEmbed API — no credentials required
-      const oembed = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(query)}`);
-      if (!oembed.ok) throw new Error("couldn't get spotify track info");
-      const { title } = await oembed.json();
-      if (!title) throw new Error("no title returned from spotify");
-      const results = await playdl.search(title, { source: { youtube: 'video' }, limit: 1 });
-      if (!results.length) throw new Error("couldn't find this on youtube");
-      return { title: results[0].title, url: results[0].url };
-    } catch (err) {
-      throw new Error(err.message || "couldn't handle that spotify link");
-    }
-  }
-
-  if (urlType === 'so_track') {
-    try {
-      const soData = await playdl.soundcloud(query);
-      return { title: soData.name || 'unknown', url: query };
-    } catch {
-      throw new Error("couldn't load that soundcloud track");
-    }
-  }
-
-  // plain text search or unsupported URL → search YouTube
-  const results = await playdl.search(query, { source: { youtube: 'video' }, limit: 1 });
-  if (!results.length) throw new Error("couldn't find anything for that");
-  return { title: results[0].title, url: results[0].url };
 }
 
 async function streamSong(guildId, song) {
   const queue = guildQueues.get(guildId);
   if (!queue) return;
   queue.currentSong = song;
+
+  // Kill any previous ffmpeg process
+  try { if (queue.ffmpegProc) queue.ffmpegProc.kill('SIGKILL'); } catch {}
+  queue.ffmpegProc = null;
+
   try {
-    const stream   = await playdl.stream(song.url, { quality: 2 });
-    const resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: true });
+    const audioUrl = await ytdlpGetUrl(song.url);
+
+    const ffmpeg = spawn('ffmpeg', [
+      '-reconnect',        '1',
+      '-reconnect_streamed','1',
+      '-reconnect_delay_max','5',
+      '-i',                audioUrl,
+      '-vn',
+      '-f',                's16le',
+      '-ar',               '48000',
+      '-ac',               '2',
+      'pipe:1'
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+
+    queue.ffmpegProc = ffmpeg;
+
+    const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
     resource.volume?.setVolume(queue.volume ?? 1);
     queue.currentResource = resource;
     queue.player.play(resource);
@@ -280,6 +358,7 @@ function createQueue(guildId, voiceChannel, textChannel) {
     songs:           [],
     currentSong:     null,
     currentResource: null,
+    ffmpegProc:      null,
     repeat:          false,
     skipNext:        false,
     volume:          1,
@@ -314,6 +393,7 @@ function createQueue(guildId, voiceChannel, textChannel) {
     const q = guildQueues.get(guildId);
     if (q) {
       try { q.player.stop(true); } catch {}
+      try { if (q.ffmpegProc) q.ffmpegProc.kill('SIGKILL'); } catch {}
       guildQueues.delete(guildId);
     }
   });
@@ -503,7 +583,7 @@ function buildMusicHelpEmbed(prefix) {
     .setTitle('music')
     .setDescription([
       `\`${p}play [song, artist, or link]\` — join vc and play`,
-      '> supports YouTube, Spotify, SoundCloud URLs or plain search',
+      '> supports YouTube, Spotify, Apple Music, SoundCloud URLs or plain search',
       `\`${p}pause\` — pause / resume`,
       `\`${p}skip\` — skip current song`,
       `\`${p}queue\` — show the queue`,
@@ -597,7 +677,7 @@ const slashCommands = [
     .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
   // ─── Music slash commands ─────────────────────────────────────────────────
   new SlashCommandBuilder().setName('play').setDescription('play a song in your voice channel').setDMPermission(false)
-    .addStringOption(o => o.setName('query').setDescription('song name, artist, or link (YouTube, Spotify, SoundCloud)').setRequired(true)),
+    .addStringOption(o => o.setName('query').setDescription('song name, artist, or link (YouTube, Spotify, Apple Music, SoundCloud)').setRequired(true)),
   new SlashCommandBuilder().setName('pause').setDescription('pause or resume playback').setDMPermission(false),
   new SlashCommandBuilder().setName('skip').setDescription('skip the current song').setDMPermission(false),
   new SlashCommandBuilder().setName('queue').setDescription('show the current queue').setDMPermission(false),
@@ -1007,6 +1087,7 @@ client.on('interactionCreate', async interaction => {
     if (queue) {
       guildQueues.delete(guild.id);          // delete first so Disconnected handler is a no-op
       try { queue.player.stop(true); } catch {}
+      try { if (queue.ffmpegProc) queue.ffmpegProc.kill('SIGKILL'); } catch {}
       try { queue.connection.destroy(); } catch {}
     }
     try {
@@ -1887,6 +1968,7 @@ client.on('messageCreate', async message => {
     if (queue) {
       guildQueues.delete(message.guild.id);    // delete first so Disconnected handler is a no-op
       try { queue.player.stop(true); } catch {}
+      try { if (queue.ffmpegProc) queue.ffmpegProc.kill('SIGKILL'); } catch {}
       try { queue.connection.destroy(); } catch {}
     }
     try {
