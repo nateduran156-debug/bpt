@@ -13,6 +13,12 @@ const {
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
+
+const db = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+// in-memory whitelist — populated from the database on startup
+let whitelist = [];
 
 const client = new Client({
   intents: [
@@ -48,12 +54,11 @@ function saveAfk(a)   { saveJSON(AFK_FILE, a); }
 
 (function initConfig() {
   if (!fs.existsSync(CONFIG_FILE)) {
-    saveJSON(CONFIG_FILE, { whitelist: [], logChannelId: null, prefix: '.', status: null });
+    saveJSON(CONFIG_FILE, { logChannelId: null, prefix: '.', status: null });
     console.log('created config.json');
   } else {
     const cfg = loadConfig();
     let changed = false;
-    if (!Array.isArray(cfg.whitelist)) { cfg.whitelist = []; changed = true; }
     if (!cfg.prefix) { cfg.prefix = '.'; changed = true; }
     if (changed) saveConfig(cfg);
   }
@@ -298,6 +303,16 @@ client.once('clientReady', async () => {
   const cfg = loadConfig();
   if (cfg.status) applyStatus(cfg.status);
 
+  // set up the whitelist table and load existing entries into memory
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS whitelist (user_id TEXT PRIMARY KEY)`);
+    const { rows } = await db.query('SELECT user_id FROM whitelist');
+    whitelist = rows.map(r => r.user_id);
+    console.log(`whitelist loaded from db: ${whitelist.length} user(s)`);
+  } catch (err) {
+    console.error('db init error:', err.message);
+  }
+
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
     const guildId = process.env.GUILD_ID;
@@ -348,8 +363,6 @@ client.on('interactionCreate', async interaction => {
 
   const { commandName, member, guild, channel } = interaction;
 
-  const cfg      = loadConfig();
-  const whitelist = cfg.whitelist ?? [];
   const isWhitelisted = whitelist.includes(interaction.user.id);
 
   if (!isWhitelisted) {
@@ -845,17 +858,15 @@ client.on('interactionCreate', async interaction => {
     if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
       return interaction.reply({ content: 'u need admin for that', ephemeral: true });
 
-    const sub    = interaction.options.getString('action');
-    const cfg2   = loadConfig();
-    cfg2.whitelist = cfg2.whitelist ?? [];
+    const sub = interaction.options.getString('action');
 
     if (sub === 'add') {
       const target = interaction.options.getMember('user');
       if (!target) return interaction.reply({ content: 'mention someone', ephemeral: true });
-      if (cfg2.whitelist.includes(target.id))
+      if (whitelist.includes(target.id))
         return interaction.reply({ content: `**${target.user.tag}** is already on the whitelist`, ephemeral: true });
-      cfg2.whitelist.push(target.id);
-      saveConfig(cfg2);
+      await db.query('INSERT INTO whitelist (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [target.id]);
+      whitelist.push(target.id);
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
@@ -874,10 +885,10 @@ client.on('interactionCreate', async interaction => {
     if (sub === 'remove') {
       const target = interaction.options.getMember('user');
       if (!target) return interaction.reply({ content: 'mention someone', ephemeral: true });
-      if (!cfg2.whitelist.includes(target.id))
+      if (!whitelist.includes(target.id))
         return interaction.reply({ content: `**${target.user.tag}** isn't on the whitelist`, ephemeral: true });
-      cfg2.whitelist = cfg2.whitelist.filter(id => id !== target.id);
-      saveConfig(cfg2);
+      await db.query('DELETE FROM whitelist WHERE user_id = $1', [target.id]);
+      whitelist = whitelist.filter(id => id !== target.id);
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
@@ -894,7 +905,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (sub === 'list') {
-      if (!cfg2.whitelist.length) {
+      if (!whitelist.length) {
         return interaction.reply({
           embeds: [
             new EmbedBuilder()
@@ -904,7 +915,7 @@ client.on('interactionCreate', async interaction => {
           ]
         });
       }
-      const lines = cfg2.whitelist.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
+      const lines = whitelist.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
@@ -954,8 +965,6 @@ client.on('messageCreate', async message => {
 
   if (!message.content.startsWith(prefix)) return;
 
-  const cfg2      = loadConfig();
-  const whitelist = cfg2.whitelist ?? [];
   if (!whitelist.includes(message.author.id)) return;
 
   const args    = message.content.slice(prefix.length).trim().split(/ +/);
@@ -1381,15 +1390,13 @@ client.on('messageCreate', async message => {
     if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator))
       return message.reply('u need admin for that');
     const sub = args[0]?.toLowerCase();
-    const cfg = loadConfig();
-    cfg.whitelist = cfg.whitelist ?? [];
 
     if (sub === 'add') {
       const target = message.mentions.members.first();
       if (!target) return message.reply('mention someone');
-      if (cfg.whitelist.includes(target.id)) return message.reply(`**${target.user.tag}** is already on the whitelist`);
-      cfg.whitelist.push(target.id);
-      saveConfig(cfg);
+      if (whitelist.includes(target.id)) return message.reply(`**${target.user.tag}** is already on the whitelist`);
+      await db.query('INSERT INTO whitelist (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [target.id]);
+      whitelist.push(target.id);
       return message.reply({
         embeds: [
           new EmbedBuilder()
@@ -1408,9 +1415,9 @@ client.on('messageCreate', async message => {
     if (sub === 'remove') {
       const target = message.mentions.members.first();
       if (!target) return message.reply('mention someone');
-      if (!cfg.whitelist.includes(target.id)) return message.reply(`**${target.user.tag}** isn't on the whitelist`);
-      cfg.whitelist = cfg.whitelist.filter(id => id !== target.id);
-      saveConfig(cfg);
+      if (!whitelist.includes(target.id)) return message.reply(`**${target.user.tag}** isn't on the whitelist`);
+      await db.query('DELETE FROM whitelist WHERE user_id = $1', [target.id]);
+      whitelist = whitelist.filter(id => id !== target.id);
       return message.reply({
         embeds: [
           new EmbedBuilder()
@@ -1427,7 +1434,7 @@ client.on('messageCreate', async message => {
     }
 
     if (sub === 'list') {
-      if (!cfg.whitelist.length) {
+      if (!whitelist.length) {
         return message.reply({
           embeds: [
             new EmbedBuilder()
@@ -1437,7 +1444,7 @@ client.on('messageCreate', async message => {
           ]
         });
       }
-      const lines = cfg.whitelist.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
+      const lines = whitelist.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
       return message.reply({
         embeds: [
           new EmbedBuilder()
