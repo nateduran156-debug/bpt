@@ -48,6 +48,9 @@ const WHITELIST_FILE = path.join(__dirname, 'whitelist.json');
 const REBOOT_FILE    = path.join(__dirname, 'reboot_msg.json');
 const VM_CONFIG_FILE   = path.join(__dirname, 'vm_config.json');
 const VM_CHANNELS_FILE = path.join(__dirname, 'vm_channels.json');
+const JAIL_FILE           = path.join(__dirname, 'jail.json');
+const WL_MANAGERS_FILE    = path.join(__dirname, 'wl_managers.json');
+const AUTOREACT_FILE      = path.join(__dirname, 'autoreact.json');
 
 function loadJSON(file) {
   if (!fs.existsSync(file)) return {};
@@ -76,6 +79,21 @@ function loadVmConfig()    { return loadJSON(VM_CONFIG_FILE); }
 function saveVmConfig(c)   { saveJSON(VM_CONFIG_FILE, c); }
 function loadVmChannels()  { return loadJSON(VM_CHANNELS_FILE); }
 function saveVmChannels(c) { saveJSON(VM_CHANNELS_FILE, c); }
+function loadJail()        { return loadJSON(JAIL_FILE); }
+function saveJail(j)       { saveJSON(JAIL_FILE, j); }
+function loadWlManagers()  {
+  const data = loadJSON(WL_MANAGERS_FILE);
+  return Array.isArray(data.ids) ? data.ids : [];
+}
+function saveWlManagers(ids) { saveJSON(WL_MANAGERS_FILE, { ids }); }
+function loadAutoreact()     { return loadJSON(AUTOREACT_FILE); }
+function saveAutoreact(d)    { saveJSON(AUTOREACT_FILE, d); }
+function isWlManager(userId) {
+  const fromFile = loadWlManagers();
+  if (fromFile.includes(userId)) return true;
+  const fromEnv  = (process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean);
+  return fromEnv.includes(userId);
+}
 
 (function initConfig() {
   if (!fs.existsSync(CONFIG_FILE)) {
@@ -104,6 +122,12 @@ function saveVmChannels(c) { saveJSON(VM_CHANNELS_FILE, c); }
   if (!fs.existsSync(TAGS_FILE)) {
     saveJSON(TAGS_FILE, {});
     console.log('created tags.json');
+  }
+  if (!fs.existsSync(WL_MANAGERS_FILE)) {
+    const fromEnv = (process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean);
+    saveWlManagers(fromEnv);
+    if (fromEnv.length) console.log(`migrated ${fromEnv.length} whitelist manager(s) from env`);
+    else console.log('created wl_managers.json');
   }
 })();
 
@@ -182,26 +206,38 @@ async function rankRobloxUser(robloxUsername, roleId) {
 // ─── Music system (yt-dlp) ───────────────────────────────────────────────────
 const guildQueues = new Map();
 
+const YTDLP_BASE_FLAGS = [
+  '--no-playlist',
+  '--no-check-certificate',
+  '--geo-bypass',
+  '--extractor-args', 'youtube:player_client=android,web',
+  '--add-header', 'User-Agent:Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36',
+];
+
 function ytdlpSearch(searchQuery) {
   return new Promise((resolve, reject) => {
+    let proc;
     const timer = setTimeout(() => {
-      proc.kill();
+      try { proc?.kill(); } catch {}
       reject(new Error("search timed out — try again"));
-    }, 15000);
+    }, 20000);
 
     let output = '';
-    const proc = spawn('yt-dlp', [
+    let errOutput = '';
+    proc = spawn('yt-dlp', [
       '--dump-json',
-      '--no-playlist',
-      '--default-search', 'ytsearch',
+      ...YTDLP_BASE_FLAGS,
       `ytsearch1:${searchQuery}`
     ]);
 
     proc.stdout.on('data', d => { output += d.toString(); });
-    proc.stderr.on('data', () => {});
-    proc.on('close', code => {
+    proc.stderr.on('data', d => { errOutput += d.toString(); });
+    proc.on('close', () => {
       clearTimeout(timer);
-      if (!output.trim()) return reject(new Error("nothing found for that search"));
+      if (!output.trim()) {
+        console.error('yt-dlp search stderr:', errOutput.slice(0, 300));
+        return reject(new Error("nothing found for that search"));
+      }
       try {
         const info = JSON.parse(output.trim().split('\n')[0]);
         if (!info?.webpage_url) return reject(new Error("couldn't parse search result"));
@@ -219,18 +255,23 @@ function ytdlpSearch(searchQuery) {
 
 function ytdlpInfo(url) {
   return new Promise((resolve, reject) => {
+    let proc;
     const timer = setTimeout(() => {
-      proc.kill();
+      try { proc?.kill(); } catch {}
       reject(new Error("lookup timed out — try again"));
-    }, 15000);
+    }, 20000);
 
     let output = '';
-    const proc = spawn('yt-dlp', ['--dump-json', '--no-playlist', url]);
+    let errOutput = '';
+    proc = spawn('yt-dlp', ['--dump-json', ...YTDLP_BASE_FLAGS, url]);
     proc.stdout.on('data', d => { output += d.toString(); });
-    proc.stderr.on('data', () => {});
+    proc.stderr.on('data', d => { errOutput += d.toString(); });
     proc.on('close', () => {
       clearTimeout(timer);
-      if (!output.trim()) return reject(new Error("couldn't get video info"));
+      if (!output.trim()) {
+        console.error('yt-dlp info stderr:', errOutput.slice(0, 300));
+        return reject(new Error("couldn't get video info"));
+      }
       try {
         const info = JSON.parse(output.trim().split('\n')[0]);
         if (!info?.webpage_url) return reject(new Error("couldn't parse video info"));
@@ -255,9 +296,12 @@ async function resolveSong(query) {
       try {
         const oembed = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(query)}`);
         if (!oembed.ok) throw new Error("couldn't get spotify track info");
-        const { title } = await oembed.json();
+        const data = await oembed.json();
+        const title = data.title;
+        const artist = data.author_name;
         if (!title) throw new Error("no title returned from spotify");
-        return await ytdlpSearch(title);
+        const searchQuery = artist ? `${title} ${artist}` : title;
+        return await ytdlpSearch(searchQuery);
       } catch (err) {
         throw new Error(err.message || "couldn't handle that spotify link");
       }
@@ -322,7 +366,7 @@ async function streamSong(guildId, song) {
   try {
     const ytdlp = spawn('yt-dlp', [
       '-f', 'bestaudio[ext=webm]/bestaudio/best',
-      '--no-playlist',
+      ...YTDLP_BASE_FLAGS,
       '-o', '-',
       '--quiet',
       song.url
@@ -415,6 +459,88 @@ function createQueue(guildId, voiceChannel, textChannel) {
   return queue;
 }
 
+// ─── Jail helpers ────────────────────────────────────────────────────────────
+async function jailMember(guild, member, reason, modTag) {
+  const jailData = loadJail();
+  if (!jailData[guild.id]) jailData[guild.id] = {};
+  if (jailData[guild.id][member.id]) throw new Error(`**${member.user.tag}** is already jailed`);
+
+  let jailChannel = guild.channels.cache.find(c => c.name === 'jail' && c.isTextBased());
+  if (!jailChannel) {
+    jailChannel = await guild.channels.create({
+      name: 'jail',
+      type: ChannelType.GuildText,
+      permissionOverwrites: [
+        { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] }
+      ]
+    });
+  }
+
+  await jailChannel.permissionOverwrites.edit(member.id, {
+    ViewChannel:  true,
+    SendMessages: true
+  });
+
+  const deniedChannels = [];
+  for (const [, ch] of guild.channels.cache) {
+    if (!ch.isTextBased() && ch.type !== ChannelType.GuildAnnouncement) continue;
+    if (ch.id === jailChannel.id) continue;
+    const existing = ch.permissionOverwrites.cache.get(member.id);
+    const alreadyDenied = existing?.deny.has(PermissionsBitField.Flags.ViewChannel);
+    if (alreadyDenied) continue;
+    try {
+      await ch.permissionOverwrites.edit(member.id, { ViewChannel: false });
+      deniedChannels.push(ch.id);
+    } catch {}
+  }
+
+  jailData[guild.id][member.id] = { jailChannelId: jailChannel.id, deniedChannels };
+  saveJail(jailData);
+
+  return new EmbedBuilder()
+    .setTitle('jailed')
+    .setColor(0xed4245)
+    .setThumbnail(member.user.displayAvatarURL())
+    .addFields(
+      { name: 'user',   value: member.user.tag, inline: true },
+      { name: 'mod',    value: modTag,           inline: true },
+      { name: 'reason', value: reason }
+    )
+    .setDescription(`they can only see ${jailChannel}`)
+    .setTimestamp();
+}
+
+async function unjailMember(guild, member, modTag) {
+  const jailData = loadJail();
+  const entry = jailData[guild.id]?.[member.id];
+  if (!entry) throw new Error(`**${member.user.tag}** isn't jailed`);
+
+  for (const chId of entry.deniedChannels) {
+    try {
+      const ch = guild.channels.cache.get(chId);
+      if (ch) await ch.permissionOverwrites.delete(member.id);
+    } catch {}
+  }
+
+  try {
+    const jailChannel = guild.channels.cache.get(entry.jailChannelId);
+    if (jailChannel) await jailChannel.permissionOverwrites.delete(member.id);
+  } catch {}
+
+  delete jailData[guild.id][member.id];
+  saveJail(jailData);
+
+  return new EmbedBuilder()
+    .setTitle('unjailed')
+    .setColor(0x57f287)
+    .setThumbnail(member.user.displayAvatarURL())
+    .addFields(
+      { name: 'user', value: member.user.tag, inline: true },
+      { name: 'mod',  value: modTag,          inline: true }
+    )
+    .setTimestamp();
+}
+
 // ─── Help pages ─────────────────────────────────────────────────────────────
 const COMMAND_PAGES = [
   {
@@ -429,6 +555,8 @@ const COMMAND_PAGES = [
       '{p}unmute @user',
       '{p}hush @user',
       '{p}unhush @user',
+      '{p}jail @user',
+      '{p}unjail @user',
       '{p}lock',
       '{p}unlock',
     ],
@@ -449,12 +577,12 @@ const COMMAND_PAGES = [
     cmds: [
       '{p}prefix [new prefix]',
       '{p}status [type] [text]',
-      '{p}reboot',
+      '{p}restart',
       '{p}say [text]',
       '{p}cs',
-      '{p}whitelist add @user',
-      '{p}whitelist remove @user',
-      '{p}whitelist list',
+      '/whitelist add @user',
+      '/whitelist remove @user',
+      '/whitelist list',
       '{p}setlog #channel',
     ],
   },
@@ -666,7 +794,20 @@ const slashCommands = [
     .addStringOption(o => o.setName('name').setDescription('tag name').setRequired(true))
     .addStringOption(o => o.setName('content').setDescription('role id for new tag').setRequired(false))
     .addStringOption(o => o.setName('robloxuser').setDescription('roblox username to rank using this tag').setRequired(false)),
-  new SlashCommandBuilder().setName('reboot').setDescription('restart the bot').setDMPermission(true),
+  new SlashCommandBuilder().setName('restart').setDescription('restart the bot').setDMPermission(true),
+  new SlashCommandBuilder().setName('wlmanager').setDescription('manage whitelist managers').setDMPermission(true)
+    .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
+      .addChoices(
+        { name: 'add',    value: 'add'    },
+        { name: 'remove', value: 'remove' },
+        { name: 'list',   value: 'list'   }
+      ))
+    .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
+  new SlashCommandBuilder().setName('jail').setDescription('jail a user — they can only see the jail channel').setDMPermission(false)
+    .addUserOption(o => o.setName('user').setDescription('user to jail').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
+  new SlashCommandBuilder().setName('unjail').setDescription('release a user from jail').setDMPermission(false)
+    .addUserOption(o => o.setName('user').setDescription('user to unjail').setRequired(true)),
   new SlashCommandBuilder().setName('prefix').setDescription('change or view the bot prefix').setDMPermission(true)
     .addStringOption(o => o.setName('new').setDescription('new prefix').setRequired(false)),
   new SlashCommandBuilder().setName('status').setDescription('change the bot status').setDMPermission(true)
@@ -727,7 +868,7 @@ client.once('clientReady', async () => {
     try {
       const ch  = await client.channels.fetch(channelId);
       const msg = await ch.messages.fetch(messageId);
-      await msg.edit('reboot successful ✅');
+      await msg.edit('restart successful ✅');
     } catch {}
   }
 
@@ -1526,16 +1667,35 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ content: tags[name] });
   }
 
-  if (commandName === 'reboot') {
-    const sent = await interaction.reply({ content: 'rebooting rq...', fetchReply: true });
+  if (commandName === 'restart') {
+    const sent = await interaction.reply({ content: 'restarting rq...', fetchReply: true });
     saveJSON(REBOOT_FILE, { channelId: sent.channelId, messageId: sent.id });
-    setTimeout(() => {
-      const child = spawn(process.execPath, process.argv.slice(1), {
-        detached: true, stdio: 'inherit', env: process.env
-      });
-      child.unref();
-      process.exit(0);
-    }, 500);
+    setTimeout(() => process.exit(0), 500);
+  }
+
+  if (commandName === 'jail') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const target = interaction.options.getMember('user');
+    const reason = interaction.options.getString('reason') || 'no reason';
+    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    try {
+      const result = await jailMember(guild, target, reason, interaction.user.tag);
+      return interaction.reply({ embeds: [result] });
+    } catch (e) {
+      return interaction.reply({ content: `jail failed — ${e.message}`, ephemeral: true });
+    }
+  }
+
+  if (commandName === 'unjail') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const target = interaction.options.getMember('user');
+    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    try {
+      const result = await unjailMember(guild, target, interaction.user.tag);
+      return interaction.reply({ embeds: [result] });
+    } catch (e) {
+      return interaction.reply({ content: `unjail failed — ${e.message}`, ephemeral: true });
+    }
   }
 
   if (commandName === 'prefix') {
@@ -1571,9 +1731,74 @@ client.on('interactionCreate', async interaction => {
     });
   }
 
+  if (commandName === 'wlmanager') {
+    const sub  = interaction.options.getString('action');
+    const mgrs = loadWlManagers();
+
+    if (sub === 'list') {
+      const wl = loadWhitelist();
+      if (!wl.includes(interaction.user.id))
+        return interaction.reply({ content: "ur not whitelisted", ephemeral: true });
+      const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean);
+      const all     = [...new Set([...mgrs, ...envMgrs])];
+      if (!all.length)
+        return interaction.reply({ embeds: [new EmbedBuilder().setTitle('whitelist managers').setColor(0x2b2d31).setDescription('no managers set')] });
+      const lines = all.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
+      return interaction.reply({
+        embeds: [new EmbedBuilder().setTitle('whitelist managers').setColor(0x2b2d31).setDescription(lines.join('\n')).setTimestamp()]
+      });
+    }
+
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ content: "ur not a whitelist manager", ephemeral: true });
+
+    if (sub === 'add') {
+      const target = interaction.options.getUser('user');
+      if (!target) return interaction.reply({ content: 'give me a user', ephemeral: true });
+      if (mgrs.includes(target.id))
+        return interaction.reply({ content: `**${target.tag}** is already a whitelist manager`, ephemeral: true });
+      mgrs.push(target.id);
+      saveWlManagers(mgrs);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('whitelist manager added')
+            .setColor(0x57f287)
+            .setThumbnail(target.displayAvatarURL())
+            .addFields(
+              { name: 'user',     value: target.tag,           inline: true },
+              { name: 'added by', value: interaction.user.tag, inline: true }
+            )
+            .setTimestamp()
+        ]
+      });
+    }
+
+    if (sub === 'remove') {
+      const target = interaction.options.getUser('user');
+      if (!target) return interaction.reply({ content: 'give me a user', ephemeral: true });
+      if (!mgrs.includes(target.id))
+        return interaction.reply({ content: `**${target.tag}** isn't a whitelist manager`, ephemeral: true });
+      saveWlManagers(mgrs.filter(id => id !== target.id));
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('whitelist manager removed')
+            .setColor(0xed4245)
+            .setThumbnail(target.displayAvatarURL())
+            .addFields(
+              { name: 'user',       value: target.tag,           inline: true },
+              { name: 'removed by', value: interaction.user.tag, inline: true }
+            )
+            .setTimestamp()
+        ]
+      });
+    }
+
+  }
+
   if (commandName === 'whitelist') {
-    const WHITELIST_MANAGERS = (process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean);
-    if (WHITELIST_MANAGERS.length && !WHITELIST_MANAGERS.includes(interaction.user.id))
+    if (!isWlManager(interaction.user.id))
       return interaction.reply({ content: "ur not allowed to manage the whitelist", ephemeral: true });
 
     const sub = interaction.options.getString('action');
@@ -1645,6 +1870,14 @@ client.on('messageCreate', async message => {
   if (hushed[message.author.id]) {
     try { await message.delete(); } catch {}
     return;
+  }
+
+  // autoreact
+  const autoreactData = loadAutoreact();
+  if (autoreactData[message.author.id]?.length) {
+    for (const emoji of autoreactData[message.author.id]) {
+      try { await message.react(emoji); } catch {}
+    }
   }
 
   // afk notify
@@ -2307,16 +2540,10 @@ client.on('messageCreate', async message => {
     });
   }
 
-  if (command === 'reboot') {
-    const sent = await message.reply('rebooting rq...');
+  if (command === 'restart') {
+    const sent = await message.reply('restarting rq...');
     saveJSON(REBOOT_FILE, { channelId: sent.channelId, messageId: sent.id });
-    setTimeout(() => {
-      const child = spawn(process.execPath, process.argv.slice(1), {
-        detached: true, stdio: 'inherit', env: process.env
-      });
-      child.unref();
-      process.exit(0);
-    }, 500);
+    setTimeout(() => process.exit(0), 500);
   }
 
   if (command === 'say') {
@@ -2434,63 +2661,33 @@ client.on('messageCreate', async message => {
     });
   }
 
+  if (command === 'jail') {
+    if (!message.guild) return;
+    const target = message.mentions.members?.first();
+    if (!target) return message.reply('mention someone to jail');
+    const reason = args.slice(1).join(' ') || 'no reason';
+    try {
+      const embed = await jailMember(message.guild, target, reason, message.author.tag);
+      return message.reply({ embeds: [embed] });
+    } catch (e) {
+      return message.reply(e.message);
+    }
+  }
+
+  if (command === 'unjail') {
+    if (!message.guild) return;
+    const target = message.mentions.members?.first();
+    if (!target) return message.reply('mention someone to unjail');
+    try {
+      const embed = await unjailMember(message.guild, target, message.author.tag);
+      return message.reply({ embeds: [embed] });
+    } catch (e) {
+      return message.reply(e.message);
+    }
+  }
+
   if (command === 'whitelist') {
-    const WHITELIST_MANAGERS = (process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean);
-    if (WHITELIST_MANAGERS.length && !WHITELIST_MANAGERS.includes(message.author.id))
-      return message.reply("ur not allowed to manage the whitelist");
-
-    const sub = args[0]?.toLowerCase();
-    const wl  = loadWhitelist();
-
-    if (sub === 'add') {
-      const target = message.mentions.users.first();
-      if (!target) return message.reply('mention a user');
-      if (wl.includes(target.id)) return message.reply(`**${target.tag}** is already on the whitelist`);
-      wl.push(target.id);
-      saveWhitelist(wl);
-      return message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle('whitelisted')
-            .setColor(0x57f287)
-            .setThumbnail(target.displayAvatarURL())
-            .addFields(
-              { name: 'user',     value: target.tag,         inline: true },
-              { name: 'added by', value: message.author.tag, inline: true }
-            )
-            .setTimestamp()
-        ]
-      });
-    }
-
-    if (sub === 'remove') {
-      const target = message.mentions.users.first();
-      if (!target) return message.reply('mention a user');
-      if (!wl.includes(target.id)) return message.reply(`**${target.tag}** isn't on the whitelist`);
-      saveWhitelist(wl.filter(id => id !== target.id));
-      return message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle('removed from whitelist')
-            .setColor(0xed4245)
-            .setThumbnail(target.displayAvatarURL())
-            .addFields(
-              { name: 'user',       value: target.tag,         inline: true },
-              { name: 'removed by', value: message.author.tag, inline: true }
-            )
-            .setTimestamp()
-        ]
-      });
-    }
-
-    if (sub === 'list') {
-      if (!wl.length)
-        return message.reply({ embeds: [new EmbedBuilder().setTitle('whitelist').setColor(0x2b2d31).setDescription('nobody on the whitelist rn')] });
-      const lines = wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`);
-      return message.reply({ embeds: [new EmbedBuilder().setTitle('whitelist').setColor(0x2b2d31).setDescription(lines.join('\n')).setTimestamp()] });
-    }
-
-    return message.reply(`usage: \`${prefix}whitelist add/remove/list @user\``);
+    return message.reply('whitelist is slash-command only — use `/whitelist` instead');
   }
 });
 
