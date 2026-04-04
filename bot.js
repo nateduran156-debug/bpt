@@ -1,7 +1,7 @@
 import { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder,
   TextInputStyle, PermissionsBitField, ActivityType, ChannelType, REST, Routes,
-  SlashCommandBuilder } from 'discord.js'
+  SlashCommandBuilder, ApplicationIntegrationType, InteractionContextType } from 'discord.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -259,7 +259,7 @@ function buildHelpEmbed(page) {
   // grab only the commands for this page
   const cmds = ALL_COMMANDS.slice(page * HELP_PER_PAGE, (page + 1) * HELP_PER_PAGE)
   return new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(0x1b6fe8)
     .setTitle('Commands')
     .setThumbnail(LOGO_URL)
     .setDescription(cmds.map(c => `\`${c.replace(/\{p\}/g, p)}\``).join('\n'))
@@ -279,7 +279,7 @@ function buildGcEmbed(username, groups, avatarUrl, page) {
   const slice = groups.slice(page * GC_PER_PAGE, page * GC_PER_PAGE + GC_PER_PAGE);
   const groupLines = slice.map(g => `• [${g.group.name}](https://www.roblox.com/communities/${g.group.id}/about)`).join('\n');
   const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(0x1b6fe8)
     .setTitle('Group Check')
     .setThumbnail(LOGO_URL)
     .setDescription(`${username}\n\n**Groups**\n${groupLines}`)
@@ -290,7 +290,7 @@ function buildGcEmbed(username, groups, avatarUrl, page) {
 
 function buildGcNotInGroupEmbed(displayName) {
   return new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(0x1b6fe8)
     .setTitle('Join Our Groups')
     .setThumbnail(LOGO_URL)
     .setAuthor({ name: displayName })
@@ -318,7 +318,7 @@ function buildGcRow(username, groups, page) {
 }
 
 function buildVmInterfaceEmbed(guild) {
-  return baseEmbed().setColor(0x5865f2).setTitle('voicemaster')
+  return baseEmbed().setColor(0x1b6fe8).setTitle('voicemaster')
     .setDescription('use the buttons below to manage your vc')
     .addFields({ name: 'buttons', value: [
       '🔒 — **lock** the vc', '🔓 — **unlock** the vc',
@@ -350,7 +350,7 @@ function buildVmInterfaceRows() {
 
 function buildVmHelpEmbed(prefix) {
   const p = prefix || getPrefix();
-  return baseEmbed().setColor(0x5865f2).setTitle('voicemaster').setDescription([
+  return baseEmbed().setColor(0x1b6fe8).setTitle('voicemaster').setDescription([
     `\`${p}vm setup\` — set up the voicemaster system`,
     `\`${p}vm lock\` — lock your channel`,
     `\`${p}vm unlock\` — unlock your channel`,
@@ -372,76 +372,117 @@ const snipeCache = new Map();
 // ─── Slash commands ───────────────────────────────────────────────────────────
 const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'snipe', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'setlog', 'nuke']);
 
+// contexts for commands that work everywhere (guilds, bot DMs, and user-install DMs)
+const ALL_CONTEXTS = [InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel];
+// guild-only commands — only available inside servers
+const GUILD_CONTEXTS = [InteractionContextType.Guild];
+// both guild install and user install
+const ALL_INSTALLS = [ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall];
+// guild install only
+const GUILD_INSTALLS = [ApplicationIntegrationType.GuildInstall];
+
 const slashCommands = [
-  new SlashCommandBuilder().setName('help').setDescription('shows the command list').setDMPermission(true),
-  new SlashCommandBuilder().setName('vmhelp').setDescription('voicemaster command list').setDMPermission(true),
-  new SlashCommandBuilder().setName('afk').setDescription('set yourself as afk').setDMPermission(true)
+  new SlashCommandBuilder().setName('help').setDescription('shows the command list')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('vmhelp').setDescription('voicemaster command list')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('afk').setDescription('set yourself as afk')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('roblox').setDescription('look up a roblox user').setDMPermission(true)
+  new SlashCommandBuilder().setName('roblox').setDescription('look up a roblox user')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
-  new SlashCommandBuilder().setName('gc').setDescription('list roblox groups for a user').setDMPermission(true)
+  new SlashCommandBuilder().setName('gc').setDescription('list roblox groups for a user')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
-  new SlashCommandBuilder().setName('hb').setDescription('hardban a user').setDMPermission(true)
+  new SlashCommandBuilder().setName('hb').setDescription('hardban a user')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(false))
     .addStringOption(o => o.setName('id').setDescription('user id if not in server').setRequired(false))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('ban').setDescription('ban a member').setDMPermission(true)
+  new SlashCommandBuilder().setName('ban').setDescription('ban a member')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('kick').setDescription('kick a member').setDMPermission(true)
+  new SlashCommandBuilder().setName('kick').setDescription('kick a member')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to kick').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('unban').setDescription('unban a user by id').setDMPermission(true)
+  new SlashCommandBuilder().setName('unban').setDescription('unban a user by id')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('id').setDescription('user id to unban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('purge').setDescription('delete messages in bulk').setDMPermission(false)
+  new SlashCommandBuilder().setName('purge').setDescription('delete messages in bulk')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addIntegerOption(o => o.setName('amount').setDescription('how many messages to delete (1-100)').setRequired(true).setMinValue(1).setMaxValue(100)),
-  new SlashCommandBuilder().setName('snipe').setDescription('show the last deleted message').setDMPermission(false),
-  new SlashCommandBuilder().setName('timeout').setDescription('timeout a member').setDMPermission(true)
+  new SlashCommandBuilder().setName('snipe').setDescription('show the last deleted message')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+  new SlashCommandBuilder().setName('timeout').setDescription('timeout a member')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
     .addIntegerOption(o => o.setName('minutes').setDescription('duration in minutes').setRequired(false).setMinValue(1).setMaxValue(40320))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('untimeout').setDescription('remove a timeout').setDMPermission(true)
+  new SlashCommandBuilder().setName('untimeout').setDescription('remove a timeout')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('mute').setDescription('mute a member').setDMPermission(true)
+  new SlashCommandBuilder().setName('mute').setDescription('mute a member')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('unmute').setDescription('remove a mute').setDMPermission(true)
+  new SlashCommandBuilder().setName('unmute').setDescription('remove a mute')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('hush').setDescription('auto-delete all messages from a user').setDMPermission(true)
+  new SlashCommandBuilder().setName('hush').setDescription('auto-delete all messages from a user')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('unhush').setDescription('remove auto-delete from a user').setDMPermission(true)
+  new SlashCommandBuilder().setName('unhush').setDescription('remove auto-delete from a user')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('nuke').setDescription('delete and recreate the channel (clears all messages)').setDMPermission(false),
-  new SlashCommandBuilder().setName('lock').setDescription('lock the current channel').setDMPermission(true),
-  new SlashCommandBuilder().setName('unlock').setDescription('unlock the current channel').setDMPermission(true),
-  new SlashCommandBuilder().setName('say').setDescription('make the bot say something').setDMPermission(true)
+  new SlashCommandBuilder().setName('nuke').setDescription('delete and recreate the channel (clears all messages)')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+  new SlashCommandBuilder().setName('lock').setDescription('lock the current channel')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+  new SlashCommandBuilder().setName('unlock').setDescription('unlock the current channel')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+  new SlashCommandBuilder().setName('say').setDescription('make the bot say something')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('text').setDescription('what to say').setRequired(true)),
-  new SlashCommandBuilder().setName('cs').setDescription('clear the snipe cache').setDMPermission(true),
-  new SlashCommandBuilder().setName('grouproles').setDescription('list roblox group roles').setDMPermission(true),
-  new SlashCommandBuilder().setName('tag').setDescription('create a tag or rank someone').setDMPermission(true)
+  new SlashCommandBuilder().setName('cs').setDescription('clear the snipe cache')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('grouproles').setDescription('list roblox group roles')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('tag').setDescription('create a tag or rank someone')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('name').setDescription('tag name').setRequired(true))
     .addStringOption(o => o.setName('content').setDescription('role id for new tag').setRequired(false))
     .addStringOption(o => o.setName('robloxuser').setDescription('roblox username to rank').setRequired(false)),
-  new SlashCommandBuilder().setName('restart').setDescription('restart the bot').setDMPermission(true),
-  new SlashCommandBuilder().setName('wlmanager').setDescription('manage whitelist managers').setDMPermission(true)
+  new SlashCommandBuilder().setName('restart').setDescription('restart the bot')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('wlmanager').setDescription('manage whitelist managers')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
       .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
     .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
-  new SlashCommandBuilder().setName('jail').setDescription('jail a user').setDMPermission(false)
+  new SlashCommandBuilder().setName('jail').setDescription('jail a user')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to jail').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('unjail').setDescription('release a user from jail').setDMPermission(false)
+  new SlashCommandBuilder().setName('unjail').setDescription('release a user from jail')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to unjail').setRequired(true)),
-  new SlashCommandBuilder().setName('prefix').setDescription('change or view the bot prefix').setDMPermission(true)
+  new SlashCommandBuilder().setName('prefix').setDescription('change or view the bot prefix')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('new').setDescription('new prefix').setRequired(false)),
-  new SlashCommandBuilder().setName('status').setDescription('change the bot status').setDMPermission(true)
+  new SlashCommandBuilder().setName('status').setDescription('change the bot status')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('type').setDescription('type').setRequired(true)
       .addChoices({ name: 'playing', value: 'playing' }, { name: 'watching', value: 'watching' }, { name: 'listening', value: 'listening' }, { name: 'competing', value: 'competing' }, { name: 'custom', value: 'custom' }))
     .addStringOption(o => o.setName('text').setDescription('status text').setRequired(true)),
-  new SlashCommandBuilder().setName('setlog').setDescription('set the log channel').setDMPermission(true)
+  new SlashCommandBuilder().setName('setlog').setDescription('set the log channel')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addChannelOption(o => o.setName('channel').setDescription('channel').setRequired(true)),
-  new SlashCommandBuilder().setName('whitelist').setDescription('manage the whitelist').setDMPermission(true)
+  new SlashCommandBuilder().setName('whitelist').setDescription('manage the whitelist')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
       .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
     .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
@@ -485,7 +526,7 @@ client.once('clientReady', async () => {
       await ch.send({
         embeds: [
           baseEmbed()
-            .setColor(0x5865f2)
+            .setColor(0x1b6fe8)
             .setTitle(`${client.user.username} is online`)
             .setDescription('online and ready')
             .setTimestamp()
@@ -584,7 +625,7 @@ client.on('interactionCreate', async interaction => {
       if (interaction.customId === 'vm_ghost') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
         await vc.permissionOverwrites.edit(everyone, { ViewChannel: false });
-        return interaction.reply({ embeds: [baseEmbed().setColor(0x5865f2).setDescription('👻 channel hidden')], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription('👻 channel hidden')], ephemeral: true });
       }
       if (interaction.customId === 'vm_reveal') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
@@ -601,7 +642,7 @@ client.on('interactionCreate', async interaction => {
       if (interaction.customId === 'vm_info') {
         const limit = vc.userLimit === 0 ? 'no limit' : vc.userLimit;
         const owner = await interaction.guild.members.fetch(chData.ownerId).catch(() => null);
-        return interaction.reply({ embeds: [baseEmbed().setColor(0x5865f2).setTitle('📋 channel info')
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('📋 channel info')
           .addFields({ name: 'name', value: vc.name, inline: true }, { name: 'owner', value: owner?.displayName ?? 'unknown', inline: true },
             { name: 'members', value: `${vc.members.size}`, inline: true }, { name: 'limit', value: `${limit}`, inline: true })
         ], ephemeral: true });
@@ -654,7 +695,7 @@ client.on('interactionCreate', async interaction => {
       const created   = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
-      return interaction.editReply({ embeds: [baseEmbed().setTitle(`${user.displayName} (@${user.name})`).setURL(profileUrl).setColor(0x5865f2)
+      return interaction.editReply({ embeds: [baseEmbed().setTitle(`${user.displayName} (@${user.name})`).setURL(profileUrl).setColor(0x1b6fe8)
         .addFields({ name: 'created', value: created, inline: true }, { name: 'user id', value: `${userId}`, inline: true }).setThumbnail(avatarUrl).setTimestamp()],
         components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('profile').setStyle(ButtonStyle.Link).setURL(profileUrl), new ButtonBuilder().setLabel('games').setStyle(ButtonStyle.Link).setURL(`${profileUrl}#sortName=Games`))]
       });
@@ -695,14 +736,14 @@ client.on('interactionCreate', async interaction => {
     const afk = loadAfk();
     afk[interaction.user.id] = { reason, since: Date.now() };
     saveAfk(afk);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x5865f2).setDescription(`you're now afk${reason ? `: ${reason}` : ''}`)], ephemeral: true })
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`you're now afk${reason ? `: ${reason}` : ''}`)], ephemeral: true })
   }
 
   if (commandName === 'snipe') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const sniped = snipeCache.get(channel.id);
-    if (!sniped) return interaction.reply({ embeds: [baseEmbed().setColor(0x5865f2).setDescription('nothing to snipe rn')] });
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x5865f2).setTitle('sniped')
+    if (!sniped) return interaction.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription('nothing to snipe rn')] });
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('sniped')
       .setDescription(sniped.content)
       .addFields({ name: 'author', value: sniped.author, inline: true }, { name: 'deleted', value: `<t:${Math.floor(sniped.deletedAt / 1000)}:R>`, inline: true })
       .setThumbnail(sniped.avatarUrl)] });
@@ -868,7 +909,7 @@ client.on('interactionCreate', async interaction => {
       await newCh.send({
         embeds: [
           baseEmbed()
-            .setColor(0x5865f2)
+            .setColor(0x1b6fe8)
             .setTitle('channel nuked')
             .setDescription(`nuked by **${interaction.user.tag}**`)
             .setTimestamp()
@@ -899,7 +940,7 @@ client.on('interactionCreate', async interaction => {
       const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
       if (!data.roles?.length) return interaction.editReply('no roles found for this group');
       const lines = data.roles.sort((a, b) => a.rank - b.rank).map(r => `\`${String(r.rank).padStart(3, '0')}\`  **${r.name}**  —  ID: \`${r.id}\``);
-      return interaction.editReply({ embeds: [baseEmbed().setTitle('group roles').setColor(0x5865f2).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
+      return interaction.editReply({ embeds: [baseEmbed().setTitle('group roles').setColor(0x1b6fe8).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
     } catch { return interaction.editReply("couldn't load group roles, try again"); }
   }
 
@@ -986,8 +1027,8 @@ client.on('interactionCreate', async interaction => {
       const wl = loadWhitelist();
       if (!wl.includes(interaction.user.id)) return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
       const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean)])];
-      if (!all.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x5865f2).setDescription('no managers set')] });
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x5865f2).setDescription(all.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
+      if (!all.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x1b6fe8).setDescription('no managers set')] });
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x1b6fe8).setDescription(all.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
     }
     if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "ur not a whitelist manager", ephemeral: true });
     if (sub === 'add') {
@@ -1029,8 +1070,8 @@ client.on('interactionCreate', async interaction => {
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'removed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'list') {
-      if (!wl.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x5865f2).setDescription('nobody on the whitelist rn')] });
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x5865f2).setDescription(wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
+      if (!wl.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x1b6fe8).setDescription('nobody on the whitelist rn')] });
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x1b6fe8).setDescription(wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
     }
   }
 });
@@ -1065,7 +1106,7 @@ client.on('messageCreate', async message => {
     const mentioned = message.mentions.users.first()
     if (afkData[mentioned?.id]) {
       const e = afkData[mentioned.id]
-      await message.reply({ embeds: [baseEmbed().setColor(0x5865f2).setDescription(`**${mentioned.username}** is afk: ${e.reason || 'no reason'}\n<t:${Math.floor(e.since / 1000)}:R>`)] })
+      await message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`**${mentioned.username}** is afk: ${e.reason || 'no reason'}\n<t:${Math.floor(e.since / 1000)}:R>`)] })
     }
   }
 
@@ -1095,7 +1136,7 @@ client.on('messageCreate', async message => {
       const created = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
-      return message.reply({ embeds: [baseEmbed().setTitle(`${user.displayName} (@${user.name})`).setURL(profileUrl).setColor(0x5865f2)
+      return message.reply({ embeds: [baseEmbed().setTitle(`${user.displayName} (@${user.name})`).setURL(profileUrl).setColor(0x1b6fe8)
         .addFields({ name: 'created', value: created, inline: true }, { name: 'user id', value: `${userId}`, inline: true }).setThumbnail(avatarUrl).setTimestamp()],
         components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('profile').setStyle(ButtonStyle.Link).setURL(profileUrl), new ButtonBuilder().setLabel('games').setStyle(ButtonStyle.Link).setURL(`${profileUrl}#sortName=Games`))]
       });
@@ -1349,7 +1390,7 @@ client.on('messageCreate', async message => {
       await newCh.send({
         embeds: [
           baseEmbed()
-            .setColor(0x5865f2)
+            .setColor(0x1b6fe8)
             .setTitle('channel nuked')
             .setDescription(`nuked by **${nuker}**`)
             .setTimestamp()
@@ -1385,7 +1426,7 @@ client.on('messageCreate', async message => {
     const afk = loadAfk();
     afk[message.author.id] = { reason, since: Date.now() };
     saveAfk(afk);
-    return message.reply({ embeds: [baseEmbed().setColor(0x5865f2).setDescription(`You're now AFK${reason ? `: ${reason}` : '.'}`)], allowedMentions: { repliedUser: false } });
+    return message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`You're now AFK${reason ? `: ${reason}` : '.'}`)], allowedMentions: { repliedUser: false } });
   }
 
   if (command === 'restart') {
@@ -1424,7 +1465,7 @@ client.on('messageCreate', async message => {
     if (!tags[tagName]) return message.reply(`no tag called **${tagName}** exists`);
     const roleId = tags[tagName].trim();
     if (isNaN(Number(roleId))) return message.reply(`tag **${tagName}** doesn't have a valid role id`);
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0x5865f2).setDescription(`ranking **${robloxUser}**...`)] });
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`ranking **${robloxUser}**...`)] });
     try {
       const result = await rankRobloxUser(robloxUser, roleId);
       const embed  = baseEmbed().setTitle('got em ranked').setColor(0x57f287)
@@ -1432,7 +1473,7 @@ client.on('messageCreate', async message => {
         .setFooter({ text: `ranked by ${message.author.tag}` }).setTimestamp();
       if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
       await status.edit({ content: '', embeds: [embed] });
-      const logEmbed = baseEmbed().setTitle('rank log').setColor(0x5865f2)
+      const logEmbed = baseEmbed().setTitle('rank log').setColor(0x1b6fe8)
         .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true },
           { name: 'ranked by', value: `<@${message.author.id}>`, inline: true }, { name: 'channel', value: `<#${message.channel.id}>`, inline: true })
         .setFooter({ text: `roblox id: ${result.userId}` }).setTimestamp();
@@ -1449,7 +1490,7 @@ client.on('messageCreate', async message => {
       const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
       if (!data.roles?.length) return message.reply('no roles found for this group');
       const lines = data.roles.sort((a, b) => a.rank - b.rank).map(r => `\`${String(r.rank).padStart(3, '0')}\`  **${r.name}**  —  ID: \`${r.id}\``);
-      return message.reply({ embeds: [baseEmbed().setTitle('group roles').setColor(0x5865f2).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setTitle('group roles').setColor(0x1b6fe8).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
     } catch { return message.reply("couldn't load group roles, try again"); }
   }
 
@@ -1495,11 +1536,11 @@ client.on('messageCreate', async message => {
       const members = roleMention.members;
       if (!members.size) return message.reply("no members have that role");
       let sent = 0, failed = 0;
-      const status = await message.reply({ embeds: [baseEmbed().setColor(0x5865f2).setDescription(`sending DMs to **${members.size}** members with ${roleMention}...`)] });
+      const status = await message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`sending DMs to **${members.size}** members with ${roleMention}...`)] });
       for (const [, member] of members) {
         if (member.user.bot) continue;
         try {
-          await member.send({ embeds: [baseEmbed().setColor(0x5865f2).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+          await member.send({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
           sent++;
         } catch { failed++; }
         await new Promise(r => setTimeout(r, 500)); // rate limit buffer
@@ -1516,7 +1557,7 @@ client.on('messageCreate', async message => {
     }
     if (targetUser.bot) return message.reply("can't DM a bot");
     try {
-      await targetUser.send({ embeds: [baseEmbed().setColor(0x5865f2).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+      await targetUser.send({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
       return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setDescription(`DM sent to **${targetUser.tag}**`)] });
     } catch {
       return message.reply(`couldn't DM **${targetUser.tag}** — they might have DMs off`);
