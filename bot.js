@@ -17,7 +17,8 @@ import {
   SlashCommandBuilder
 } from 'discord.js';
 import { Player, QueryType, useQueue, usePlayer, QueueRepeatMode } from 'discord-player';
-import { DefaultExtractors } from '@discord-player/extractor';
+import dpExtractor from '@discord-player/extractor';
+const { DefaultExtractors } = dpExtractor;
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
