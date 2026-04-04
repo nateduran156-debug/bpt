@@ -274,6 +274,11 @@ const HELP_SECTIONS = [
       '{p}timeout @user [minutes] [reason]',
       '{p}untimeout @user',
       '{p}mute @user [reason]',
+    ]
+  },
+  {
+    title: 'Moderation 2',
+    commands: [
       '{p}unmute @user',
       '{p}hush @user',
       '{p}unhush @user',
