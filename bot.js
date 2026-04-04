@@ -1369,12 +1369,12 @@ client.on('interactionCreate', async interaction => {
       const acMessage = interaction.options.getString('message') || 'Activity Check';
       checks[guild.id] = { startedBy: interaction.user.id, startedAt: Date.now(), active: true, checkins: [], acMessage };
       saveActivityCheck(checks);
-      const acEmbed = baseEmbed().setColor(0x57f287).setTitle(acMessage)
-        .setDescription('Click the ✅ button below to check in!')
+      const acEmbed = baseEmbed().setColor(0x1b6fe8).setTitle(acMessage)
+        .setDescription('Click react to react to activity check!')
         .addFields({ name: 'started by', value: interaction.user.tag, inline: true })
         .setTimestamp();
       const acRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('ac_checkin').setLabel('Check In').setEmoji('✅').setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId('ac_checkin').setLabel('React').setStyle(ButtonStyle.Primary)
       );
       return interaction.reply({ embeds: [acEmbed], components: [acRow] });
     }
@@ -2143,12 +2143,12 @@ client.on('messageCreate', async message => {
       const acMessage = args.slice(1).join(' ') || 'Activity Check';
       checks[message.guild.id] = { startedBy: message.author.id, startedAt: Date.now(), active: true, checkins: [], acMessage };
       saveActivityCheck(checks);
-      const acEmbed = baseEmbed().setColor(0x57f287).setTitle(acMessage)
-        .setDescription('Click the ✅ button below to check in!')
+      const acEmbed = baseEmbed().setColor(0x1b6fe8).setTitle(acMessage)
+        .setDescription('Click react to react to activity check!')
         .addFields({ name: 'started by', value: message.author.tag, inline: true })
         .setTimestamp();
       const acRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('ac_checkin').setLabel('Check In').setEmoji('✅').setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId('ac_checkin').setLabel('React').setStyle(ButtonStyle.Primary)
       );
       return message.reply({ embeds: [acEmbed], components: [acRow] });
     }
