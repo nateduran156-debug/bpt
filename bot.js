@@ -16,7 +16,6 @@ import {
   Routes,
   SlashCommandBuilder
 } from 'discord.js';
-import { Player, QueryType, useQueue, usePlayer, QueueRepeatMode } from 'discord-player';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -35,53 +34,11 @@ const client = new Client({
   ]
 });
 
-// ─── discord-player setup ────────────────────────────────────────────────────
-const player = new Player(client);
-
-await player.extractors.loadDefault();
-
-player.events.on('playerStart', (queue, track) => {
-  queue.metadata?.channel?.send({
-    embeds: [
-      baseEmbed()
-        .setColor(0x2b2d31)
-        .setTitle('now playing')
-        .setDescription(`**[${track.title}](${track.url})**`)
-        .addFields(
-          { name: 'duration',      value: track.duration,          inline: true },
-          { name: 'requested by',  value: track.requestedBy?.tag ?? 'unknown', inline: true }
-        )
-        .setThumbnail(track.thumbnail)
-    ]
-  }).catch(() => {});
-});
-
-player.events.on('emptyQueue', queue => {
-  queue.metadata?.channel?.send({
-    embeds: [baseEmbed().setColor(0x2b2d31).setDescription('queue finished — leaving vc')]
-  }).catch(() => {});
-});
-
-player.events.on('error', (queue, error) => {
-  console.error(`player error in ${queue.guild.name}:`, error.message);
-  queue.metadata?.channel?.send({
-    embeds: [baseEmbed().setColor(0xed4245).setDescription(`player error: ${error.message}`)]
-  }).catch(() => {});
-});
-
-player.events.on('playerError', (queue, error) => {
-  console.error(`playerError in ${queue.guild.name}:`, error.message);
-  queue.metadata?.channel?.send({
-    embeds: [baseEmbed().setColor(0xed4245).setDescription(`couldn't play that track — skipping`)]
-  }).catch(() => {});
-});
-
-// ─── Base embed helper (thumbnail set on ready) ───────────────────────────────
-let BOT_THUMBNAIL_URL = null;
+// ─── Base embed helper ────────────────────────────────────────────────────────
+const LOGO_URL = 'https://images-ext-1.discordapp.net/';
+const MOD_IMAGE_URL = 'https://i.imgur.com/CBDoIWa.png';
 function baseEmbed() {
-  const e = new EmbedBuilder();
-  if (BOT_THUMBNAIL_URL) e.setThumbnail(BOT_THUMBNAIL_URL);
-  return e;
+  return new EmbedBuilder().setThumbnail(LOGO_URL);
 }
 
 // ─── File paths ───────────────────────────────────────────────────────────────
@@ -295,19 +252,6 @@ const COMMAND_PAGES = [
   },
 ];
 
-const MUSIC_COMMANDS = [
-  '{p}play [song, artist, or link]',
-  '> supports YouTube, Spotify, Apple Music, SoundCloud',
-  '{p}pause',
-  '{p}skip',
-  '{p}queue',
-  '{p}nowplaying',
-  '{p}repeat',
-  '{p}shuffle',
-  '{p}volume [0-100]',
-  '{p}leave / {p}stop',
-];
-
 const GC_PER_PAGE = 10;
 
 function buildHelpEmbed(page) {
@@ -326,15 +270,6 @@ function buildHelpRow(page) {
     new ButtonBuilder().setCustomId(`help_${page - 1}`).setLabel('back').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
     new ButtonBuilder().setCustomId(`help_${page + 1}`).setLabel('next').setStyle(ButtonStyle.Secondary).setDisabled(page === total - 1)
   );
-}
-
-function buildMusicHelpEmbed(prefix) {
-  const p = prefix || getPrefix();
-  return baseEmbed()
-    .setColor(0x2b2d31)
-    .setTitle('music commands')
-    .setDescription(MUSIC_COMMANDS.map(c => c.startsWith('>') ? c : `\`${c.replace(/\{p\}/g, p)}\``).join('\n'))
-    .setFooter({ text: 'No ads — audio streamed directly' });
 }
 
 function buildGcEmbed(username, groups, avatarUrl, page) {
@@ -413,7 +348,6 @@ const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'snipe', '
 
 const slashCommands = [
   new SlashCommandBuilder().setName('help').setDescription('shows the command list').setDMPermission(true),
-  new SlashCommandBuilder().setName('mhelp').setDescription('music command list').setDMPermission(true),
   new SlashCommandBuilder().setName('vmhelp').setDescription('voicemaster command list').setDMPermission(true),
   new SlashCommandBuilder().setName('afk').setDescription('set yourself as afk').setDMPermission(true)
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
@@ -485,20 +419,6 @@ const slashCommands = [
     .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
       .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
     .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
-  // ── Music slash commands ──────────────────────────────────────────────────
-  new SlashCommandBuilder().setName('play').setDescription('play a song in your voice channel').setDMPermission(false)
-    .addStringOption(o => o.setName('query').setDescription('song name, artist, or link').setRequired(true)),
-  new SlashCommandBuilder().setName('pause').setDescription('pause or resume playback').setDMPermission(false),
-  new SlashCommandBuilder().setName('skip').setDescription('skip the current song').setDMPermission(false),
-  new SlashCommandBuilder().setName('queue').setDescription('show the current queue').setDMPermission(false),
-  new SlashCommandBuilder().setName('nowplaying').setDescription('show what is currently playing').setDMPermission(false),
-  new SlashCommandBuilder().setName('repeat').setDescription('toggle repeat mode').setDMPermission(false)
-    .addStringOption(o => o.setName('mode').setDescription('repeat mode').setRequired(false)
-      .addChoices({ name: 'off', value: 'off' }, { name: 'track', value: 'track' }, { name: 'queue', value: 'queue' })),
-  new SlashCommandBuilder().setName('shuffle').setDescription('shuffle the queue').setDMPermission(false),
-  new SlashCommandBuilder().setName('volume').setDescription('set music volume (0-100)').setDMPermission(false)
-    .addIntegerOption(o => o.setName('level').setDescription('volume level (0-100)').setRequired(true).setMinValue(0).setMaxValue(100)),
-  new SlashCommandBuilder().setName('leave').setDescription('disconnect from voice').setDMPermission(false),
 ].map(c => c.toJSON());
 
 // ─── Status helper ────────────────────────────────────────────────────────────
@@ -512,25 +432,6 @@ client.once('clientReady', async () => {
   console.log(`logged in as ${client.user.tag}`);
   const cfg = loadConfig();
   if (cfg.status) applyStatus(cfg.status);
-
-  const thumbCacheFile = path.join(__dirname, 'thumbnail_cache.json');
-  if (fs.existsSync(thumbCacheFile)) {
-    try { BOT_THUMBNAIL_URL = JSON.parse(fs.readFileSync(thumbCacheFile, 'utf8')).url; } catch {}
-  }
-  if (!BOT_THUMBNAIL_URL) {
-    const startupChId = process.env.STARTUP_CHANNEL_ID;
-    const avatarPath  = path.join(__dirname, 'botavatar.png');
-    if (startupChId && fs.existsSync(avatarPath)) {
-      try {
-        const ch  = await client.channels.fetch(startupChId);
-        const msg = await ch.send({ files: [new AttachmentBuilder(avatarPath, { name: 'botavatar.png' })] });
-        BOT_THUMBNAIL_URL = msg.attachments.first().url;
-        fs.writeFileSync(thumbCacheFile, JSON.stringify({ url: BOT_THUMBNAIL_URL }));
-        await msg.delete().catch(() => {});
-      } catch {}
-    }
-    if (!BOT_THUMBNAIL_URL) BOT_THUMBNAIL_URL = client.user.displayAvatarURL({ size: 256 });
-  }
 
   if (fs.existsSync(REBOOT_FILE)) {
     const { channelId, messageId } = loadJSON(REBOOT_FILE);
@@ -554,15 +455,12 @@ client.once('clientReady', async () => {
   if (startupChannelId) {
     try {
       const ch = await client.channels.fetch(startupChannelId);
-      const avatarFile = new AttachmentBuilder(path.join(__dirname, 'botavatar.png'), { name: 'botavatar.png' });
       await ch.send({
-        files: [avatarFile],
         embeds: [
           baseEmbed()
             .setColor(0x2b2d31)
             .setTitle(`${client.user.username} is online`)
             .setDescription('bot has started and is ready to use')
-            .setThumbnail('attachment://botavatar.png')
             .setTimestamp()
         ]
       });
@@ -752,121 +650,7 @@ client.on('interactionCreate', async interaction => {
     } catch { return interaction.editReply("couldn't load their groups, try again"); }
   }
 
-  if (commandName === 'mhelp') return interaction.reply({ embeds: [buildMusicHelpEmbed()] });
   if (commandName === 'vmhelp') return interaction.reply({ embeds: [buildVmHelpEmbed()] });
-
-  // ── Music slash commands (open to everyone in guilds) ────────────────────────
-  if (commandName === 'play') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const query = interaction.options.getString('query');
-    const voiceChannel = member?.voice?.channel;
-    if (!voiceChannel) return interaction.reply({ content: "you need to be in a vc first", ephemeral: true });
-    await interaction.deferReply();
-    try {
-      const { track } = await player.play(voiceChannel, query, {
-        nodeOptions: { metadata: { channel }, volume: 80 },
-        requestedBy: interaction.user
-      });
-      const queue = useQueue(guild.id);
-      if (queue && queue.size > 1) {
-        return interaction.editReply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('added to queue').setDescription(`**[${track.title}](${track.url})**`)
-          .addFields({ name: 'duration', value: track.duration, inline: true }, { name: 'position', value: `#${queue.size}`, inline: true }).setThumbnail(track.thumbnail)] });
-      }
-      return interaction.editReply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('now playing').setDescription(`**[${track.title}](${track.url})**`)
-        .addFields({ name: 'duration', value: track.duration, inline: true }).setThumbnail(track.thumbnail)] });
-    } catch (err) {
-      return interaction.editReply({ embeds: [baseEmbed().setColor(0xed4245).setDescription(`couldn't play that — ${err.message}`)] });
-    }
-  }
-
-  if (commandName === 'pause') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (!queue?.currentTrack) return interaction.reply({ content: "nothing is playing", ephemeral: true });
-    if (queue.node.isPaused()) {
-      queue.node.resume();
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x57f287).setDescription('▶ resumed')] });
-    }
-    queue.node.pause();
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xfee75c).setDescription('⏸ paused')] });
-  }
-
-  if (commandName === 'skip') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (!queue?.currentTrack) return interaction.reply({ content: "nothing is playing", ephemeral: true });
-    const skipped = queue.currentTrack.title;
-    queue.node.skip();
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`skipped **${skipped}**`)] });
-  }
-
-  if (commandName === 'queue') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (!queue?.currentTrack) return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('queue').setDescription('queue is empty rn')] });
-    const lines = [`**now playing:** ${queue.currentTrack.title}`];
-    if (queue.tracks.size) {
-      lines.push('', '**up next:**');
-      queue.tracks.toArray().slice(0, 10).forEach((t, i) => lines.push(`${i + 1}. ${t.title}`));
-      if (queue.tracks.size > 10) lines.push(`...and ${queue.tracks.size - 10} more`);
-    }
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('queue').setDescription(lines.join('\n'))] });
-  }
-
-  if (commandName === 'nowplaying') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (!queue?.currentTrack) return interaction.reply({ content: "nothing is playing", ephemeral: true });
-    const track = queue.currentTrack;
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('now playing')
-      .setDescription(`**[${track.title}](${track.url})**`)
-      .addFields({ name: 'duration', value: track.duration, inline: true }, { name: 'requested by', value: track.requestedBy?.tag ?? 'unknown', inline: true })
-      .setThumbnail(track.thumbnail)] });
-  }
-
-  if (commandName === 'repeat') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (!queue) return interaction.reply({ content: "nothing is playing", ephemeral: true });
-    const modeArg = interaction.options.getString('mode');
-    const modeMap = { off: QueueRepeatMode.OFF, track: QueueRepeatMode.TRACK, queue: QueueRepeatMode.QUEUE };
-    const newMode = modeArg ? modeMap[modeArg] : (queue.repeatMode === QueueRepeatMode.OFF ? QueueRepeatMode.TRACK : QueueRepeatMode.OFF);
-    queue.setRepeatMode(newMode);
-    const modeLabel = { [QueueRepeatMode.OFF]: 'off', [QueueRepeatMode.TRACK]: 'track 🔂', [QueueRepeatMode.QUEUE]: 'queue 🔁' };
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`repeat is now **${modeLabel[newMode]}**`)] });
-  }
-
-  if (commandName === 'shuffle') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (!queue?.tracks.size) return interaction.reply({ content: "queue is empty", ephemeral: true });
-    queue.tracks.shuffle();
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`🔀 queue shuffled`)] });
-  }
-
-  if (commandName === 'volume') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (!queue) return interaction.reply({ content: "nothing is playing", ephemeral: true });
-    const level = interaction.options.getInteger('level');
-    queue.node.setVolume(level);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`🔊 volume set to **${level}%**`)] });
-  }
-
-  if (commandName === 'leave') {
-    if (!guild) return;
-    const queue = useQueue(guild.id);
-    if (queue) queue.delete();
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription('left the vc')] });
-  }
-
-  // ── Whitelist-only commands ───────────────────────────────────────────────────
-  if (!loadWhitelist().includes(interaction.user.id)) {
-    return interaction.reply({ content: "ur not whitelisted for this bot lol", ephemeral: true });
-  }
-  if (inDM && GUILD_ONLY_COMMANDS.has(commandName)) {
-    return interaction.reply({ content: "that command only works in a server, not dms", ephemeral: true });
-  }
 
   if (commandName === 'help') return interaction.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
 
@@ -878,48 +662,76 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`ur afk now${reason ? `: ${reason}` : ''}`)], ephemeral: true });
   }
 
+  if (commandName === 'snipe') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const sniped = snipeCache.get(channel.id);
+    if (!sniped) return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription('nothing to snipe rn')] });
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('sniped')
+      .setDescription(sniped.content)
+      .addFields({ name: 'author', value: sniped.author, inline: true }, { name: 'deleted', value: `<t:${Math.floor(sniped.deletedAt / 1000)}:R>`, inline: true })
+      .setThumbnail(sniped.avatarUrl)] });
+  }
+
+  if (commandName === 'purge') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const amount = interaction.options.getInteger('amount');
+    try {
+      const deleted = await channel.bulkDelete(amount, true);
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x57f287).setDescription(`deleted **${deleted.size}** messages`)], ephemeral: true });
+    } catch (err) { return interaction.reply({ content: `couldn't purge — ${err.message}`, ephemeral: true }); }
+  }
+
+  // ── Whitelist-required slash commands ────────────────────────────────────────
+  if (!loadWhitelist().includes(interaction.user.id)) {
+    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'purge']);
+    if (!openCommands.has(commandName)) return interaction.reply({ content: "ur not whitelisted", ephemeral: true });
+    return;
+  }
+
   if (commandName === 'hb') {
-    await interaction.deferReply();
-    const targetUser = interaction.options.getUser('user');
-    const rawId = interaction.options.getString('id');
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const target = interaction.options.getUser('user');
+    const rawId  = interaction.options.getString('id');
+    if (!target && !rawId) return interaction.reply({ content: 'give me a user or id', ephemeral: true });
+    const userId = target?.id ?? rawId;
     const reason = interaction.options.getString('reason') || 'no reason';
-    if (!targetUser && !rawId) return interaction.editReply('give me a user or their id');
-    const userId = targetUser?.id ?? rawId;
-    if (!/^\d{17,19}$/.test(userId)) return interaction.editReply("that doesn't look like a real id");
-    if (!guild) return interaction.editReply("need to be in a server for this");
+    if (!/^\d{17,19}$/.test(userId)) return interaction.reply({ content: "that doesn't look like a real id", ephemeral: true });
     try {
       await guild.members.ban(userId, { reason: `hardban by ${interaction.user.tag}: ${reason}`, deleteMessageSeconds: 0 });
-      let username = targetUser?.tag ?? userId;
-      if (!targetUser) { try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {} }
-      return interaction.editReply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0xed4245)
+      let username = target?.tag ?? userId;
+      if (!target) { try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {} }
+      return interaction.reply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0xed4245).setDescription(`<@${userId}> has been hardbanned`)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
-    } catch (err) { return interaction.editReply(`couldn't ban — ${err.message}`); }
+    } catch (err) { return interaction.reply({ content: `couldn't ban — ${err.message}`, ephemeral: true }); }
   }
 
   if (commandName === 'ban') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
-    const reason = interaction.options.getString('reason') || 'no reason';
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     if (!target.bannable) return interaction.reply({ content: "can't ban them, they might be above me", ephemeral: true });
+    const reason = interaction.options.getString('reason') || 'no reason';
     await target.ban({ reason, deleteMessageSeconds: 86400 });
-    return interaction.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0xed4245).setThumbnail(target.user.displayAvatarURL())
-      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
+    return interaction.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0xed4245).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been banned`)
+      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (commandName === 'kick') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
-    const reason = interaction.options.getString('reason') || 'no reason';
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     if (!target.kickable) return interaction.reply({ content: "can't kick them, they might be above me", ephemeral: true });
+    const reason = interaction.options.getString('reason') || 'no reason';
     try { await target.kick(reason); } catch { return interaction.reply({ content: "couldn't kick them", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL()).setDescription(`<@${target.user.id}> has been kicked`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
   }
 
   if (commandName === 'unban') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const userId = interaction.options.getString('id');
     const reason = interaction.options.getString('reason') || 'no reason';
-    if (!guild) return interaction.reply({ content: "need a server for this", ephemeral: true });
+    if (!/^\d{17,19}$/.test(userId)) return interaction.reply({ content: 'give me a valid user id', ephemeral: true });
     try {
       await guild.members.unban(userId, reason);
       let username = userId;
@@ -929,53 +741,38 @@ client.on('interactionCreate', async interaction => {
     } catch (err) { return interaction.reply({ content: `couldn't unban — ${err.message}`, ephemeral: true }); }
   }
 
-  if (commandName === 'purge') {
-    const amount = interaction.options.getInteger('amount');
-    try {
-      const deleted = await channel.bulkDelete(amount, true);
-      const reply = await channel.send(`deleted ${deleted.size} message${deleted.size !== 1 ? 's' : ''}`);
-      setTimeout(() => reply.delete().catch(() => {}), 3000);
-      return interaction.reply({ content: 'done', ephemeral: true });
-    } catch (err) { return interaction.reply({ content: `couldn't purge — ${err.message}`, ephemeral: true }); }
-  }
-
-  if (commandName === 'snipe') {
-    const snipe = snipeCache.get(channel.id);
-    if (!snipe) return interaction.reply({ content: 'nothing to snipe rn', ephemeral: true });
-    const ago = Math.floor((Date.now() - snipe.deletedAt) / 1000);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2b2d31)
-      .setAuthor({ name: snipe.author, iconURL: snipe.avatarUrl ?? undefined })
-      .setDescription(snipe.content).setFooter({ text: `deleted ${ago}s ago` }).setTimestamp()] });
-  }
-
   if (commandName === 'timeout') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target  = interaction.options.getMember('user');
-    const minutes = interaction.options.getInteger('minutes') ?? 5;
+    const minutes = interaction.options.getInteger('minutes') || 5;
     const reason  = interaction.options.getString('reason') || 'no reason';
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try { await target.timeout(minutes * 60 * 1000, reason); } catch { return interaction.reply({ content: "couldn't time them out", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0xfee75c).setThumbnail(target.user.displayAvatarURL())
-      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'duration', value: `${minutes}m`, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
+    return interaction.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0xfee75c).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been timed out for ${minutes}m`)
+      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'duration', value: `${minutes}m`, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (commandName === 'untimeout') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
-    try { await target.timeout(null); } catch { return interaction.reply({ content: "couldn't remove timeout", ephemeral: true }); }
+    try { await target.timeout(null); } catch { return interaction.reply({ content: "couldn't remove their timeout", ephemeral: true }); }
     return interaction.reply({ embeds: [baseEmbed().setTitle('timeout removed').setColor(0x57f287).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
   if (commandName === 'mute') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
     const reason = interaction.options.getString('reason') || 'no reason';
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try { await target.timeout(28 * 24 * 60 * 60 * 1000, reason); } catch { return interaction.reply({ content: "couldn't mute them", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL())
-      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
+    return interaction.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
+      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (commandName === 'unmute') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try { await target.timeout(null); } catch { return interaction.reply({ content: "couldn't unmute them", ephemeral: true }); }
@@ -985,16 +782,18 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'hush') {
     const target = interaction.options.getUser('user');
+    if (!target) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
     const hushedData = loadHushed();
     if (hushedData[target.id]) return interaction.reply({ content: `**${target.tag}** is already hushed`, ephemeral: true });
     hushedData[target.id] = { hushedBy: interaction.user.id, at: Date.now() };
     saveHushed(hushedData);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0xfee75c).setDescription('every msg they send gets deleted lol').setThumbnail(target.displayAvatarURL())
-      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
+    return interaction.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0xfee75c).setThumbnail(target.displayAvatarURL()).setDescription(`@${target.username} has been hushed`)
+      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (commandName === 'unhush') {
     const target = interaction.options.getUser('user');
+    if (!target) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
     const hushedData = loadHushed();
     if (!hushedData[target.id]) return interaction.reply({ content: `**${target.tag}** isn't hushed`, ephemeral: true });
     delete hushedData[target.id];
@@ -1275,8 +1074,6 @@ client.on('messageCreate', async message => {
 
   if (command === 'help') return message.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
 
-  if (command === 'mhelp') return message.reply({ embeds: [buildMusicHelpEmbed(prefix)] });
-
   if (command === 'vmhelp') return message.reply({ embeds: [buildVmHelpEmbed(prefix)] });
 
   // ── VoiceMaster prefix commands ───────────────────────────────────────────────
@@ -1361,117 +1158,6 @@ client.on('messageCreate', async message => {
     return message.reply({ embeds: [buildVmHelpEmbed(prefix)] });
   }
 
-  // ── Music prefix commands (open to everyone) ──────────────────────────────────
-  if (command === 'play') {
-    const query = args.join(' ');
-    if (!query) return message.reply(`give me a song name, artist, or link\nexample: \`${prefix}play love sosa chief keef\``);
-    if (!message.guild) return message.reply('this only works in a server');
-    const voiceChannel = message.member?.voice?.channel;
-    if (!voiceChannel) return message.reply('you need to be in a vc first');
-
-    const searching = await message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`searching for **${query}**...`)] });
-    try {
-      const { track } = await player.play(voiceChannel, query, {
-        nodeOptions: { metadata: { channel: message.channel }, volume: 80 },
-        requestedBy: message.author
-      });
-      const queue = useQueue(message.guild.id);
-      if (queue && queue.size > 1) {
-        return searching.edit({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('added to queue').setDescription(`**${track.title}**`)
-          .addFields({ name: 'duration', value: track.duration, inline: true }, { name: 'position', value: `#${queue.size}`, inline: true })
-          .setFooter({ text: `requested by ${message.author.tag}` }).setThumbnail(track.thumbnail)] });
-      }
-      return searching.edit({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('now playing').setDescription(`**${track.title}**`)
-        .addFields({ name: 'duration', value: track.duration, inline: true })
-        .setFooter({ text: `requested by ${message.author.tag}` }).setThumbnail(track.thumbnail)] });
-    } catch (err) {
-      return searching.edit({ embeds: [baseEmbed().setColor(0xed4245).setDescription(`couldn't play that — ${err.message}`)] });
-    }
-  }
-
-  if (command === 'pause') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (!queue?.currentTrack) return message.reply("nothing's playing");
-    if (queue.node.isPaused()) { queue.node.resume(); return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setDescription('▶ resumed')] }); }
-    queue.node.pause();
-    return message.reply({ embeds: [baseEmbed().setColor(0xfee75c).setDescription('⏸ paused')] });
-  }
-
-  if (command === 'skip') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (!queue?.currentTrack) return message.reply("nothing's playing");
-    const skipped = queue.currentTrack.title;
-    queue.node.skip();
-    return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`skipped **${skipped}**`)] });
-  }
-
-  if (command === 'queue') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (!queue?.currentTrack) return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('queue').setDescription('queue is empty rn')] });
-    const lines = [`**now playing:** ${queue.currentTrack.title}`];
-    if (queue.tracks.size) {
-      lines.push('', '**up next:**');
-      queue.tracks.toArray().slice(0, 10).forEach((t, i) => lines.push(`${i + 1}. ${t.title}`));
-      if (queue.tracks.size > 10) lines.push(`...and ${queue.tracks.size - 10} more`);
-    }
-    return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('queue').setDescription(lines.join('\n'))] });
-  }
-
-  if (command === 'nowplaying' || command === 'np') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (!queue?.currentTrack) return message.reply("nothing's playing");
-    const track = queue.currentTrack;
-    return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('now playing').setDescription(`**${track.title}**`)
-      .addFields({ name: 'duration', value: track.duration, inline: true }, { name: 'requested by', value: track.requestedBy?.tag ?? 'unknown', inline: true })
-      .setThumbnail(track.thumbnail)] });
-  }
-
-  if (command === 'repeat') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (!queue) return message.reply("not playing anything");
-    const modeArg = args[0]?.toLowerCase();
-    const modeMap = { off: QueueRepeatMode.OFF, track: QueueRepeatMode.TRACK, queue: QueueRepeatMode.QUEUE };
-    let newMode;
-    if (modeArg && modeMap[modeArg] !== undefined) {
-      newMode = modeMap[modeArg];
-    } else {
-      newMode = queue.repeatMode === QueueRepeatMode.OFF ? QueueRepeatMode.TRACK : QueueRepeatMode.OFF;
-    }
-    queue.setRepeatMode(newMode);
-    const modeLabel = { [QueueRepeatMode.OFF]: 'off', [QueueRepeatMode.TRACK]: 'track 🔂', [QueueRepeatMode.QUEUE]: 'queue 🔁' };
-    return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`repeat is now **${modeLabel[newMode]}**`)] });
-  }
-
-  if (command === 'shuffle') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (!queue?.tracks.size) return message.reply("queue is empty");
-    queue.tracks.shuffle();
-    return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription('🔀 queue shuffled')] });
-  }
-
-  if (command === 'volume' || command === 'vol') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (!queue) return message.reply("not playing anything");
-    const input = parseInt(args[0], 10);
-    if (isNaN(input) || input < 0 || input > 100) return message.reply("give me a number between **0** and **100**");
-    queue.node.setVolume(input);
-    return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`🔊 volume set to **${input}%**`)] });
-  }
-
-  if (command === 'leave' || command === 'stop') {
-    if (!message.guild) return;
-    const queue = useQueue(message.guild.id);
-    if (queue) queue.delete();
-    return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription('left the vc')] });
-  }
-
   // ── Whitelist-required prefix commands ───────────────────────────────────────
   if (!loadWhitelist().includes(message.author.id)) return;
 
@@ -1486,7 +1172,7 @@ client.on('messageCreate', async message => {
       await message.guild.members.ban(userId, { reason: `hardban by ${message.author.tag}: ${reason}`, deleteMessageSeconds: 0 });
       let username = target?.tag ?? userId;
       if (!target) { try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {} }
-      return message.reply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0xed4245)
+      return message.reply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0xed4245).setDescription(`<@${userId}> has been hardbanned`)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
     } catch (err) { return message.reply(`couldn't ban — ${err.message}`); }
   }
@@ -1497,8 +1183,8 @@ client.on('messageCreate', async message => {
     if (!target.bannable) return message.reply("can't ban them, they might be above me");
     const reason = args.slice(1).join(' ') || 'no reason';
     await target.ban({ reason, deleteMessageSeconds: 86400 });
-    return message.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0xed4245).setThumbnail(target.user.displayAvatarURL())
-      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
+    return message.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0xed4245).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been banned`)
+      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (command === 'kick') {
@@ -1507,7 +1193,7 @@ client.on('messageCreate', async message => {
     if (!target.kickable) return message.reply("can't kick them, they might be above me");
     const reason = args.slice(1).join(' ') || 'no reason';
     try { await target.kick(reason); } catch { return message.reply("couldn't kick them"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL()).setDescription(`<@${target.user.id}> has been kicked`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
   }
 
@@ -1531,8 +1217,8 @@ client.on('messageCreate', async message => {
     if (minutes < 1 || minutes > 40320) return message.reply('has to be between 1 and 40320 mins');
     const reason = args.slice(2).join(' ') || 'no reason';
     try { await target.timeout(minutes * 60 * 1000, reason); } catch { return message.reply("couldn't time them out"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0xfee75c).setThumbnail(target.user.displayAvatarURL())
-      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'duration', value: `${minutes}m`, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
+    return message.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0xfee75c).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been timed`)
+      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'duration', value: `${minutes}m`, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (command === 'untimeout') {
@@ -1548,8 +1234,8 @@ client.on('messageCreate', async message => {
     if (!target) return message.reply('mention someone');
     const reason = args.slice(1).join(' ') || 'no reason';
     try { await target.timeout(28 * 24 * 60 * 60 * 1000, reason); } catch { return message.reply("couldn't mute them"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL())
-      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
+    return message.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0xed4245).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
+      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (command === 'unmute') {
@@ -1567,8 +1253,8 @@ client.on('messageCreate', async message => {
     if (hushedData[target.id]) return message.reply(`**${target.user.tag}** is already hushed — use \`${prefix}unhush\` to remove it`);
     hushedData[target.id] = { hushedBy: message.author.id, at: Date.now() };
     saveHushed(hushedData);
-    return message.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0xfee75c).setThumbnail(target.user.displayAvatarURL()).setDescription('every msg they send gets deleted lol')
-      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
+    return message.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0xfee75c).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been hushed`)
+      .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
   if (command === 'unhush') {
