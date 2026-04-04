@@ -17,7 +17,7 @@ import {
   SlashCommandBuilder
 } from 'discord.js';
 import { Player, QueryType, useQueue, usePlayer, QueueRepeatMode } from 'discord-player';
-import { YoutubeiExtractor } from 'discord-player-youtubei';
+import { DefaultExtractors } from '@discord-player/extractor';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -39,11 +39,7 @@ const client = new Client({
 // ─── discord-player setup ────────────────────────────────────────────────────
 const player = new Player(client);
 
-player.extractors.register(YoutubeiExtractor, {
-  streamOptions: {
-    useClient: 'ANDROID',
-  },
-});
+player.extractors.loadMulti(DefaultExtractors);
 
 player.events.on('playerStart', (queue, track) => {
   queue.metadata?.channel?.send({
