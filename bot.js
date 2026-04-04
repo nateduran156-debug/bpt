@@ -52,6 +52,7 @@ const VERIFY_CONFIG_FILE = path.join(__dirname, 'verify_config.json')
 const VERIFY_WHITELIST_FILE = path.join(__dirname, 'verify_whitelist.json')
 const SAVED_EMBEDS_FILE = path.join(__dirname, 'saved_embeds.json')
 const ANNOY_FILE = path.join(__dirname, 'annoy.json')
+const SKULL_FILE = path.join(__dirname, 'skull.json')
 const ACTIVITY_CHECK_FILE = path.join(__dirname, 'activity_check.json')
 
 // read/write json helpers
@@ -93,6 +94,8 @@ const loadSavedEmbeds = () => loadJSON(SAVED_EMBEDS_FILE)
 const saveSavedEmbeds = e => saveJSON(SAVED_EMBEDS_FILE, e)
 const loadAnnoy = () => loadJSON(ANNOY_FILE)
 const saveAnnoy = a => saveJSON(ANNOY_FILE, a)
+const loadSkull = () => loadJSON(SKULL_FILE)
+const saveSkull = s => saveJSON(SKULL_FILE, s)
 const loadActivityCheck = () => loadJSON(ACTIVITY_CHECK_FILE)
 const saveActivityCheck = a => saveJSON(ACTIVITY_CHECK_FILE, a)
 
@@ -136,6 +139,7 @@ function isWlManager(userId) {
   if (!fs.existsSync(VERIFY_WHITELIST_FILE)) saveVerifyWhitelist({ roles: [], users: [] })
   if (!fs.existsSync(SAVED_EMBEDS_FILE)) saveSavedEmbeds({})
   if (!fs.existsSync(ANNOY_FILE)) saveAnnoy({})
+  if (!fs.existsSync(SKULL_FILE)) saveSkull({})
   if (!fs.existsSync(HARDBANS_FILE)) saveHardbans({})
   if (!fs.existsSync(ACTIVITY_CHECK_FILE)) saveActivityCheck({})
 })()
@@ -282,6 +286,8 @@ const HELP_SECTIONS = [
       '{p}impersonate @user [message]',
       '{p}annoy @user',
       '{p}unannoy @user',
+      '{p}skull @user',
+      '{p}unskull @user',
       '{p}embed create',
       '{p}embed delete',
       '{p}convert [username]',
@@ -581,6 +587,12 @@ const slashCommands = [
   new SlashCommandBuilder().setName('unannoy').setDescription('stop annoying a user')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to stop annoying').setRequired(true)),
+  new SlashCommandBuilder().setName('skull').setDescription('react to every message a user sends with 💀')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('user').setDescription('user to skull').setRequired(true)),
+  new SlashCommandBuilder().setName('unskull').setDescription('stop skulling a user')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('user').setDescription('user to stop skulling').setRequired(true)),
   new SlashCommandBuilder().setName('cleanup').setDescription('clean up server resources (empty channels, unused roles, etc)')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
   new SlashCommandBuilder().setName('config').setDescription('customize embed settings for this server')
@@ -779,7 +791,7 @@ client.on('interactionCreate', async interaction => {
       guildCheck.checkins.push(interaction.user.id);
       saveActivityCheck(checks);
       try { await interaction.user.send('Thanks for reacting to the activity check I love youuuu!❤️😘'); } catch {}
-      return interaction.reply({ content: "✅ you're checked in!", ephemeral: true });
+      return interaction.reply({ content: "reacted.", ephemeral: true });
     }
     if (interaction.customId.startsWith('gc_')) {
       const parts = interaction.customId.split('_');
@@ -1132,6 +1144,33 @@ client.on('interactionCreate', async interaction => {
     delete hushedData[target.id];
     saveHushed(hushedData);
     return interaction.reply({ embeds: [baseEmbed().setTitle('unhushed').setColor(0x57f287).setThumbnail(target.displayAvatarURL())
+      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (commandName === 'skull') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const target = interaction.options.getUser('user');
+    if (!target) return interaction.reply({ content: "mention someone to skull", ephemeral: true });
+    const skullData = loadSkull();
+    if (!skullData[guild.id]) skullData[guild.id] = [];
+    if (skullData[guild.id].includes(target.id)) return interaction.reply({ content: `already skulling **${target.tag}**`, ephemeral: true });
+    skullData[guild.id].push(target.id);
+    saveSkull(skullData);
+    return interaction.reply({ embeds: [baseEmbed().setTitle('skull').setColor(0x1b6fe8).setThumbnail(target.displayAvatarURL())
+      .setDescription(`now reacting to every message from **${target.tag}** with 💀`)
+      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (commandName === 'unskull') {
+    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    const target = interaction.options.getUser('user');
+    if (!target) return interaction.reply({ content: "mention someone to unskull", ephemeral: true });
+    const skullData = loadSkull();
+    if (!skullData[guild.id]?.includes(target.id)) return interaction.reply({ content: `not skulling **${target.tag}**`, ephemeral: true });
+    skullData[guild.id] = skullData[guild.id].filter(id => id !== target.id);
+    saveSkull(skullData);
+    return interaction.reply({ embeds: [baseEmbed().setTitle('unskull').setColor(0x57f287).setThumbnail(target.displayAvatarURL())
+      .setDescription(`stopped skulling **${target.tag}**`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -1687,6 +1726,15 @@ client.on('messageCreate', async message => {
     }
   }
 
+  // skull: react to messages from skulled users with 💀
+  if (message.guild) {
+    const skullData = loadSkull()
+    const skulled = skullData[message.guild.id] || []
+    if (skulled.includes(message.author.id)) {
+      try { await message.react('💀') } catch {}
+    }
+  }
+
   // autoreact stuff
   const autoreactData = loadAutoreact()
   if (autoreactData[message.author.id]?.length) {
@@ -2000,6 +2048,33 @@ client.on('messageCreate', async message => {
     delete hushedData[target.id]; saveHushed(hushedData);
     return message.reply({ embeds: [baseEmbed().setTitle('unhushed').setColor(0x57f287).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (command === 'skull') {
+    if (!message.guild) return;
+    const target = message.mentions.users.first();
+    if (!target) return message.reply('mention someone to skull');
+    const skullData = loadSkull();
+    if (!skullData[message.guild.id]) skullData[message.guild.id] = [];
+    if (skullData[message.guild.id].includes(target.id)) return message.reply(`already skulling **${target.tag}**`);
+    skullData[message.guild.id].push(target.id);
+    saveSkull(skullData);
+    return message.reply({ embeds: [baseEmbed().setTitle('skull').setColor(0x1b6fe8).setThumbnail(target.displayAvatarURL())
+      .setDescription(`now reacting to every message from **${target.tag}** with 💀`)
+      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (command === 'unskull') {
+    if (!message.guild) return;
+    const target = message.mentions.users.first();
+    if (!target) return message.reply('mention someone to unskull');
+    const skullData = loadSkull();
+    if (!skullData[message.guild.id]?.includes(target.id)) return message.reply(`not skulling **${target.tag}**`);
+    skullData[message.guild.id] = skullData[message.guild.id].filter(id => id !== target.id);
+    saveSkull(skullData);
+    return message.reply({ embeds: [baseEmbed().setTitle('unskull').setColor(0x57f287).setThumbnail(target.displayAvatarURL())
+      .setDescription(`stopped skulling **${target.tag}**`)
+      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
   if (command === 'annoy') {
