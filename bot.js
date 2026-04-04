@@ -303,7 +303,6 @@ const HELP_SECTIONS = [
   {
     title: 'Special Actions',
     commands: [
-      '{p}impersonate @user [message]',
       '{p}annoy @user',
       '{p}unannoy @user',
       '{p}skull @user',
@@ -630,11 +629,6 @@ const slashCommands = [
         { name: 'exile', value: 'exile' }
       ))
     .addStringOption(o => o.setName('value').setDescription('role id for rank action').setRequired(false)),
-  new SlashCommandBuilder().setName('impersonate').setDescription('send a message as a user via webhook')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to impersonate').setRequired(true))
-    .addStringOption(o => o.setName('message').setDescription('message to send').setRequired(true))
-    .addChannelOption(o => o.setName('channel').setDescription('channel to send in (defaults to current)').setRequired(false)),
   new SlashCommandBuilder().setName('unhb').setDescription('remove a hardban')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('id').setDescription('user id to un-hardban').setRequired(true))
@@ -1500,27 +1494,6 @@ client.on('interactionCreate', async interaction => {
     } catch (err) { return interaction.editReply(`something went wrong — ${err.message}`); }
   }
 
-  if (commandName === 'impersonate') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const target = interaction.options.getUser('user');
-    const message = interaction.options.getString('message');
-    const targetChannel = interaction.options.getChannel('channel') || channel;
-    try {
-      const webhooks = await targetChannel.fetchWebhooks();
-      let webhook = webhooks.find(w => w.owner?.id === client.user.id);
-      if (!webhook) {
-        webhook = await targetChannel.createWebhook({ name: 'impersonator', avatar: client.user.displayAvatarURL() });
-      }
-      const member = guild.members.cache.get(target.id);
-      await webhook.send({
-        content: message,
-        username: member?.displayName ?? target.username,
-        avatarURL: target.displayAvatarURL()
-      });
-      return interaction.reply({ content: 'sent', ephemeral: true });
-    } catch (err) { return interaction.reply({ content: `couldn't impersonate — ${err.message}`, ephemeral: true }); }
-  }
-
   if (commandName === 'setverifyrole') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const role = interaction.options.getRole('role');
@@ -2067,29 +2040,6 @@ client.on('messageCreate', async message => {
     } catch (err) {
       return message.reply(`couldn't nuke — ${err.message}`);
     }
-    return;
-  }
-
-  if (command === 'impersonate') {
-    if (!message.guild) return;
-    const target = message.mentions.users.first();
-    if (!target) return message.reply('mention a user to impersonate');
-    const msg = args.slice(1).join(' ');
-    if (!msg) return message.reply('include a message to send');
-    try {
-      const webhooks = await message.channel.fetchWebhooks();
-      let webhook = webhooks.find(w => w.owner?.id === client.user.id);
-      if (!webhook) {
-        webhook = await message.channel.createWebhook({ name: 'impersonator', avatar: client.user.displayAvatarURL() });
-      }
-      const member = message.guild.members.cache.get(target.id);
-      await webhook.send({
-        content: msg,
-        username: member?.displayName ?? target.username,
-        avatarURL: target.displayAvatarURL()
-      });
-      try { await message.delete(); } catch {}
-    } catch (err) { return message.reply(`couldn't impersonate — ${err.message}`); }
     return;
   }
 
