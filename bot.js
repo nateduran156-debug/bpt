@@ -2239,13 +2239,30 @@ client.on('messageCreate', async message => {
     let rank2RoleId;
     try {
       const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 2);
-      if (!rank2) return message.reply("couldn't find a rank 2 role in the group");
+      const rank2 = rolesData.roles?.find(r => r.rank === 1);
+      if (!rank2) return message.reply("couldn't find a rank 1 role in the group");
       rank2RoleId = String(rank2.id);
     } catch { return message.reply("couldn't fetch group roles, try again"); }
     const status = await message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`stripping **${robloxUser}** (tag: **${foundTag}**)...`)] });
     try {
-      const result = await rankRobloxUser(robloxUser, rank2RoleId);
+      let result;
+      let skipReason = null;
+      try {
+        result = await rankRobloxUser(robloxUser, rank2RoleId);
+      } catch (rankErr) {
+        const msg = rankErr.message?.toLowerCase() ?? '';
+        if (msg.includes('same role')) {
+          skipReason = 'already at rank 1 (balls)';
+        } else if (msg.includes("isn't in the group")) {
+          skipReason = 'not in group — tag removed only';
+        }
+        if (skipReason) {
+          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUser], excludeBannedUsers: false }) })).json()).data?.[0];
+          result = { displayName: userBasic?.displayName || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
+        } else {
+          throw rankErr;
+        }
+      }
       // remove from tagged members
       taggedMembers[foundTag] = taggedMembers[foundTag].filter(m => m.toLowerCase() !== robloxUser.toLowerCase());
       if (!taggedMembers[foundTag].length) delete taggedMembers[foundTag];
@@ -2256,7 +2273,9 @@ client.on('messageCreate', async message => {
           { name: 'tag removed', value: foundTag, inline: true },
           { name: 'stripped by', value: message.author.tag, inline: true },
           { name: 'reason', value: reason }
-        ).setTimestamp();
+        )
+        .setTimestamp();
+      if (skipReason) embed.setFooter({ text: skipReason });
       if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
       await status.edit({ content: '', embeds: [embed] });
       const logEmbed = baseEmbed().setTitle('strip log').setColor(0xed4245)
@@ -2265,11 +2284,20 @@ client.on('messageCreate', async message => {
           { name: 'tag removed', value: foundTag, inline: true },
           { name: 'stripped by', value: `<@${message.author.id}>`, inline: true },
           { name: 'reason', value: reason }
-        ).setFooter({ text: `roblox id: ${result.userId}` }).setTimestamp();
+        ).setFooter({ text: `roblox id: ${result.userId}${skipReason ? ` • ${skipReason}` : ''}` }).setTimestamp();
       if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
       await sendStripLog(message.guild, logEmbed);
     } catch (err) {
       await status.edit({ content: '', embeds: [baseEmbed().setColor(0xed4245).setDescription(`couldn't strip them — ${err.message}`)] });
+      const failEmbed = baseEmbed().setTitle('strip failed').setColor(0xfee75c)
+        .addFields(
+          { name: 'user', value: robloxUser, inline: true },
+          { name: 'tag', value: foundTag, inline: true },
+          { name: 'attempted by', value: `<@${message.author.id}>`, inline: true },
+          { name: 'reason', value: reason },
+          { name: 'error', value: err.message }
+        ).setTimestamp();
+      await sendStripLog(message.guild, failEmbed);
     }
     return;
   }
@@ -2289,8 +2317,8 @@ client.on('messageCreate', async message => {
     let rank2RoleId;
     try {
       const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 2);
-      if (!rank2) return message.reply("couldn't find a rank 2 role in the group");
+      const rank2 = rolesData.roles?.find(r => r.rank === 1);
+      if (!rank2) return message.reply("couldn't find a rank 1 role in the group");
       rank2RoleId = String(rank2.id);
     } catch { return message.reply("couldn't fetch group roles, try again"); }
     // store pending and ask for confirmation
