@@ -1013,8 +1013,18 @@ client.on('interactionCreate', async interaction => {
   // ── Whitelist-required slash commands ────────────────────────────────────────
   if (!loadWhitelist().includes(interaction.user.id)) {
     const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'purge', 'about', 'vstatus']);
-    if (!openCommands.has(commandName)) return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
-    return;
+    if (commandName === 'verify' && guild) {
+      const vwl = loadVerifyWhitelist();
+      const guildVwl = vwl[guild.id] || { roles: [], users: [] };
+      const member = interaction.member;
+      const isVwlAllowed = guildVwl.users.includes(interaction.user.id) ||
+        member.roles.cache.some(r => guildVwl.roles.includes(r.id));
+      if (!isVwlAllowed) return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
+    } else if (!openCommands.has(commandName)) {
+      return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
+    } else {
+      return;
+    }
   }
 
   if (commandName === 'hb') {
@@ -1818,7 +1828,17 @@ client.on('messageCreate', async message => {
   }
 
   // ── Whitelist-required prefix commands ───────────────────────────────────────
-  if (!loadWhitelist().includes(message.author.id)) return;
+  if (!loadWhitelist().includes(message.author.id)) {
+    if (command === 'verify' && message.guild) {
+      const vwl = loadVerifyWhitelist();
+      const guildVwl = vwl[message.guild.id] || { roles: [], users: [] };
+      const isVwlAllowed = guildVwl.users.includes(message.author.id) ||
+        message.member.roles.cache.some(r => guildVwl.roles.includes(r.id));
+      if (!isVwlAllowed) return;
+    } else {
+      return;
+    }
+  }
 
   if (command === 'hb') {
     if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.hb`')] });
