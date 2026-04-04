@@ -266,14 +266,14 @@ const HELP_SECTIONS = [
   {
     title: 'Verify System',
     commands: [
-      '/verify @user',
-      '/vstatus',
-      '/setverifyrole [role]',
-      '/vwl [role]',
-      '/vwluser [user]',
-      '/vunwl [role/user]',
-      '/gflist',
-      '/gf [groupId]',
+      '{p}verify @user',
+      '{p}vstatus',
+      '{p}setverifyrole [role]',
+      '{p}vwl [role]',
+      '{p}vwluser [user]',
+      '{p}vunwl [role/user]',
+      '{p}gflist',
+      '{p}gf [groupId]',
     ]
   },
   {
@@ -282,8 +282,8 @@ const HELP_SECTIONS = [
       '{p}impersonate @user [message]',
       '{p}annoy @user',
       '{p}unannoy @user',
-      '/embed create',
-      '/embed delete',
+      '{p}embed create',
+      '{p}embed delete',
       '{p}convert [username]',
     ]
   },
@@ -320,10 +320,10 @@ const HELP_SECTIONS = [
       '{p}status [type] [text]',
       '{p}setlog #channel',
       '{p}restart',
-      '/config',
-      '/whitelist add @user',
-      '/whitelist remove @user',
-      '/whitelist list',
+      '{p}config',
+      '{p}whitelist add @user',
+      '{p}whitelist remove @user',
+      '{p}whitelist list',
     ]
   },
 ];
@@ -366,11 +366,11 @@ function buildGcEmbed(username, groups, avatarUrl, page) {
 
 function buildGcNotInGroupEmbed(displayName) {
   return new EmbedBuilder()
-    .setColor(0x1b6fe8)
-    .setTitle('Join Our Groups')
+    .setColor(0xed4245)
+    .setTitle('Join Group')
     .setThumbnail(LOGO_URL)
     .setAuthor({ name: displayName })
-    .setDescription(`**${displayName}** needs to join this group to get verified\n\n[Join Here](${FRAID_GROUP_LINK})`)
+    .setDescription(`**${displayName}** has not joined the group, wait till they join to verify them.\n\n**Group ID**\n${FRAID_GROUP_ID}\n**Link**\n[Join Here](${FRAID_GROUP_LINK})`)
     .setFooter({ text: '/fraid' })
 }
 
@@ -381,7 +381,7 @@ function buildGcInGroupEmbed(displayName) {
     .setTitle('Group Check')
     .setThumbnail(LOGO_URL)
     .setAuthor({ name: displayName })
-    .setDescription(`**${displayName}** is now able to be verified`)
+    .setDescription(`**${displayName}** is able to get verified now`)
     .setFooter({ text: '/fraid' })
 }
 
@@ -880,18 +880,20 @@ client.on('interactionCreate', async interaction => {
       if (!userBasic) return interaction.editReply("couldn't find that user")
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
-      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
-      if (!inFraidGroup) {
-        return interaction.editReply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
-      }
-      const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
-      if (!groups.length) return interaction.editReply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
-      const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       const displayName = userBasic.displayName || userBasic.name;
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
+      const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
+      const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
       setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
+      if (!inFraidGroup) {
+        return interaction.editReply({
+          embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName)],
+          components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
+        });
+      }
       return interaction.editReply({
-        embeds: [buildGcInGroupEmbed(displayName), buildGcEmbed(displayName, groups, avatarUrl, 0)],
+        embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcInGroupEmbed(displayName)],
         components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
       });
     } catch { return interaction.editReply("couldn't load their groups, try again") }
@@ -1721,18 +1723,20 @@ client.on('messageCreate', async message => {
       if (!userBasic) return message.reply("couldn't find that user")
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
-      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
-      if (!inFraidGroup) {
-        return message.reply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
-      }
-      const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
-      if (!groups.length) return message.reply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
-      const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       const displayName = userBasic.displayName || userBasic.name;
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
+      const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
+      const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
       setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
+      if (!inFraidGroup) {
+        return message.reply({
+          embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName)],
+          components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
+        });
+      }
       return message.reply({
-        embeds: [buildGcInGroupEmbed(displayName), buildGcEmbed(displayName, groups, avatarUrl, 0)],
+        embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcInGroupEmbed(displayName)],
         components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
       });
     } catch { return message.reply("couldn't load their groups, try again") }
