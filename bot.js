@@ -293,8 +293,6 @@ const HELP_SECTIONS = [
       '{p}vwl [role]',
       '{p}vwluser [user]',
       '{p}vunwl [role/user]',
-      '{p}gflist',
-      '{p}gf [groupId]',
     ]
   },
   {
@@ -305,9 +303,6 @@ const HELP_SECTIONS = [
       '{p}unannoy @user',
       '{p}skull @user',
       '{p}unskull @user',
-      '{p}embed create',
-      '{p}embed delete',
-      '{p}convert [username]',
     ]
   },
   {
@@ -317,7 +312,6 @@ const HELP_SECTIONS = [
       '{p}activitycheck start [message]',
       '{p}activitycheck end',
       '{p}snipe',
-      '{p}cleanup',
       '{p}afk [reason]',
       '{p}cs',
       '{p}say [text]',
@@ -331,8 +325,6 @@ const HELP_SECTIONS = [
       '{p}gc [username]',
       '{p}grouproles',
       '{p}group [username] [action]',
-      '{p}gs [groupId]',
-      '{p}ungf [groupId]',
       '{p}tag [name] | [roleId]',
       '{p}tag [robloxUser] [tagname]',
       '{p}strip [robloxUser] [reason]',
@@ -614,8 +606,6 @@ const slashCommands = [
   new SlashCommandBuilder().setName('unskull').setDescription('stop skulling a user')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to stop skulling').setRequired(true)),
-  new SlashCommandBuilder().setName('cleanup').setDescription('clean up server resources (empty channels, unused roles, etc)')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
   new SlashCommandBuilder().setName('config').setDescription('customize embed settings for this server')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('setting').setDescription('what to configure').setRequired(true)
@@ -625,28 +615,6 @@ const slashCommands = [
         { name: 'thumbnail', value: 'thumbnail' }
       ))
     .addStringOption(o => o.setName('value').setDescription('new value').setRequired(true)),
-  new SlashCommandBuilder().setName('convert').setDescription('convert a roblox username to their user id')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
-  new SlashCommandBuilder().setName('embed').setDescription('manage custom embeds')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addSubcommand(sub => sub.setName('create').setDescription('create and send a custom embed')
-      .addStringOption(o => o.setName('title').setDescription('embed title').setRequired(true))
-      .addStringOption(o => o.setName('description').setDescription('embed description').setRequired(true))
-      .addStringOption(o => o.setName('color').setDescription('hex color e.g. #1b6fe8').setRequired(false))
-      .addChannelOption(o => o.setName('channel').setDescription('channel to send in').setRequired(false))
-      .addStringOption(o => o.setName('name').setDescription('save this embed with a name').setRequired(false)))
-    .addSubcommand(sub => sub.setName('delete').setDescription('delete a saved embed and its message')
-      .addStringOption(o => o.setName('name').setDescription('name of the saved embed').setRequired(true))),
-  new SlashCommandBuilder().setName('gf').setDescription('flag a roblox group id')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('groupid').setDescription('roblox group id to flag').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason for flagging').setRequired(false)),
-  new SlashCommandBuilder().setName('gflist').setDescription('view all flagged roblox groups')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('ungf').setDescription('remove a flagged roblox group id')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('groupid').setDescription('roblox group id to unflag').setRequired(true)),
   new SlashCommandBuilder().setName('group').setDescription('all roblox group actions in one command')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true))
@@ -657,9 +625,6 @@ const slashCommands = [
         { name: 'exile', value: 'exile' }
       ))
     .addStringOption(o => o.setName('value').setDescription('role id for rank action').setRequired(false)),
-  new SlashCommandBuilder().setName('gs').setDescription('switch which group is used for group check or role command')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('groupid').setDescription('roblox group id to switch to').setRequired(true)),
   new SlashCommandBuilder().setName('impersonate').setDescription('send a message as a user via webhook')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to impersonate').setRequired(true))
@@ -1020,18 +985,6 @@ client.on('interactionCreate', async interaction => {
     } catch (err) { return interaction.reply({ content: `couldn't purge — ${err.message}`, ephemeral: true }); }
   }
 
-  if (commandName === 'convert') {
-    await interaction.deferReply();
-    const username = interaction.options.getString('username');
-    try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return interaction.editReply("couldn't find that user");
-      return interaction.editReply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('Roblox ID Lookup')
-        .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
-        .setFooter({ text: 'roblox user id' }).setTimestamp()] });
-    } catch { return interaction.editReply("something went wrong, try again"); }
-  }
-
   if (commandName === 'about') {
     return interaction.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle(`About ${client.user.username}`)
       .setDescription(`A custom Discord bot built for **fraidfg**.\n\nUse \`/help\` to see all commands.`)
@@ -1039,13 +992,6 @@ client.on('interactionCreate', async interaction => {
         { name: 'servers', value: `${client.guilds.cache.size}`, inline: true },
         { name: 'uptime', value: `<t:${Math.floor((Date.now() - client.uptime) / 1000)}:R>`, inline: true }
       ).setThumbnail(client.user.displayAvatarURL()).setTimestamp()] });
-  }
-
-  if (commandName === 'gflist') {
-    const flags = loadFlaggedGroups();
-    if (!flags.length) return interaction.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('Flagged Groups').setDescription('no groups flagged')] });
-    const lines = flags.map((f, i) => `${i + 1}. Group ID: \`${f.id}\`${f.reason ? ` — ${f.reason}` : ''}${f.flaggedBy ? ` (by <@${f.flaggedBy}>)` : ''}`).join('\n');
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Flagged Roblox Groups').setDescription(lines).setTimestamp()] });
   }
 
   if (commandName === 'vstatus') {
@@ -1067,7 +1013,7 @@ client.on('interactionCreate', async interaction => {
 
   // ── Whitelist-required slash commands ────────────────────────────────────────
   if (!loadWhitelist().includes(interaction.user.id)) {
-    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'purge', 'convert', 'about', 'gflist', 'vstatus']);
+    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'purge', 'about', 'vstatus']);
     if (!openCommands.has(commandName)) return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
     return;
   }
@@ -1496,31 +1442,6 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  if (commandName === 'cleanup') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    await interaction.deferReply({ ephemeral: true });
-    try {
-      await guild.members.fetch();
-      let cleaned = 0;
-      const lines = [];
-      const vmChannels = loadVmChannels();
-      for (const [chId, chData] of Object.entries(vmChannels)) {
-        const ch = guild.channels.cache.get(chId);
-        if (!ch || ch.members.size === 0) {
-          try { if (ch) await ch.delete(); } catch {}
-          delete vmChannels[chId];
-          cleaned++;
-          lines.push(`deleted empty vc: ${ch?.name ?? chId}`);
-        }
-      }
-      saveVmChannels(vmChannels);
-      if (!lines.length) lines.push('nothing to clean up');
-      return interaction.editReply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Cleanup')
-        .setDescription(lines.join('\n'))
-        .addFields({ name: 'items cleaned', value: `${cleaned}`, inline: true }).setTimestamp()] });
-    } catch (err) { return interaction.editReply(`cleanup failed — ${err.message}`); }
-  }
-
   if (commandName === 'config') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const setting = interaction.options.getString('setting');
@@ -1532,68 +1453,6 @@ client.on('interactionCreate', async interaction => {
     saveConfig(cfg);
     return interaction.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Config Updated')
       .addFields({ name: setting, value: value, inline: true }).setTimestamp()] });
-  }
-
-  if (commandName === 'embed') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const sub = interaction.options.getSubcommand();
-    if (sub === 'create') {
-      const title = interaction.options.getString('title');
-      const description = interaction.options.getString('description');
-      const colorHex = interaction.options.getString('color') || '#1b6fe8';
-      const targetChannel = interaction.options.getChannel('channel') || channel;
-      const saveName = interaction.options.getString('name');
-      const color = parseInt(colorHex.replace('#', ''), 16) || 0x1b6fe8;
-      const embed = new EmbedBuilder().setTitle(title).setDescription(description).setColor(color).setTimestamp();
-      const sent = await targetChannel.send({ embeds: [embed] });
-      if (saveName) {
-        const embeds = loadSavedEmbeds();
-        if (!embeds[guild.id]) embeds[guild.id] = {};
-        embeds[guild.id][saveName] = { channelId: targetChannel.id, messageId: sent.id, title, description, color };
-        saveSavedEmbeds(embeds);
-        return interaction.reply({ content: `embed sent and saved as **${saveName}**`, ephemeral: true });
-      }
-      return interaction.reply({ content: 'embed sent', ephemeral: true });
-    }
-    if (sub === 'delete') {
-      const name = interaction.options.getString('name');
-      const embeds = loadSavedEmbeds();
-      const entry = embeds[guild.id]?.[name];
-      if (!entry) return interaction.reply({ content: `no saved embed called **${name}**`, ephemeral: true });
-      try {
-        const ch = await guild.channels.fetch(entry.channelId);
-        const msg = await ch.messages.fetch(entry.messageId);
-        await msg.delete();
-      } catch {}
-      delete embeds[guild.id][name];
-      saveSavedEmbeds(embeds);
-      return interaction.reply({ content: `embed **${name}** deleted`, ephemeral: true });
-    }
-  }
-
-  if (commandName === 'gf') {
-    const groupId = interaction.options.getString('groupid');
-    const reason = interaction.options.getString('reason') || null;
-    if (!/^\d+$/.test(groupId)) return interaction.reply({ content: "that doesn't look like a valid group id", ephemeral: true });
-    const flags = loadFlaggedGroups();
-    if (flags.some(f => f.id === groupId)) return interaction.reply({ content: `group \`${groupId}\` is already flagged`, ephemeral: true });
-    flags.push({ id: groupId, reason, flaggedBy: interaction.user.id, at: Date.now() });
-    saveFlaggedGroups(flags);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Group Flagged')
-      .addFields(
-        { name: 'group id', value: groupId, inline: true },
-        { name: 'flagged by', value: interaction.user.tag, inline: true },
-        { name: 'reason', value: reason || 'no reason', inline: true }
-      ).setTimestamp()] });
-  }
-
-  if (commandName === 'ungf') {
-    const groupId = interaction.options.getString('groupid');
-    const flags = loadFlaggedGroups();
-    if (!flags.some(f => f.id === groupId)) return interaction.reply({ content: `group \`${groupId}\` isn't flagged`, ephemeral: true });
-    saveFlaggedGroups(flags.filter(f => f.id !== groupId));
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Group Unflagged')
-      .addFields({ name: 'group id', value: groupId, inline: true }, { name: 'removed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
   if (commandName === 'group') {
@@ -1634,16 +1493,6 @@ client.on('interactionCreate', async interaction => {
           .addFields({ name: 'user', value: userBasic.name, inline: true }, { name: 'exiled by', value: interaction.user.tag, inline: true }).setTimestamp()] });
       }
     } catch (err) { return interaction.editReply(`something went wrong — ${err.message}`); }
-  }
-
-  if (commandName === 'gs') {
-    const groupId = interaction.options.getString('groupid');
-    if (!/^\d+$/.test(groupId)) return interaction.reply({ content: "that doesn't look like a valid group id", ephemeral: true });
-    const cfg = loadConfig();
-    cfg.activeGroupId = groupId;
-    saveConfig(cfg);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Group Switched')
-      .addFields({ name: 'new group id', value: groupId, inline: true }, { name: 'changed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
   if (commandName === 'impersonate') {
@@ -1896,6 +1745,16 @@ client.on('messageCreate', async message => {
         .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
         .setFooter({ text: 'roblox user id' }).setTimestamp()] });
     } catch { return message.reply("something went wrong, try again"); }
+  }
+
+  if (command === 'snipe') {
+    if (!message.guild) return;
+    const sniped = snipeCache.get(message.channel.id);
+    if (!sniped) return message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription('nothing to snipe rn')] });
+    return message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('sniped')
+      .setDescription(sniped.content)
+      .addFields({ name: 'author', value: sniped.author, inline: true }, { name: 'deleted', value: `<t:${Math.floor(sniped.deletedAt / 1000)}:R>`, inline: true })
+      .setThumbnail(sniped.avatarUrl)] });
   }
 
   // ── VoiceMaster prefix commands ───────────────────────────────────────────────
@@ -2229,51 +2088,6 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  if (command === 'gf') {
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.gf`')] });
-    const groupId = args[0];
-    const reason = args.slice(1).join(' ') || null;
-    if (!groupId || !/^\d+$/.test(groupId)) return message.reply("give a valid group id");
-    const flags = loadFlaggedGroups();
-    if (flags.some(f => f.id === groupId)) return message.reply(`group \`${groupId}\` is already flagged`);
-    flags.push({ id: groupId, reason, flaggedBy: message.author.id, at: Date.now() });
-    saveFlaggedGroups(flags);
-    return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Group Flagged')
-      .addFields(
-        { name: 'group id', value: groupId, inline: true },
-        { name: 'flagged by', value: message.author.tag, inline: true },
-        { name: 'reason', value: reason || 'no reason', inline: true }
-      ).setTimestamp()] });
-  }
-
-  if (command === 'ungf') {
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.ungf`')] });
-    const groupId = args[0];
-    if (!groupId) return message.reply("give a group id");
-    const flags = loadFlaggedGroups();
-    if (!flags.some(f => f.id === groupId)) return message.reply(`group \`${groupId}\` isn't flagged`);
-    saveFlaggedGroups(flags.filter(f => f.id !== groupId));
-    return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Group Unflagged')
-      .addFields({ name: 'group id', value: groupId, inline: true }, { name: 'removed by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
-
-  if (command === 'gflist') {
-    const flags = loadFlaggedGroups();
-    if (!flags.length) return message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('Flagged Groups').setDescription('no groups flagged')] });
-    const lines = flags.map((f, i) => `${i + 1}. Group ID: \`${f.id}\`${f.reason ? ` — ${f.reason}` : ''}${f.flaggedBy ? ` (by <@${f.flaggedBy}>)` : ''}`).join('\n');
-    return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Flagged Roblox Groups').setDescription(lines).setTimestamp()] });
-  }
-
-  if (command === 'gs') {
-    const groupId = args[0];
-    if (!groupId || !/^\d+$/.test(groupId)) return message.reply("give a valid group id");
-    const cfg = loadConfig();
-    cfg.activeGroupId = groupId;
-    saveConfig(cfg);
-    return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Group Switched')
-      .addFields({ name: 'new group id', value: groupId, inline: true }, { name: 'changed by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
-
   if (command === 'activitycheck') {
     if (!message.guild) return;
     const sub = args[0]?.toLowerCase();
@@ -2310,30 +2124,6 @@ client.on('messageCreate', async message => {
         ).setTimestamp()] });
     }
     return message.reply(`usage: \`${prefix}activitycheck start [message]\` or \`${prefix}activitycheck end\``);
-  }
-
-  if (command === 'cleanup') {
-    if (!message.guild) return;
-    try {
-      await message.guild.members.fetch();
-      let cleaned = 0;
-      const lines = [];
-      const vmChannels = loadVmChannels();
-      for (const [chId, chData] of Object.entries(vmChannels)) {
-        const ch = message.guild.channels.cache.get(chId);
-        if (!ch || ch.members.size === 0) {
-          try { if (ch) await ch.delete(); } catch {}
-          delete vmChannels[chId];
-          cleaned++;
-          lines.push(`deleted empty vc: ${ch?.name ?? chId}`);
-        }
-      }
-      saveVmChannels(vmChannels);
-      if (!lines.length) lines.push('nothing to clean up');
-      return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Cleanup')
-        .setDescription(lines.join('\n'))
-        .addFields({ name: 'items cleaned', value: `${cleaned}`, inline: true }).setTimestamp()] });
-    } catch (err) { return message.reply(`cleanup failed — ${err.message}`); }
   }
 
   if (command === 'prefix') {
@@ -2597,6 +2387,179 @@ client.on('messageCreate', async message => {
     } catch {
       return message.reply(`couldn't DM **${targetUser.tag}** — they might have DMs off`);
     }
+  }
+
+  if (command === 'vstatus') {
+    if (!message.guild) return;
+    const vc = loadVerifyConfig();
+    const vwl = loadVerifyWhitelist();
+    const roleId = vc[message.guild.id]?.roleId;
+    const groupId = vc[message.guild.id]?.groupId;
+    const wlRoles = (vwl[message.guild.id]?.roles || []).map(id => `<@&${id}>`).join(', ') || 'none';
+    const wlUsers = (vwl[message.guild.id]?.users || []).map(id => `<@${id}>`).join(', ') || 'none';
+    return message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setTitle('Verify System Status')
+      .addFields(
+        { name: 'verify role', value: roleId ? `<@&${roleId}>` : 'not set', inline: true },
+        { name: 'group id', value: groupId || 'not set', inline: true },
+        { name: 'whitelisted roles', value: wlRoles },
+        { name: 'whitelisted users', value: wlUsers }
+      ).setTimestamp()] });
+  }
+
+  if (command === 'setverifyrole') {
+    if (!message.guild) return;
+    const role = message.mentions.roles?.first();
+    if (!role) return message.reply('mention a role — e.g. `.setverifyrole @Member`');
+    const vc = loadVerifyConfig();
+    if (!vc[message.guild.id]) vc[message.guild.id] = {};
+    vc[message.guild.id].roleId = role.id;
+    saveVerifyConfig(vc);
+    return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Verify Role Set')
+      .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (command === 'verify') {
+    if (!message.guild) return;
+    const vc = loadVerifyConfig();
+    const vwl = loadVerifyWhitelist();
+    const guildVc = vc[message.guild.id];
+    if (!guildVc?.roleId) return message.reply(`verify role isn't set — use \`${prefix}setverifyrole\` first`);
+    const guildVwl = vwl[message.guild.id] || { roles: [], users: [] };
+    const isAllowed = guildVwl.users.includes(message.author.id) ||
+      message.member.roles.cache.some(r => guildVwl.roles.includes(r.id)) ||
+      message.member.permissions.has(PermissionsBitField.Flags.ManageGuild);
+    if (!isAllowed) return message.reply("you're not allowed to verify users");
+    const target = message.mentions.members?.first();
+    if (!target) return message.reply('mention a user to verify');
+    try {
+      await target.roles.add(guildVc.roleId, `verified by ${message.author.tag}`);
+      return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Verified')
+        .setThumbnail(target.user.displayAvatarURL())
+        .addFields(
+          { name: 'user', value: target.user.tag, inline: true },
+          { name: 'verified by', value: message.author.tag, inline: true },
+          { name: 'role given', value: `<@&${guildVc.roleId}>`, inline: true }
+        ).setTimestamp()] });
+    } catch (err) { return message.reply(`couldn't verify — ${err.message}`); }
+  }
+
+  if (command === 'vwl') {
+    if (!message.guild) return;
+    const role = message.mentions.roles?.first();
+    if (!role) return message.reply('mention a role to whitelist');
+    const vwl = loadVerifyWhitelist();
+    if (!vwl[message.guild.id]) vwl[message.guild.id] = { roles: [], users: [] };
+    if (vwl[message.guild.id].roles.includes(role.id)) return message.reply(`<@&${role.id}> is already whitelisted`);
+    vwl[message.guild.id].roles.push(role.id);
+    saveVerifyWhitelist(vwl);
+    return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Verify Whitelist — Role Added')
+      .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (command === 'vwluser') {
+    if (!message.guild) return;
+    const target = message.mentions.users?.first();
+    if (!target) return message.reply('mention a user to whitelist');
+    const vwl = loadVerifyWhitelist();
+    if (!vwl[message.guild.id]) vwl[message.guild.id] = { roles: [], users: [] };
+    if (vwl[message.guild.id].users.includes(target.id)) return message.reply(`**${target.tag}** is already whitelisted`);
+    vwl[message.guild.id].users.push(target.id);
+    saveVerifyWhitelist(vwl);
+    return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Verify Whitelist — User Added')
+      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (command === 'vunwl') {
+    if (!message.guild) return;
+    const role = message.mentions.roles?.first();
+    const target = message.mentions.users?.first();
+    if (!role && !target) return message.reply('mention a role or user to remove from the verify whitelist');
+    const vwl = loadVerifyWhitelist();
+    if (!vwl[message.guild.id]) return message.reply('nothing is whitelisted');
+    const lines = [];
+    if (role) {
+      if (!vwl[message.guild.id].roles.includes(role.id)) return message.reply(`<@&${role.id}> isn't whitelisted`);
+      vwl[message.guild.id].roles = vwl[message.guild.id].roles.filter(id => id !== role.id);
+      lines.push(`role: ${role}`);
+    }
+    if (target) {
+      if (!vwl[message.guild.id].users.includes(target.id)) return message.reply(`**${target.tag}** isn't whitelisted`);
+      vwl[message.guild.id].users = vwl[message.guild.id].users.filter(id => id !== target.id);
+      lines.push(`user: ${target.tag}`);
+    }
+    saveVerifyWhitelist(vwl);
+    return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Verify Whitelist — Removed')
+      .setDescription(lines.join('\n'))
+      .addFields({ name: 'removed by', value: message.author.tag, inline: true }).setTimestamp()] });
+  }
+
+  if (command === 'group') {
+    const username = args[0];
+    const action = args[1]?.toLowerCase();
+    const value = args[2];
+    if (!username || !action) return message.reply(`usage: \`${prefix}group [username] [check/rank/exile] [roleId for rank]\``);
+    try {
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      if (!userBasic) return message.reply("couldn't find that user");
+      const groupId = process.env.ROBLOX_GROUP_ID;
+      if (action === 'check') {
+        const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userBasic.id}/groups/roles`)).json()).data ?? [];
+        const membership = groupsData.find(g => String(g.group.id) === String(groupId));
+        return message.reply({ embeds: [baseEmbed().setColor(membership ? 0x57f287 : 0xed4245).setTitle('Group Check')
+          .addFields(
+            { name: 'user', value: userBasic.name, inline: true },
+            { name: 'in group', value: membership ? 'yes' : 'no', inline: true },
+            { name: 'role', value: membership?.role?.name ?? 'n/a', inline: true }
+          ).setTimestamp()] });
+      }
+      if (action === 'rank') {
+        if (!value) return message.reply('give a role id to rank them to');
+        const result = await rankRobloxUser(username, value);
+        return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Ranked')
+          .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'role id', value: value, inline: true }).setTimestamp()] });
+      }
+      if (action === 'exile') {
+        const cookie = process.env.ROBLOX_COOKIE;
+        if (!cookie || !groupId) return message.reply('ROBLOX_COOKIE or ROBLOX_GROUP_ID not configured');
+        const csrfRes = await fetch('https://auth.roblox.com/v2/logout', { method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` } });
+        const csrfToken = csrfRes.headers.get('x-csrf-token');
+        const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/users/${userBasic.id}`, {
+          method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
+        });
+        if (!res.ok) return message.reply(`couldn't exile — HTTP ${res.status}`);
+        return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Exiled')
+          .addFields({ name: 'user', value: userBasic.name, inline: true }, { name: 'exiled by', value: message.author.tag, inline: true }).setTimestamp()] });
+      }
+      return message.reply(`unknown action — use check, rank, or exile`);
+    } catch (err) { return message.reply(`something went wrong — ${err.message}`); }
+  }
+
+  if (command === 'wlmanager') {
+    const sub = args[0]?.toLowerCase();
+    const mgrs = loadWlManagers();
+    if (sub === 'list') {
+      const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean)])];
+      if (!all.length) return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x1b6fe8).setDescription('no managers set')] });
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x1b6fe8).setDescription(all.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
+    }
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can manage wlmanager')] });
+    if (sub === 'add') {
+      const target = message.mentions.users?.first();
+      if (!target) return message.reply('mention a user to add');
+      if (mgrs.includes(target.id)) return message.reply(`**${target.tag}** is already a whitelist manager`);
+      mgrs.push(target.id); saveWlManagers(mgrs);
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist manager added').setColor(0x57f287).setThumbnail(target.displayAvatarURL())
+        .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
+    }
+    if (sub === 'remove') {
+      const target = message.mentions.users?.first();
+      if (!target) return message.reply('mention a user to remove');
+      if (!mgrs.includes(target.id)) return message.reply(`**${target.tag}** isn't a whitelist manager`);
+      saveWlManagers(mgrs.filter(id => id !== target.id));
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist manager removed').setColor(0xed4245).setThumbnail(target.displayAvatarURL())
+        .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'removed by', value: message.author.tag, inline: true }).setTimestamp()] });
+    }
+    return message.reply(`usage: \`${prefix}wlmanager [add/remove/list] [@user]\``);
   }
 
   if (command === 'whitelist') return message.reply('whitelist is slash-command only — use `/whitelist` instead');
