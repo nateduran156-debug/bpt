@@ -291,7 +291,8 @@ const HELP_SECTIONS = [
     title: 'Info & Utility',
     commands: [
       '{p}about',
-      '{p}activitycheck [start/end]',
+      '{p}activitycheck start [message]',
+      '{p}activitycheck end',
       '{p}snipe',
       '{p}cleanup',
       '{p}afk [reason]',
@@ -377,11 +378,15 @@ function buildGcNotInGroupEmbed(displayName) {
 // shows when the user IS in the fraid group
 function buildGcInGroupEmbed(displayName) {
   return new EmbedBuilder()
-    .setColor(0x57f287)
+    .setColor(0x1b6fe8)
     .setTitle('Group Check')
     .setThumbnail(LOGO_URL)
     .setAuthor({ name: displayName })
     .setDescription(`**${displayName}** is able to get verified now`)
+    .addFields(
+      { name: 'Group ID', value: FRAID_GROUP_ID, inline: false },
+      { name: 'Join Group', value: `[Join Here](${FRAID_GROUP_LINK})`, inline: false }
+    )
     .setFooter({ text: '/fraid' })
 }
 
@@ -569,7 +574,7 @@ const slashCommands = [
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('start or end the check').setRequired(true)
       .addChoices({ name: 'start', value: 'start' }, { name: 'end', value: 'end' }))
-    .addStringOption(o => o.setName('duration').setDescription('duration in hours (for start)').setRequired(false)),
+    .addStringOption(o => o.setName('message').setDescription('activity check message e.g. Activity check #1 (for start)').setRequired(false)),
   new SlashCommandBuilder().setName('annoy').setDescription('react to every message a user sends with 10 random emojis')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to annoy').setRequired(true)),
@@ -762,6 +767,19 @@ client.on('interactionCreate', async interaction => {
     if (interaction.customId.startsWith('help_')) {
       const page = parseInt(interaction.customId.split('_')[1]);
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
+    }
+    if (interaction.customId === 'ac_checkin') {
+      if (!interaction.guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+      const checks = loadActivityCheck();
+      const guildCheck = checks[interaction.guild.id];
+      if (!guildCheck?.active) return interaction.reply({ content: "there's no active activity check right now", ephemeral: true });
+      if (guildCheck.checkins.includes(interaction.user.id)) {
+        return interaction.reply({ content: "you already checked in!", ephemeral: true });
+      }
+      guildCheck.checkins.push(interaction.user.id);
+      saveActivityCheck(checks);
+      try { await interaction.user.send('Thanks for reacting to the activity check I love youuuu!❤️😘'); } catch {}
+      return interaction.reply({ content: "✅ you're checked in!", ephemeral: true });
     }
     if (interaction.customId.startsWith('gc_')) {
       const parts = interaction.customId.split('_');
@@ -1348,28 +1366,33 @@ client.on('interactionCreate', async interaction => {
     const checks = loadActivityCheck();
     if (!checks[guild.id]) checks[guild.id] = {};
     if (action === 'start') {
-      const durationHours = parseFloat(interaction.options.getString('duration') || '24');
-      const endsAt = Date.now() + durationHours * 60 * 60 * 1000;
-      checks[guild.id] = { startedBy: interaction.user.id, startedAt: Date.now(), endsAt, active: true };
+      const acMessage = interaction.options.getString('message') || 'Activity Check';
+      checks[guild.id] = { startedBy: interaction.user.id, startedAt: Date.now(), active: true, checkins: [], acMessage };
       saveActivityCheck(checks);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Activity Check Started')
-        .addFields(
-          { name: 'started by', value: interaction.user.tag, inline: true },
-          { name: 'duration', value: `${durationHours} hour${durationHours !== 1 ? 's' : ''}`, inline: true },
-          { name: 'ends', value: `<t:${Math.floor(endsAt / 1000)}:R>`, inline: true }
-        ).setTimestamp()] });
+      const acEmbed = baseEmbed().setColor(0x57f287).setTitle(acMessage)
+        .setDescription('Click the ✅ button below to check in!')
+        .addFields({ name: 'started by', value: interaction.user.tag, inline: true })
+        .setTimestamp();
+      const acRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('ac_checkin').setLabel('Check In').setEmoji('✅').setStyle(ButtonStyle.Success)
+      );
+      return interaction.reply({ embeds: [acEmbed], components: [acRow] });
     }
     if (action === 'end') {
       if (!checks[guild.id].active) return interaction.reply({ content: "no active activity check", ephemeral: true });
       const startedAt = checks[guild.id].startedAt;
       const startedBy = checks[guild.id].startedBy;
+      const checkins = checks[guild.id].checkins || [];
+      const acMessage = checks[guild.id].acMessage || 'Activity Check';
       checks[guild.id] = { active: false };
       saveActivityCheck(checks);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Activity Check Ended')
+      const checkinList = checkins.length ? checkins.map(id => `<@${id}>`).join(', ') : 'nobody checked in';
+      return interaction.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle(`${acMessage} — Ended`)
         .addFields(
           { name: 'ended by', value: interaction.user.tag, inline: true },
           { name: 'started by', value: `<@${startedBy}>`, inline: true },
-          { name: 'started', value: `<t:${Math.floor(startedAt / 1000)}:R>`, inline: true }
+          { name: 'started', value: `<t:${Math.floor(startedAt / 1000)}:R>`, inline: true },
+          { name: `checked in (${checkins.length})`, value: checkinList }
         ).setTimestamp()] });
     }
   }
@@ -2117,31 +2140,36 @@ client.on('messageCreate', async message => {
     const checks = loadActivityCheck();
     if (!checks[message.guild.id]) checks[message.guild.id] = {};
     if (sub === 'start') {
-      const durationHours = parseFloat(args[1]) || 24;
-      const endsAt = Date.now() + durationHours * 60 * 60 * 1000;
-      checks[message.guild.id] = { startedBy: message.author.id, startedAt: Date.now(), endsAt, active: true };
+      const acMessage = args.slice(1).join(' ') || 'Activity Check';
+      checks[message.guild.id] = { startedBy: message.author.id, startedAt: Date.now(), active: true, checkins: [], acMessage };
       saveActivityCheck(checks);
-      return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setTitle('Activity Check Started')
-        .addFields(
-          { name: 'started by', value: message.author.tag, inline: true },
-          { name: 'duration', value: `${durationHours} hour${durationHours !== 1 ? 's' : ''}`, inline: true },
-          { name: 'ends', value: `<t:${Math.floor(endsAt / 1000)}:R>`, inline: true }
-        ).setTimestamp()] });
+      const acEmbed = baseEmbed().setColor(0x57f287).setTitle(acMessage)
+        .setDescription('Click the ✅ button below to check in!')
+        .addFields({ name: 'started by', value: message.author.tag, inline: true })
+        .setTimestamp();
+      const acRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('ac_checkin').setLabel('Check In').setEmoji('✅').setStyle(ButtonStyle.Success)
+      );
+      return message.reply({ embeds: [acEmbed], components: [acRow] });
     }
     if (sub === 'end') {
       if (!checks[message.guild.id].active) return message.reply("no active activity check");
       const startedAt = checks[message.guild.id].startedAt;
       const startedBy = checks[message.guild.id].startedBy;
+      const checkins = checks[message.guild.id].checkins || [];
+      const acMessage = checks[message.guild.id].acMessage || 'Activity Check';
       checks[message.guild.id] = { active: false };
       saveActivityCheck(checks);
-      return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle('Activity Check Ended')
+      const checkinList = checkins.length ? checkins.map(id => `<@${id}>`).join(', ') : 'nobody checked in';
+      return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setTitle(`${acMessage} — Ended`)
         .addFields(
           { name: 'ended by', value: message.author.tag, inline: true },
           { name: 'started by', value: `<@${startedBy}>`, inline: true },
-          { name: 'started', value: `<t:${Math.floor(startedAt / 1000)}:R>`, inline: true }
+          { name: 'started', value: `<t:${Math.floor(startedAt / 1000)}:R>`, inline: true },
+          { name: `checked in (${checkins.length})`, value: checkinList }
         ).setTimestamp()] });
     }
-    return message.reply(`usage: \`${prefix}activitycheck start [hours]\` or \`${prefix}activitycheck end\``);
+    return message.reply(`usage: \`${prefix}activitycheck start [message]\` or \`${prefix}activitycheck end\``);
   }
 
   if (command === 'cleanup') {
