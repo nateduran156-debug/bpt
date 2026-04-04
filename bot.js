@@ -37,16 +37,11 @@ const client = new Client({
 });
 
 // ─── discord-player setup ────────────────────────────────────────────────────
-const player = new Player(client, {
-  ytdlOptions: {
-    quality: 'highestaudio',
-    highWaterMark: 1 << 25
-  }
-});
+const player = new Player(client);
 
 player.extractors.register(YoutubeiExtractor, {
   streamOptions: {
-    useClient: 'IOS',
+    useClient: 'ANDROID',
   },
 });
 
