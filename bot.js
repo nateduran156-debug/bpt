@@ -17,8 +17,6 @@ import {
   SlashCommandBuilder
 } from 'discord.js';
 import { Player, QueryType, useQueue, usePlayer, QueueRepeatMode } from 'discord-player';
-import dpExtractor from '@discord-player/extractor';
-const { DefaultExtractors } = dpExtractor;
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -40,7 +38,7 @@ const client = new Client({
 // ─── discord-player setup ────────────────────────────────────────────────────
 const player = new Player(client);
 
-player.extractors.loadMulti(DefaultExtractors);
+await player.extractors.loadDefault();
 
 player.events.on('playerStart', (queue, track) => {
   queue.metadata?.channel?.send({
