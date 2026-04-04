@@ -1,6 +1,7 @@
 import {
   Client,
   GatewayIntentBits,
+  Partials,
   EmbedBuilder,
   AttachmentBuilder,
   ActionRowBuilder,
@@ -31,12 +32,15 @@ const client = new Client({
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildVoiceStates
-  ]
+  ],
+  partials: [Partials.Channel, Partials.Message]
 });
 
 // ─── Base embed helper ────────────────────────────────────────────────────────
-const LOGO_URL = 'https://images-ext-1.discordapp.net/';
+const LOGO_URL = 'https://image2url.com/r2/default/images/1775266989420-d840fc51-b30b-42e5-8620-25540bc545d9.png';
 const MOD_IMAGE_URL = 'https://i.imgur.com/CBDoIWa.png';
+const FRAID_GROUP_ID = '489845165';
+const FRAID_GROUP_LINK = 'https://www.roblox.com/communities/489845165/fraidfg#!/about';
 function baseEmbed() {
   return new EmbedBuilder().setThumbnail(LOGO_URL);
 }
@@ -244,6 +248,7 @@ const COMMAND_PAGES = [
       '{p}restart',
       '{p}say [text]',
       '{p}cs',
+      '{p}dm @user/roleId/userId [msg]',
       '/whitelist add @user',
       '/whitelist remove @user',
       '/whitelist list',
@@ -275,12 +280,29 @@ function buildHelpRow(page) {
 function buildGcEmbed(username, groups, avatarUrl, page) {
   const totalPages = Math.ceil(groups.length / GC_PER_PAGE);
   const slice = groups.slice(page * GC_PER_PAGE, page * GC_PER_PAGE + GC_PER_PAGE);
-  const embed = baseEmbed().setColor(0x2b2d31)
-    .setTitle(`${username}'s groups`)
-    .setDescription(slice.map((g, i) => `${page * GC_PER_PAGE + i + 1}. **${g.group.name}**`).join('\n'))
-    .setFooter({ text: `page ${page + 1}/${totalPages} · ${groups.length} groups` });
-  if (page === 0 && avatarUrl) embed.setThumbnail(avatarUrl);
+  const groupLines = slice.map(g => `• [${g.group.name}](https://www.roblox.com/communities/${g.group.id}/about)`).join('\n');
+  const embed = new EmbedBuilder()
+    .setColor(0x2b2d31)
+    .setTitle('Group Check')
+    .setThumbnail(LOGO_URL)
+    .setDescription(`${username}\n\n**Groups**\n${groupLines}`)
+    .setFooter({ text: `/fraid • Page ${page + 1} of ${totalPages}` });
+  if (avatarUrl) embed.setAuthor({ name: username, iconURL: avatarUrl });
   return embed;
+}
+
+function buildGcNotInGroupEmbed(displayName) {
+  return new EmbedBuilder()
+    .setColor(0x2b2d31)
+    .setTitle('Join Our Groups')
+    .setThumbnail(LOGO_URL)
+    .setAuthor({ name: displayName })
+    .setDescription(`**${displayName}** has to join group in order to be verified`)
+    .addFields(
+      { name: 'Group ID', value: FRAID_GROUP_ID, inline: false },
+      { name: 'Link', value: `[Join Here](${FRAID_GROUP_LINK})`, inline: false }
+    )
+    .setFooter({ text: '/fraid' });
 }
 
 function buildGcRow(username, groups, page) {
@@ -442,12 +464,13 @@ client.once('clientReady', async () => {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
     const guildId = process.env.GUILD_ID;
+    // Always register globally so commands work in DMs
+    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
+    console.log('slash commands registered globally (DMs supported)');
     if (guildId) {
+      // Also register to guild for instant availability in the server
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: slashCommands });
-      console.log('slash commands registered to guild');
-    } else {
-      await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
-      console.log('slash commands registered globally');
+      console.log('slash commands also registered to guild');
     }
   } catch (err) { console.error('failed to register slash commands:', err.message); }
 
@@ -641,12 +664,17 @@ client.on('interactionCreate', async interaction => {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return interaction.editReply("couldn't find that user lol");
       const userId = userBasic.id;
-      const groups = ((await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? []).sort((a, b) => a.group.name.localeCompare(b.group.name));
-      if (!groups.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle(`${userBasic.name}'s groups`).setDescription("they're not in any groups lol")] });
+      const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
+      if (!inFraidGroup) {
+        return interaction.editReply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
+      }
+      const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
+      if (!groups.length) return interaction.editReply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
-      gcCache.set(username.toLowerCase(), { displayName: userBasic.name, groups, avatarUrl });
+      gcCache.set(username.toLowerCase(), { displayName: userBasic.displayName || userBasic.name, groups, avatarUrl });
       setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
-      return interaction.editReply({ embeds: [buildGcEmbed(userBasic.name, groups, avatarUrl, 0)], components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : [] });
+      return interaction.editReply({ embeds: [buildGcEmbed(userBasic.displayName || userBasic.name, groups, avatarUrl, 0)], components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : [] });
     } catch { return interaction.editReply("couldn't load their groups, try again"); }
   }
 
@@ -1063,12 +1091,17 @@ client.on('messageCreate', async message => {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return message.reply("couldn't find that user lol");
       const userId = userBasic.id;
-      const groups = ((await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? []).sort((a, b) => a.group.name.localeCompare(b.group.name));
-      if (!groups.length) return message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle(`${userBasic.name}'s groups`).setDescription("they're not in any groups lol")] });
+      const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
+      if (!inFraidGroup) {
+        return message.reply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
+      }
+      const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
+      if (!groups.length) return message.reply({ embeds: [buildGcNotInGroupEmbed(userBasic.displayName || userBasic.name)] });
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
-      gcCache.set(username.toLowerCase(), { displayName: userBasic.name, groups, avatarUrl });
+      gcCache.set(username.toLowerCase(), { displayName: userBasic.displayName || userBasic.name, groups, avatarUrl });
       setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
-      return message.reply({ embeds: [buildGcEmbed(userBasic.name, groups, avatarUrl, 0)], components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : [] });
+      return message.reply({ embeds: [buildGcEmbed(userBasic.displayName || userBasic.name, groups, avatarUrl, 0)], components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : [] });
     } catch { return message.reply("couldn't load their groups, try again"); }
   }
 
@@ -1420,6 +1453,52 @@ client.on('messageCreate', async message => {
     if (!target) return message.reply('mention someone to unjail');
     try { return message.reply({ embeds: [await unjailMember(message.guild, target, message.author.tag)] }); }
     catch (e) { return message.reply(e.message); }
+  }
+
+  if (command === 'dm') {
+    // .dm @user/userId/roleId <message>
+    const rawTarget = args[0];
+    if (!rawTarget) return message.reply(`usage: \`${prefix}dm @user/roleId/userId message\``);
+    const dmMsg = args.slice(1).join(' ');
+    if (!dmMsg) return message.reply('include a message to send');
+
+    // Resolve target: user mention, role mention, or raw ID
+    const userMention = message.mentions.users.first();
+    const roleMention = message.mentions.roles?.first();
+
+    if (roleMention) {
+      // DM everyone with the role (guild only)
+      if (!message.guild) return message.reply("can't DM a role outside of a server");
+      await message.guild.members.fetch();
+      const members = roleMention.members;
+      if (!members.size) return message.reply("no members have that role");
+      let sent = 0, failed = 0;
+      const status = await message.reply({ embeds: [baseEmbed().setColor(0x2b2d31).setDescription(`sending DMs to **${members.size}** members with ${roleMention}...`)] });
+      for (const [, member] of members) {
+        if (member.user.bot) continue;
+        try {
+          await member.send({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+          sent++;
+        } catch { failed++; }
+        await new Promise(r => setTimeout(r, 500)); // rate limit buffer
+      }
+      return status.edit({ embeds: [baseEmbed().setColor(0x57f287).setDescription(`done — sent: **${sent}**, failed: **${failed}**`)] });
+    }
+
+    // Single user: @mention or raw ID
+    let targetUser = userMention;
+    if (!targetUser) {
+      const rawId = rawTarget.replace(/\D/g, '');
+      if (!/^\d{17,19}$/.test(rawId)) return message.reply("that doesn't look like a valid user or role");
+      try { targetUser = await client.users.fetch(rawId); } catch { return message.reply("couldn't find that user"); }
+    }
+    if (targetUser.bot) return message.reply("can't DM a bot");
+    try {
+      await targetUser.send({ embeds: [baseEmbed().setColor(0x2b2d31).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x57f287).setDescription(`DM sent to **${targetUser.tag}**`)] });
+    } catch {
+      return message.reply(`couldn't DM **${targetUser.tag}** — they might have DMs off`);
+    }
   }
 
   if (command === 'whitelist') return message.reply('whitelist is slash-command only — use `/whitelist` instead');

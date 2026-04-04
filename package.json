@@ -1,16 +1,12 @@
 {
-  "name": "discord-bot",
+  "name": "fraid-bot",
   "version": "1.0.0",
-  "description": "Discord moderation and utility bot",
   "type": "module",
-  "main": "bot_1775266420249.js",
+  "main": "bot.js",
   "scripts": {
-    "start": "node bot_1775266420249.js"
+    "start": "node bot.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
