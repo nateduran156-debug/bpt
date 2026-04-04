@@ -54,6 +54,7 @@ const SAVED_EMBEDS_FILE = path.join(__dirname, 'saved_embeds.json')
 const ANNOY_FILE = path.join(__dirname, 'annoy.json')
 const SKULL_FILE = path.join(__dirname, 'skull.json')
 const ACTIVITY_CHECK_FILE = path.join(__dirname, 'activity_check.json')
+const TAGGED_MEMBERS_FILE = path.join(__dirname, 'tagged_members.json')
 
 // read/write json helpers
 function loadJSON(file) {
@@ -98,6 +99,8 @@ const loadSkull = () => loadJSON(SKULL_FILE)
 const saveSkull = s => saveJSON(SKULL_FILE, s)
 const loadActivityCheck = () => loadJSON(ACTIVITY_CHECK_FILE)
 const saveActivityCheck = a => saveJSON(ACTIVITY_CHECK_FILE, a)
+const loadTaggedMembers = () => loadJSON(TAGGED_MEMBERS_FILE)
+const saveTaggedMembers = t => saveJSON(TAGGED_MEMBERS_FILE, t)
 
 // check if someone can manage the whitelist
 function isWlManager(userId) {
@@ -142,6 +145,7 @@ function isWlManager(userId) {
   if (!fs.existsSync(SKULL_FILE)) saveSkull({})
   if (!fs.existsSync(HARDBANS_FILE)) saveHardbans({})
   if (!fs.existsSync(ACTIVITY_CHECK_FILE)) saveActivityCheck({})
+  if (!fs.existsSync(TAGGED_MEMBERS_FILE)) saveTaggedMembers({})
 })()
 
 const getPrefix = () => loadConfig().prefix || '.'
@@ -155,6 +159,19 @@ async function sendLog(guild, embed) {
     if (ch?.isTextBased()) await ch.send({ embeds: [embed] })
   } catch (err) {
     console.error('log channel error:', err.message)
+  }
+}
+
+// sends a log embed to the dedicated strip log channel if one is set, else falls back to main log
+async function sendStripLog(guild, embed) {
+  const cfg = loadConfig()
+  const channelId = cfg.stripLogChannelId || cfg.logChannelId
+  if (!channelId) return
+  try {
+    const ch = await guild.channels.fetch(channelId)
+    if (ch?.isTextBased()) await ch.send({ embeds: [embed] })
+  } catch (err) {
+    console.error('strip log channel error:', err.message)
   }
 }
 
@@ -318,6 +335,8 @@ const HELP_SECTIONS = [
       '{p}ungf [groupId]',
       '{p}tag [name] | [roleId]',
       '{p}tag [robloxUser] [tagname]',
+      '{p}strip [robloxUser] [reason]',
+      '{p}striptag [tagname]',
     ]
   },
   {
@@ -326,6 +345,7 @@ const HELP_SECTIONS = [
       '{p}prefix [new prefix]',
       '{p}status [type] [text]',
       '{p}setlog #channel',
+      '{p}tagstrip #channel',
       '{p}restart',
       '{p}config',
       '{p}whitelist add @user',
@@ -453,8 +473,9 @@ function buildVmHelpEmbed(prefix) {
 }
 
 // ─── Caches ───────────────────────────────────────────────────────────────────
-const gcCache    = new Map();
-const snipeCache = new Map();
+const gcCache          = new Map();
+const snipeCache       = new Map();
+const striptagPending  = new Map(); // userId -> { tagName, members, rank2RoleId }
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
 const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'snipe', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'setlog', 'nuke']);
@@ -780,6 +801,45 @@ client.on('interactionCreate', async interaction => {
       const page = parseInt(interaction.customId.split('_')[1]);
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
     }
+    if (interaction.customId === 'striptag_confirm' || interaction.customId === 'striptag_cancel') {
+      const pending = striptagPending.get(interaction.user.id);
+      if (!pending) return interaction.update({ content: 'this has expired, run the command again', embeds: [], components: [] });
+      striptagPending.delete(interaction.user.id);
+      if (interaction.customId === 'striptag_cancel') {
+        return interaction.update({ embeds: [baseEmbed().setColor(0xed4245).setTitle('striptag cancelled').setDescription(`cancelled stripping tag **${pending.tagName}**`)], components: [] });
+      }
+      // confirmed — execute the strip
+      await interaction.update({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`stripping **${pending.members.length}** user${pending.members.length !== 1 ? 's' : ''} from tag **${pending.tagName}**...`)], components: [] });
+      const succeeded = [];
+      const failed = [];
+      for (const robloxUsername of pending.members) {
+        try {
+          const result = await rankRobloxUser(robloxUsername, pending.rank2RoleId);
+          succeeded.push(result.displayName);
+        } catch (err) {
+          failed.push(`${robloxUsername} — ${err.message}`);
+        }
+      }
+      const taggedMembers = loadTaggedMembers();
+      delete taggedMembers[pending.tagName];
+      saveTaggedMembers(taggedMembers);
+      const desc = [];
+      if (succeeded.length) desc.push(`**stripped (${succeeded.length}):** ${succeeded.join(', ')}`);
+      if (failed.length) desc.push(`**failed (${failed.length}):**\n${failed.join('\n')}`);
+      const resultEmbed = baseEmbed().setColor(succeeded.length ? 0x57f287 : 0xed4245).setTitle(`striptag — ${pending.tagName}`)
+        .setDescription(desc.join('\n\n') || 'done').setTimestamp();
+      await interaction.editReply({ embeds: [resultEmbed], components: [] });
+      const logEmbed = baseEmbed().setTitle('striptag log').setColor(0xed4245)
+        .addFields(
+          { name: 'tag', value: pending.tagName, inline: true },
+          { name: 'stripped by', value: `<@${interaction.user.id}>`, inline: true },
+          { name: `stripped (${succeeded.length})`, value: succeeded.join(', ') || 'none' },
+          ...(failed.length ? [{ name: `failed (${failed.length})`, value: failed.join('\n') }] : [])
+        ).setTimestamp();
+      if (interaction.guild) await sendStripLog(interaction.guild, logEmbed);
+      return;
+    }
+
     if (interaction.customId === 'ac_checkin') {
       if (!interaction.guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
       const checks = loadActivityCheck();
@@ -1924,6 +1984,7 @@ client.on('messageCreate', async message => {
   if (!loadWhitelist().includes(message.author.id)) return;
 
   if (command === 'hb') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.hb`')] });
     const target = message.mentions.users.first();
     const rawId  = args[0];
     if (!target && !rawId) return message.reply("give a user mention or their id");
@@ -1944,6 +2005,7 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'unhb') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.unhb`')] });
     if (!message.guild) return;
     const userId = args[0];
     const reason = args.slice(1).join(' ') || 'no reason';
@@ -2115,6 +2177,7 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'nuke') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.nuke`')] });
     if (!message.guild) return;
     try {
       const ch = message.channel;
@@ -2167,6 +2230,7 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'gf') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.gf`')] });
     const groupId = args[0];
     const reason = args.slice(1).join(' ') || null;
     if (!groupId || !/^\d+$/.test(groupId)) return message.reply("give a valid group id");
@@ -2183,6 +2247,7 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'ungf') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.ungf`')] });
     const groupId = args[0];
     if (!groupId) return message.reply("give a group id");
     const flags = loadFlaggedGroups();
@@ -2342,6 +2407,11 @@ client.on('messageCreate', async message => {
         .setFooter({ text: `ranked by ${message.author.tag}` }).setTimestamp();
       if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
       await status.edit({ content: '', embeds: [embed] });
+      // track who got this tag so striptag can find them later
+      const taggedMembers = loadTaggedMembers();
+      if (!taggedMembers[tagName]) taggedMembers[tagName] = [];
+      if (!taggedMembers[tagName].includes(result.displayName)) taggedMembers[tagName].push(result.displayName);
+      saveTaggedMembers(taggedMembers);
       const logEmbed = baseEmbed().setTitle('rank log').setColor(0x1b6fe8)
         .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true },
           { name: 'ranked by', value: `<@${message.author.id}>`, inline: true }, { name: 'channel', value: `<#${message.channel.id}>`, inline: true })
@@ -2350,6 +2420,94 @@ client.on('messageCreate', async message => {
       await sendLog(message.guild, logEmbed);
     } catch (err) { await status.edit({ content: '', embeds: [baseEmbed().setColor(0xed4245).setDescription(`couldn't rank them - ${err.message}`)] }); }
     return;
+  }
+
+  if (command === 'strip') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription("you're not whitelisted to use `.strip`")] });
+    const robloxUser = args[0];
+    const reason = args.slice(1).join(' ');
+    if (!robloxUser) return message.reply(`usage: \`${prefix}strip [robloxUsername] [reason]\``);
+    if (!reason) return message.reply('you need to provide a reason');
+    // find which tag this user has
+    const taggedMembers = loadTaggedMembers();
+    let foundTag = null;
+    for (const [tagName, members] of Object.entries(taggedMembers)) {
+      if (members.map(m => m.toLowerCase()).includes(robloxUser.toLowerCase())) {
+        foundTag = tagName;
+        break;
+      }
+    }
+    if (!foundTag) return message.reply(`**${robloxUser}** doesn't have any tracked tag`);
+    const groupId = process.env.ROBLOX_GROUP_ID;
+    if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
+    let rank2RoleId;
+    try {
+      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
+      const rank2 = rolesData.roles?.find(r => r.rank === 2);
+      if (!rank2) return message.reply("couldn't find a rank 2 role in the group");
+      rank2RoleId = String(rank2.id);
+    } catch { return message.reply("couldn't fetch group roles, try again"); }
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x1b6fe8).setDescription(`stripping **${robloxUser}** (tag: **${foundTag}**)...`)] });
+    try {
+      const result = await rankRobloxUser(robloxUser, rank2RoleId);
+      // remove from tagged members
+      taggedMembers[foundTag] = taggedMembers[foundTag].filter(m => m.toLowerCase() !== robloxUser.toLowerCase());
+      if (!taggedMembers[foundTag].length) delete taggedMembers[foundTag];
+      saveTaggedMembers(taggedMembers);
+      const embed = baseEmbed().setTitle('strip').setColor(0x57f287)
+        .addFields(
+          { name: 'user', value: result.displayName, inline: true },
+          { name: 'tag removed', value: foundTag, inline: true },
+          { name: 'stripped by', value: message.author.tag, inline: true },
+          { name: 'reason', value: reason }
+        ).setTimestamp();
+      if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
+      await status.edit({ content: '', embeds: [embed] });
+      const logEmbed = baseEmbed().setTitle('strip log').setColor(0xed4245)
+        .addFields(
+          { name: 'user', value: result.displayName, inline: true },
+          { name: 'tag removed', value: foundTag, inline: true },
+          { name: 'stripped by', value: `<@${message.author.id}>`, inline: true },
+          { name: 'reason', value: reason }
+        ).setFooter({ text: `roblox id: ${result.userId}` }).setTimestamp();
+      if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
+      await sendStripLog(message.guild, logEmbed);
+    } catch (err) {
+      await status.edit({ content: '', embeds: [baseEmbed().setColor(0xed4245).setDescription(`couldn't strip them — ${err.message}`)] });
+    }
+    return;
+  }
+
+  if (command === 'striptag') {
+    if (!message.guild) return;
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can run `.striptag`')] });
+    const tagName = args.join(' ').toLowerCase();
+    if (!tagName) return message.reply(`usage: \`${prefix}striptag [tagname]\``);
+    const tags = loadTags();
+    if (!tags[tagName]) return message.reply(`no tag called **${tagName}** exists`);
+    const taggedMembers = loadTaggedMembers();
+    const members = taggedMembers[tagName] || [];
+    if (!members.length) return message.reply(`nobody is tracked under tag **${tagName}**`);
+    const groupId = process.env.ROBLOX_GROUP_ID;
+    if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
+    let rank2RoleId;
+    try {
+      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
+      const rank2 = rolesData.roles?.find(r => r.rank === 2);
+      if (!rank2) return message.reply("couldn't find a rank 2 role in the group");
+      rank2RoleId = String(rank2.id);
+    } catch { return message.reply("couldn't fetch group roles, try again"); }
+    // store pending and ask for confirmation
+    striptagPending.set(message.author.id, { tagName, members, rank2RoleId });
+    setTimeout(() => striptagPending.delete(message.author.id), 60 * 1000); // expire after 60s
+    const confirmRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('striptag_confirm').setLabel('Confirm').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('striptag_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger)
+    );
+    return message.reply({ embeds: [baseEmbed().setColor(0xfee75c).setTitle('confirm striptag')
+      .setDescription(`are you sure you want to strip **${members.length}** user${members.length !== 1 ? 's' : ''} from tag **${tagName}** and rank them all to rank 2?\n\n**Users:** ${members.join(', ')}`)
+      .setFooter({ text: 'this confirmation expires in 60 seconds' })], components: [confirmRow] });
   }
 
   if (command === 'grouproles') {
@@ -2370,6 +2528,13 @@ client.on('messageCreate', async message => {
     return message.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0x57f287).setDescription(`logs going to ${ch} now`).setTimestamp()] });
   }
 
+  if (command === 'tagstrip') {
+    const ch = message.mentions.channels?.first();
+    if (!ch?.isTextBased()) return message.reply('mention a text channel — e.g. `.tagstrip #strip-logs`');
+    const cfg2 = loadConfig(); cfg2.stripLogChannelId = ch.id; saveConfig(cfg2);
+    return message.reply({ embeds: [baseEmbed().setTitle('strip log channel set').setColor(0x57f287).setDescription(`.strip and .striptag logs will now go to ${ch}`).setTimestamp()] });
+  }
+
   if (command === 'jail') {
     if (!message.guild) return;
     const target = message.mentions.members?.first();
@@ -2388,6 +2553,7 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'dm') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xed4245).setDescription('only whitelist managers can use `.dm`')] });
     // .dm @user/userId/roleId <message>
     const rawTarget = args[0];
     if (!rawTarget) return message.reply(`usage: \`${prefix}dm @user/roleId/userId message\``);
