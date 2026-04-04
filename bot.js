@@ -2505,19 +2505,20 @@ client.on('interactionCreate', async interaction => {
     const gv = vData[guild.id];
 
     if (action === 'set') {
-      // set vanity URL to /username and store the pic role
-      const vanityCode = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'sins';
+      // first check if the guild already has a vanity URL
       let vanityResult = null;
       try {
-        await guild.setVanityCode(vanityCode);
-        vanityResult = vanityCode;
-      } catch (err) {
-        // vanity requires VANITY_URL guild feature — inform user if not available
-        if (err.code === 50074 || err.message?.includes('vanity')) {
-          vanityResult = null;
+        const existing = await guild.fetchVanityData();
+        if (existing?.code) {
+          vanityResult = existing.code;
         } else {
-          vanityResult = null;
+          // no existing vanity — try to set one to the user's username
+          const vanityCode = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'bot';
+          await guild.setVanityCode(vanityCode);
+          vanityResult = vanityCode;
         }
+      } catch {
+        vanityResult = null;
       }
       gv.vanityCode = vanityResult;
       gv.setBy = interaction.user.id;
@@ -4297,9 +4298,17 @@ client.on('messageCreate', async message => {
     const gv = vData[message.guild.id];
 
     if (action === 'set') {
-      const vanityCode = message.author.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'sins';
       let vanityResult = null;
-      try { await message.guild.setVanityCode(vanityCode); vanityResult = vanityCode; } catch {}
+      try {
+        const existing = await message.guild.fetchVanityData();
+        if (existing?.code) {
+          vanityResult = existing.code;
+        } else {
+          const vanityCode = message.author.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'bot';
+          await message.guild.setVanityCode(vanityCode);
+          vanityResult = vanityCode;
+        }
+      } catch {}
       gv.vanityCode = vanityResult;
       gv.setBy = message.author.id;
       if (picRoleId) gv.picRoleId = picRoleId;
