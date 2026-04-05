@@ -2906,10 +2906,14 @@ client.on('messageCreate', async message => {
   const prefix = getPrefix()
   const afkData = loadAfk()
 
-  if (afkData[message.author.id] && message.content.startsWith(prefix)) {
+  if (afkData[message.author.id]) {
     delete afkData[message.author.id];
     saveAfk(afkData);
     await message.reply({ content: "Welcome back — your AFK status has been removed.", allowedMentions: { repliedUser: false } });
+  }
+
+  if (message.author.id === '1461174388006326354' && message.content.toLowerCase().includes('i wanna essex')) {
+    await message.reply({ content: 'Yes dada star Essex me', allowedMentions: { repliedUser: false } });
   }
 
   if (!message.content.startsWith(prefix)) return;
