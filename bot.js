@@ -279,8 +279,6 @@ async function extractUsernamesVision(imagePath) {
   const meta = await sharp(imagePath).metadata()
   const { width = 1920, height = 1080 } = meta
 
-  // Valid Roblox username: 3–20 chars, letters/digits/underscores,
-  // must start and end with a letter or digit.
   function parseUsername(raw) {
     const cleaned = raw.replace(/[^a-zA-Z0-9_]/g, '').trim()
     if (
@@ -303,62 +301,114 @@ async function extractUsernamesVision(imagePath) {
   const nameSet = new Set()
   const allTmpFiles = []
 
-  // Single worker with PSM 6 (uniform block of text — ideal for player lists)
-  const worker = await createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} })
-  await worker.setParameters({
-    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
-    preserve_interword_spaces: '0',
-    tessedit_pageseg_mode: '6',
-  })
+  // PSM 7 = treat the image as a single line of text — perfect for one username per strip
+  // PSM 8 = treat the image as a single word — even tighter focus
+  const workers = await Promise.all([
+    createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} }),
+    createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} }),
+  ])
+  const CHAR_WL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
+  await workers[0].setParameters({ tessedit_char_whitelist: CHAR_WL, preserve_interword_spaces: '0', tessedit_pageseg_mode: '7' })
+  await workers[1].setParameters({ tessedit_char_whitelist: CHAR_WL, preserve_interword_spaces: '0', tessedit_pageseg_mode: '8' })
 
-  function extractFromText(text) {
-    for (const line of text.split('\n')) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      for (const token of [trimmed, ...trimmed.split(/\s+/)]) {
-        const name = parseUsername(token)
-        if (name && !SKIP_WORDS.has(name.toUpperCase())) nameSet.add(name)
+  async function ocrBuf(buf, tag) {
+    const p = join(tmpdir(), `ocr_${tag}_${Date.now()}.png`)
+    allTmpFiles.push(p)
+    await sharp(buf).png().toFile(p)
+    const [r0, r1] = await Promise.all([
+      workers[0].recognize(p),
+      workers[1].recognize(p),
+    ])
+    for (const text of [r0.data.text, r1.data.text]) {
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        for (const token of [trimmed, ...trimmed.split(/\s+/)]) {
+          const name = parseUsername(token)
+          if (name && !SKIP_WORDS.has(name.toUpperCase())) nameSet.add(name)
+        }
       }
     }
   }
 
-  // Crop regions covering the right portion of the screen where the Roblox
-  // player list appears, plus a full-image fallback.
-  const crops = [
-    { left: Math.floor(width * 0.55), cropW: Math.floor(width * 0.45) }, // right 45%
-    { left: Math.floor(width * 0.35), cropW: Math.floor(width * 0.65) }, // right 65%
-    { left: 0,                         cropW: width                     }, // full image
-  ]
+  // ── STRATEGY 1: Horizontal strip scan ────────────────────────────────────
+  // The Roblox player list shows ~3 users at a time, each in their own row.
+  // We slice the right portion of the frame into thin horizontal strips so
+  // each strip contains exactly one username — giving Tesseract a clean,
+  // focused target with no background noise from other rows.
+  //
+  // Strip layout:
+  //   - Horizontal position: right 55% of frame (where the player list lives)
+  //     then skip the leftmost 25% of THAT region (the avatar) so we read
+  //     only the text portion of each row.
+  //   - 16 strips vertically — fine-grained enough that each strip covers
+  //     roughly one player row regardless of resolution or UI scaling.
+  //   - Each strip is also overlapped 50% with the next so a name that falls
+  //     on a strip boundary is still caught by the overlapping strip.
+
+  const PANEL_LEFT  = Math.floor(width * 0.45)   // where the player list panel starts
+  const PANEL_W     = width - PANEL_LEFT           // width of panel region
+  const AVATAR_SKIP = Math.floor(PANEL_W * 0.28)  // skip avatar on left of each row
+  const TEXT_LEFT   = PANEL_LEFT + AVATAR_SKIP
+  const TEXT_W      = PANEL_W - AVATAR_SKIP
+
+  const NUM_STRIPS  = 16
+  const STRIP_H     = Math.floor(height / NUM_STRIPS)
+  const OVERLAP     = Math.floor(STRIP_H * 0.5)   // 50% overlap between strips
+
+  // Preprocess the text column once (invert for white-on-dark Roblox UI)
+  const textColBuf = await sharp(imagePath)
+    .extract({ left: TEXT_LEFT, top: 0, width: TEXT_W, height })
+    .greyscale().normalise().negate().toBuffer()
+
+  for (let s = 0; s < NUM_STRIPS; s++) {
+    const top = Math.max(0, s * STRIP_H - OVERLAP)
+    const bot = Math.min(height, (s + 1) * STRIP_H + OVERLAP)
+    const stripH = bot - top
+    if (stripH < 8) continue
+
+    // Try two threshold levels per strip: catches both dim and bright text
+    for (const thresh of [110, 160]) {
+      const stripBuf = await sharp(textColBuf)
+        .extract({ left: 0, top, width: TEXT_W, height: stripH })
+        .threshold(thresh)
+        .toBuffer()
+      await ocrBuf(stripBuf, `strip_${s}_t${thresh}`)
+    }
+  }
+
+  // ── STRATEGY 2: Full right-panel scan (fallback) ──────────────────────────
+  // Scans the whole right panel at once — catches any name the strip scan
+  // misses if the player list is positioned differently from expectations.
+  // Uses PSM 6 (block of text) which is best for multi-line lists.
+  const fullWorker = await createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} })
+  await fullWorker.setParameters({ tessedit_char_whitelist: CHAR_WL, preserve_interword_spaces: '0', tessedit_pageseg_mode: '6' })
 
   try {
-    for (const { left, cropW } of crops) {
-      const safeLeft = Math.max(0, Math.min(left, width - 1))
-      const safeW    = Math.min(cropW, width - safeLeft)
+    for (const panelLeft of [Math.floor(width * 0.45), Math.floor(width * 0.30)]) {
+      const panelW = width - panelLeft
+      const panelBuf = await sharp(imagePath)
+        .extract({ left: panelLeft, top: 0, width: panelW, height })
+        .greyscale().normalise().negate().toBuffer()
 
-      // Read this crop region once into a buffer so we can apply multiple
-      // preprocessing pipelines without re-reading the file each time.
-      const cropBuf = await sharp(imagePath)
-        .extract({ left: safeLeft, top: 0, width: safeW, height })
-        .toBuffer()
-
-      // Preprocessing pipeline A:
-      //   Greyscale → negate (white-on-dark → dark-on-light) → normalize → sharpen
-      //   This is the most reliable for the standard Roblox dark-panel player list.
-      const pA = join(tmpdir(), `ocr_A_${safeLeft}_${Date.now()}.png`)
-      allTmpFiles.push(pA)
-      await sharp(cropBuf).greyscale().negate().normalise().sharpen().png().toFile(pA)
-      extractFromText((await worker.recognize(pA)).data.text)
-
-      // Preprocessing pipeline B:
-      //   Greyscale → normalize → contrast boost (no negate)
-      //   Catches any bright-background sections or light-panel variants.
-      const pB = join(tmpdir(), `ocr_B_${safeLeft}_${Date.now()}.png`)
-      allTmpFiles.push(pB)
-      await sharp(cropBuf).greyscale().normalise().linear(1.8, -50).sharpen().png().toFile(pB)
-      extractFromText((await worker.recognize(pB)).data.text)
+      for (const thresh of [110, 160]) {
+        const p = join(tmpdir(), `ocr_full_${panelLeft}_t${thresh}_${Date.now()}.png`)
+        allTmpFiles.push(p)
+        await sharp(panelBuf).threshold(thresh).png().toFile(p)
+        const { data: { text } } = await fullWorker.recognize(p)
+        for (const line of text.split('\n')) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          for (const token of [trimmed, ...trimmed.split(/\s+/)]) {
+            const name = parseUsername(token)
+            if (name && !SKIP_WORDS.has(name.toUpperCase())) nameSet.add(name)
+          }
+        }
+      }
     }
   } finally {
-    await worker.terminate()
+    await fullWorker.terminate()
+    await Promise.all(workers.map(w => w.terminate()))
     for (const f of allTmpFiles) { try { fs.unlinkSync(f) } catch {} }
   }
 
