@@ -3,6 +3,7 @@ import { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder,
   TextInputStyle, PermissionsBitField, ActivityType, ChannelType, REST, Routes,
   SlashCommandBuilder, ApplicationIntegrationType, InteractionContextType } from 'discord.js'
 import fs from 'fs'
+import http from 'http'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -26,10 +27,10 @@ const client = new Client({
 })
 
 // logo and stuff
-const LOGO_URL = 'https://image2url.com/r2/default/images/1775266989420-d840fc51-b30b-42e5-8620-25540bc545d9.png'
+const LOGO_URL = 'https://image2url.com/r2/default/images/1775446829651-a71cb8b1-54dc-4b66-af20-ea8333c9154e.png'
 const MOD_IMAGE_URL = 'https://i.imgur.com/CBDoIWa.png'
-const FRAID_GROUP_ID = '489845165'
-const FRAID_GROUP_LINK = 'https://www.roblox.com/communities/489845165/fraidfg#!/about'
+const MTXX_GROUP_ID = '489845165'
+const MTXX_GROUP_LINK = 'https://www.roblox.com/communities/489845165/mtxx#!/about'
 
 // ─── Modern "Sins" embed system ───────────────────────────────────────────────
 // Every embed gets: author line (Sins + logo), logo thumbnail top-right,
@@ -106,6 +107,9 @@ const ANNOY_FILE = path.join(__dirname, 'annoy.json')
 const SKULL_FILE = path.join(__dirname, 'skull.json')
 const ACTIVITY_CHECK_FILE = path.join(__dirname, 'activity_check.json')
 const TAGGED_MEMBERS_FILE = path.join(__dirname, 'tagged_members.json')
+const RANKUP_FILE         = path.join(__dirname, 'rankup.json')
+const QUEUE_FILE          = path.join(__dirname, 'queue.json')
+const VERIFY_FILE         = path.join(__dirname, 'verify.json')
 
 // ── feature files ─────────────────────────────────────────────────────────────
 const VANITY_FILE        = path.join(__dirname, 'vanity.json')
@@ -163,6 +167,12 @@ const loadActivityCheck = () => loadJSON(ACTIVITY_CHECK_FILE)
 const saveActivityCheck = a => saveJSON(ACTIVITY_CHECK_FILE, a)
 const loadTaggedMembers = () => loadJSON(TAGGED_MEMBERS_FILE)
 const saveTaggedMembers = t => saveJSON(TAGGED_MEMBERS_FILE, t)
+const loadRankup        = () => loadJSON(RANKUP_FILE)
+const saveRankup        = r  => saveJSON(RANKUP_FILE, r)
+const loadQueue         = () => loadJSON(QUEUE_FILE)
+const saveQueue         = q  => saveJSON(QUEUE_FILE, q)
+const loadVerify        = () => loadJSON(VERIFY_FILE)
+const saveVerify        = v  => saveJSON(VERIFY_FILE, v)
 
 // ── feature load/save helpers ─────────────────────────────────────────────────
 const loadVanity        = () => loadJSON(VANITY_FILE)
@@ -228,6 +238,9 @@ function isWlManager(userId) {
   if (!fs.existsSync(HARDBANS_FILE)) saveHardbans({})
   if (!fs.existsSync(ACTIVITY_CHECK_FILE)) saveActivityCheck({})
   if (!fs.existsSync(TAGGED_MEMBERS_FILE)) saveTaggedMembers({})
+  if (!fs.existsSync(RANKUP_FILE)) saveRankup({})
+  if (!fs.existsSync(QUEUE_FILE)) saveQueue({})
+  if (!fs.existsSync(VERIFY_FILE)) saveVerify({ pending: {}, verified: {}, robloxToDiscord: {} })
   if (!fs.existsSync(AUTOROLE_FILE)) saveAutorole({})
   if (!fs.existsSync(WELCOME_FILE)) saveWelcome({})
   if (!fs.existsSync(ANTIINVITE_FILE)) saveAntiinvite({})
@@ -419,6 +432,13 @@ const HELP_SECTIONS = [
       '{p}role @member @role1 @role2...',
       '{p}inrole @role/roleId',
       '{p}img2gif',
+      '{p}verify YourRobloxUsername',
+      '{p}verify confirm',
+      '{p}verify status',
+      '{p}whois @user',
+      '{p}scan (attach image/video)',
+      '{p}attend @user robloxname',
+      '{p}setqueue #channel',
     ]
   },
   {
@@ -433,6 +453,8 @@ const HELP_SECTIONS = [
       '{p}tag [robloxUser] [tagname]',
       '{p}strip [robloxUser] [reason]',
       '{p}striptag [tagname]',
+      '{p}rankup [Nx] @users...',
+      '{p}setrankroles @role1 @role2...',
     ]
   },
   {
@@ -530,8 +552,8 @@ function buildGcNotInGroupEmbed(displayName) {
   return new EmbedBuilder()
     .setColor(0xFFFFFF)
     .setTitle('⛔  Not In Group')
-    .setDescription(`**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.\n\n> **Group ID:** \`${FRAID_GROUP_ID}\`\n> **Link:** [Click to Join](${FRAID_GROUP_LINK})`)
-    .setFooter({ text: `${getBotName()} • fraidfg`, iconURL: LOGO_URL })
+    .setDescription(`**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.\n\n> **Group ID:** \`${MTXX_GROUP_ID}\`\n> **Link:** [Click to Join](${MTXX_GROUP_LINK})`)
+    .setFooter({ text: `${getBotName()} • mtxx`, iconURL: LOGO_URL })
     .setTimestamp()
 }
 
@@ -539,8 +561,8 @@ function buildGcInGroupEmbed(displayName) {
   return new EmbedBuilder()
     .setColor(0xFFFFFF)
     .setTitle('✅  In Group')
-    .setDescription(`**${displayName}** is in the group and ready to be verified.\n\n> **Group ID:** \`${FRAID_GROUP_ID}\`\n> **Link:** [View Group](${FRAID_GROUP_LINK})`)
-    .setFooter({ text: `${getBotName()} • fraidfg`, iconURL: LOGO_URL })
+    .setDescription(`**${displayName}** is in the group and ready to be verified.\n\n> **Group ID:** \`${MTXX_GROUP_ID}\`\n> **Link:** [View Group](${MTXX_GROUP_LINK})`)
+    .setFooter({ text: `${getBotName()} • mtxx`, iconURL: LOGO_URL })
     .setTimestamp()
 }
 
@@ -1548,7 +1570,7 @@ client.on('interactionCreate', async interaction => {
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
       const displayName = userBasic.displayName || userBasic.name;
-      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === MTXX_GROUP_ID);
       const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
@@ -1599,7 +1621,7 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'about') {
     return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`About ${client.user.username}`)
-      .setDescription(`A custom Discord bot built for **fraidfg**.\n\nUse \`/help\` to see all commands.`)
+      .setDescription(`A custom Discord bot built for **mtxx**.\n\nUse \`/help\` to see all commands.`)
       .addFields(
         { name: 'servers', value: `${client.guilds.cache.size}`, inline: true },
         { name: 'uptime', value: `<t:${Math.floor((Date.now() - client.uptime) / 1000)}:R>`, inline: true }
@@ -3178,7 +3200,7 @@ client.on('messageCreate', async message => {
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
       const displayName = userBasic.displayName || userBasic.name;
-      const inFraidGroup = groupsData.some(g => String(g.group.id) === FRAID_GROUP_ID);
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === MTXX_GROUP_ID);
       const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
@@ -3202,7 +3224,7 @@ client.on('messageCreate', async message => {
 
   if (command === 'about') {
     return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`About ${client.user.username}`)
-      .setDescription(`A custom Discord bot built for **fraidfg**.\n\nUse \`${prefix}help\` or \`/help\` to see all commands.`)
+      .setDescription(`A custom Discord bot built for **mtxx**.\n\nUse \`${prefix}help\` or \`/help\` to see all commands.`)
       .addFields(
         { name: 'servers', value: `${client.guilds.cache.size}`, inline: true },
         { name: 'uptime', value: `<t:${Math.floor((Date.now() - client.uptime) / 1000)}:R>`, inline: true }
@@ -4727,6 +4749,589 @@ client.on('messageCreate', async message => {
     return;
   }
 
+
+  // ── .rankup ───────────────────────────────────────────────────────────────────
+  if (command === 'rankup') {
+    if (!message.guild) return;
+
+    // optional first arg like "3x" to jump N ranks
+    let levels = 1;
+    let startArgIdx = 0;
+    const firstArg = args[0]?.toLowerCase();
+    if (firstArg && /^\d+x$/.test(firstArg)) {
+      levels = Math.min(Math.max(parseInt(firstArg, 10), 1), 20);
+      startArgIdx = 1;
+    }
+
+    const rankup = loadRankup();
+    const guildRanks = rankup[message.guild.id]?.roles || [];
+    if (!guildRanks.length)
+      return message.reply(`no rank roles set — use \`${prefix}setrankroles @role1 @role2 ...\` to configure the rank ladder`);
+
+    const rawTokens = args.slice(startArgIdx);
+    if (!rawTokens.length) return message.reply(`usage: \`${prefix}rankup [Nx] @user1 @user2 ...\``);
+
+    await message.guild.members.fetch();
+
+    // collect unique members from mentions + any bare username/ID tokens
+    const mentionedMembers = [...(message.mentions.members?.values() ?? [])];
+    const seenIds = new Set(mentionedMembers.map(m => m.id));
+    const allTargets = [...mentionedMembers];
+
+    for (const token of rawTokens) {
+      const clean = token.replace(/[<@!>]/g, '').trim();
+      if (!clean || !(/\w/.test(clean)) || seenIds.has(clean)) continue;
+      if (/^\d{17,19}$/.test(clean)) {
+        const m = message.guild.members.cache.get(clean);
+        if (m && !seenIds.has(m.id)) { allTargets.push(m); seenIds.add(m.id); }
+        continue;
+      }
+      const found = message.guild.members.cache.find(m =>
+        m.user.username.toLowerCase() === clean.toLowerCase() ||
+        m.displayName.toLowerCase() === clean.toLowerCase()
+      );
+      if (found && !seenIds.has(found.id)) { allTargets.push(found); seenIds.add(found.id); }
+    }
+
+    if (!allTargets.length) return message.reply("couldn't find any users to rank up");
+
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`ranking up **${allTargets.length}** user${allTargets.length !== 1 ? 's' : ''}...`)] });
+
+    let completed = 0, skipped = 0;
+    const rolesAwarded = [];
+
+    for (const member of allTargets) {
+      try {
+        let currentIdx = -1;
+        for (let i = guildRanks.length - 1; i >= 0; i--) {
+          if (member.roles.cache.has(guildRanks[i])) { currentIdx = i; break; }
+        }
+        const nextIdx = currentIdx + levels;
+        if (nextIdx >= guildRanks.length) { skipped++; continue; }
+        const newRoleId = guildRanks[nextIdx];
+        const newRole = message.guild.roles.cache.get(newRoleId);
+        if (!newRole) { skipped++; continue; }
+        // remove old rank roles, add new one
+        for (const rId of guildRanks) {
+          if (rId !== newRoleId && member.roles.cache.has(rId))
+            await member.roles.remove(rId).catch(() => {});
+        }
+        await member.roles.add(newRoleId);
+        rolesAwarded.push({ member, roleName: newRole.name });
+        completed++;
+      } catch { skipped++; }
+    }
+
+    const total = completed + skipped;
+    const resultLines = [
+      'RESULT          COUNT',
+      '--------------------',
+      `COMPLETED       ${completed}`,
+      `SKIPPED         ${skipped}`,
+      `TOTAL           ${total}`,
+    ].join('\n');
+
+    const summaryEmbed = baseEmbed()
+      .setTitle('Rankup Complete')
+      .setColor(0xFFFFFF)
+      .setDescription('```\n' + resultLines + '\n```')
+      .setTimestamp();
+
+    const embeds = [summaryEmbed];
+
+    if (rolesAwarded.length) {
+      const awardLines = rolesAwarded.map(({ member, roleName }) => `${member} - @@ ${roleName}`).join('\n');
+      embeds.push(baseEmbed().setTitle('ROLES AWARDED').setColor(0xFFFFFF).setDescription(awardLines).setTimestamp());
+    }
+
+    return status.edit({ content: '', embeds });
+  }
+
+  // ── .setrankroles ─────────────────────────────────────────────────────────────
+  if (command === 'setrankroles') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('you need to be whitelisted to configure rank roles')] });
+
+    const sub = args[0]?.toLowerCase();
+
+    if (sub === 'clear') {
+      const rankup = loadRankup();
+      delete rankup[message.guild.id];
+      saveRankup(rankup);
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('rank roles cleared for this server')] });
+    }
+
+    if (sub === 'list') {
+      const guildRanks = loadRankup()[message.guild.id]?.roles || [];
+      if (!guildRanks.length) return message.reply(`no rank roles set — use \`${prefix}setrankroles @role1 @role2 ...\` to configure`);
+      const lines = guildRanks.map((id, i) => `**${i + 1}.** <@&${id}>`).join('\n');
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Rank Ladder').setDescription(lines).setTimestamp()] });
+    }
+
+    const collectedIds = [];
+    const seen = new Set();
+    for (const [id] of (message.mentions.roles ?? [])) {
+      if (!seen.has(id)) { collectedIds.push(id); seen.add(id); }
+    }
+    for (const arg of args) {
+      if (!/^\d+$/.test(arg) || seen.has(arg)) continue;
+      const r = message.guild.roles.cache.get(arg);
+      if (r) { collectedIds.push(r.id); seen.add(r.id); }
+    }
+
+    if (!collectedIds.length)
+      return message.reply(`usage: \`${prefix}setrankroles @lowest @next @highest\` — list roles from lowest to highest\nor \`${prefix}setrankroles list\` — view current\nor \`${prefix}setrankroles clear\` — remove all`);
+
+    const rankup = loadRankup();
+    if (!rankup[message.guild.id]) rankup[message.guild.id] = {};
+    rankup[message.guild.id].roles = collectedIds;
+    saveRankup(rankup);
+
+    const lines = collectedIds.map((id, i) => `**${i + 1}.** <@&${id}>`).join('\n');
+    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Rank Ladder Set')
+      .setDescription(lines)
+      .setFooter({ text: `${collectedIds.length} rank${collectedIds.length !== 1 ? 's' : ''} configured • lowest → highest`, iconURL: LOGO_URL })
+      .setTimestamp()] });
+  }
+
+
+
+
+  // ── .verify ───────────────────────────────────────────────────────────────────
+  // .verify RobloxUsername  → generates a code, tells user to paste it in their bio
+  // .verify confirm         → bot checks the bio, confirms and saves the link
+  // .verify status          → shows your currently linked account
+  // .verify remove          → unlinks your account
+  if (command === 'verify') {
+    if (!message.guild && !message.channel) return;
+
+    const sub      = args[0]?.toLowerCase();
+    const vData    = loadVerify();
+
+    // ── status ──
+    if (sub === 'status') {
+      const linked = vData.verified?.[message.author.id];
+      if (!linked) {
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+          .setDescription(`you have no linked Roblox account\n\nRun \`${prefix}verify YourRobloxUsername\` to get started`)] });
+      }
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+        .setTitle('Linked Account')
+        .addFields(
+          { name: 'Discord', value: `${message.author}`, inline: true },
+          { name: 'Roblox',  value: `[\`${linked.robloxName}\`](https://www.roblox.com/users/${linked.robloxId}/profile)`, inline: true }
+        )
+        .setTimestamp(new Date(linked.verifiedAt))] });
+    }
+
+    // ── remove / unlink ──
+    if (sub === 'remove' || sub === 'unlink') {
+      const linked = vData.verified?.[message.author.id];
+      if (!linked) return message.reply('you have no linked Roblox account');
+      delete vData.verified[message.author.id];
+      if (vData.robloxToDiscord?.[String(linked.robloxId)]) delete vData.robloxToDiscord[String(linked.robloxId)];
+      saveVerify(vData);
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`unlinked \`${linked.robloxName}\` from your account`)] });
+    }
+
+    // ── confirm ──
+    if (sub === 'confirm') {
+      const pending = vData.pending?.[message.author.id];
+      if (!pending) {
+        return message.reply(`no pending verification — start one with \`${prefix}verify YourRobloxUsername\``);
+      }
+      const { robloxId, robloxName, code } = pending;
+
+      // Check if code is expired (15 minutes)
+      if (Date.now() - pending.startedAt > 15 * 60 * 1000) {
+        delete vData.pending[message.author.id];
+        saveVerify(vData);
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`your verification code expired — run \`${prefix}verify ${robloxName}\` again to get a new one`)] });
+      }
+
+      // Fetch the Roblox profile description
+      let description = '';
+      try {
+        const profileRes = await (await fetch(`https://users.roblox.com/v1/users/${robloxId}`)).json();
+        description = profileRes.description || '';
+      } catch {
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('failed to reach Roblox — try again in a moment')] });
+      }
+
+      if (!description.includes(code)) {
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+          .setTitle('Code Not Found')
+          .setDescription([
+            `The code wasn't found in **${robloxName}**'s bio yet.`,
+            ``,
+            `Your code: \`${code}\``,
+            ``,
+            `**Make sure you:**`,
+            `• Opened https://www.roblox.com/users/${robloxId}/profile`,
+            `• Clicked **Edit Profile** → pasted the code into the **About** / description box`,
+            `• **Saved** your profile`,
+            ``,
+            `Then run \`${prefix}verify confirm\` again.`
+          ].join('\n'))] });
+      }
+
+      // ✅ Verified — save the link
+      if (!vData.verified) vData.verified = {};
+      if (!vData.robloxToDiscord) vData.robloxToDiscord = {};
+
+      vData.verified[message.author.id]        = { robloxId, robloxName, verifiedAt: Date.now() };
+      vData.robloxToDiscord[String(robloxId)]  = message.author.id;
+      delete vData.pending[message.author.id];
+      saveVerify(vData);
+
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+        .setTitle('Verification Successful')
+        .setDescription(`your Discord account is now linked to Roblox account **${robloxName}**`)
+        .addFields(
+          { name: 'Discord', value: `${message.author}`, inline: true },
+          { name: 'Roblox',  value: `[\`${robloxName}\`](https://www.roblox.com/users/${robloxId}/profile)`, inline: true }
+        )
+        .setFooter({ text: 'you can remove the code from your bio now', iconURL: LOGO_URL })
+        .setTimestamp()] });
+    }
+
+    // ── .verify RobloxUsername → start verification ──
+    const inputName = args[0];
+    if (!inputName || inputName.startsWith('<')) {
+      return message.reply(`usage: \`${prefix}verify YourRobloxUsername\``);
+    }
+
+    // Look up the Roblox user
+    let robloxUser;
+    try {
+      const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [inputName], excludeBannedUsers: false })
+      })).json();
+      robloxUser = res.data?.[0];
+    } catch {}
+
+    if (!robloxUser) {
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't find a Roblox user named \`${inputName}\``)] });
+    }
+
+    // Check if this Roblox account is already linked to someone else
+    const existingDiscordId = vData.robloxToDiscord?.[String(robloxUser.id)];
+    if (existingDiscordId && existingDiscordId !== message.author.id) {
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`\`${robloxUser.name}\` is already linked to another Discord account`)] });
+    }
+
+    // Generate a unique code
+    const code = `mtxx-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+    // Store pending verification (expires in 15 minutes)
+    if (!vData.pending) vData.pending = {};
+    vData.pending[message.author.id] = {
+      robloxId:   robloxUser.id,
+      robloxName: robloxUser.name,
+      code,
+      startedAt:  Date.now()
+    };
+    saveVerify(vData);
+
+    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+      .setTitle('Roblox Verification')
+      .setDescription([
+        `Verifying as **${robloxUser.name}** — follow the steps below:`,
+        ``,
+        `**Step 1 —** Open your Roblox profile:`,
+        `https://www.roblox.com/users/${robloxUser.id}/profile`,
+        ``,
+        `**Step 2 —** Click **Edit Profile** and paste this code into your **About / Description** box:`,
+        `\`\`\`${code}\`\`\``,
+        `**Step 3 —** Save your profile, then run:`,
+        `\`${prefix}verify confirm\``,
+        ``,
+        `*Code expires in 15 minutes. You can remove it from your bio after verification.*`
+      ].join('\n'))
+      .setTimestamp()] });
+  }
+
+  // ── .whois ─────────────────────────────────────────────────────────────────────
+  // .whois @discorduser   → shows their linked Roblox account
+  // .whois robloxname     → shows the linked Discord account
+  if (command === 'whois') {
+    const vData = loadVerify();
+    const mention = message.mentions.users.first();
+
+    if (mention) {
+      const linked = vData.verified?.[mention.id];
+      if (!linked) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`${mention} has no linked Roblox account`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+        .setTitle('Linked Account')
+        .addFields(
+          { name: 'Discord', value: `${mention}`, inline: true },
+          { name: 'Roblox',  value: `[\`${linked.robloxName}\`](https://www.roblox.com/users/${linked.robloxId}/profile)`, inline: true }
+        )
+        .setTimestamp(new Date(linked.verifiedAt))] });
+    }
+
+    // Lookup by Roblox username
+    const inputName = args[0];
+    if (!inputName) return message.reply(`usage: \`${prefix}whois @user\` or \`${prefix}whois RobloxUsername\``);
+
+    let robloxUser;
+    try {
+      const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [inputName], excludeBannedUsers: false })
+      })).json();
+      robloxUser = res.data?.[0];
+    } catch {}
+
+    if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't find Roblox user \`${inputName}\``)] });
+
+    const discordId = vData.robloxToDiscord?.[String(robloxUser.id)];
+    if (!discordId) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`\`${robloxUser.name}\` has no linked Discord account`)] });
+
+    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+      .setTitle('Linked Account')
+      .addFields(
+        { name: 'Roblox',  value: `[\`${robloxUser.name}\`](https://www.roblox.com/users/${robloxUser.id}/profile)`, inline: true },
+        { name: 'Discord', value: `<@${discordId}>`, inline: true }
+      )] });
+  }
+
+  // ── .scan ─────────────────────────────────────────────────────────────────────
+  // Post a screenshot or video of the in-game player list — the bot reads
+  // the names via OCR, verifies them on Roblox, looks up Discord via RoVer,
+  // then posts a USER ATTENDED THIS RAID embed for each one.
+  // Requires: npm install tesseract.js
+  // Video frame extraction requires ffmpeg to be installed on the host.
+  if (command === 'scan') {
+    if (!message.guild) return;
+
+    const attachment = message.attachments.first();
+    if (!attachment)
+      return message.reply(`attach a screenshot or video showing the player list, e.g. \`${prefix}scan\` with an image`);
+
+    const queueData = loadQueue();
+    const queueChannelId = queueData[message.guild.id]?.channelId;
+    const qCh = queueChannelId
+      ? (message.guild.channels.cache.get(queueChannelId) ?? message.channel)
+      : message.channel;
+
+    const status = await message.reply({
+      embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('scanning for raid members...')]
+    });
+
+    try {
+      const { tmpdir } = await import('os');
+      const { extname, join } = await import('path');
+      const { spawnSync } = await import('child_process');
+
+      const ext = extname(attachment.name || '').toLowerCase() || '.png';
+      const isVideo = ['.mp4', '.mov', '.webm', '.avi', '.mkv'].includes(ext);
+      const tmpInput = join(tmpdir(), `scan_${Date.now()}${ext}`);
+      const tmpFrame = join(tmpdir(), `scan_frame_${Date.now()}.png`);
+
+      // Download the attachment
+      const dlRes = await fetch(attachment.url);
+      fs.writeFileSync(tmpInput, Buffer.from(await dlRes.arrayBuffer()));
+
+      let imagePath = tmpInput;
+
+      // Extract a frame from video using ffmpeg if available
+      if (isVideo) {
+        try {
+          spawnSync('ffmpeg', ['-i', tmpInput, '-ss', '00:00:01', '-frames:v', '1', tmpFrame, '-y'], { stdio: 'ignore' });
+          if (fs.existsSync(tmpFrame)) imagePath = tmpFrame;
+        } catch {}
+      }
+
+      // OCR via tesseract.js
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('eng');
+      const { data: { text } } = await worker.recognize(imagePath);
+      await worker.terminate();
+
+      // Cleanup temp files
+      try { fs.unlinkSync(tmpInput); } catch {}
+      try { if (fs.existsSync(tmpFrame)) fs.unlinkSync(tmpFrame); } catch {}
+
+      // Extract candidate Roblox usernames: 3-20 chars, alphanumeric + underscore
+      const tokens = text.split(/[\s\n\r,;:|@()\[\]{}'"<>!?\/\\=+\-]+/);
+      const candidates = [...new Set(
+        tokens.filter(w => /^[a-zA-Z0-9][a-zA-Z0-9_]{1,18}[a-zA-Z0-9]$|^[a-zA-Z0-9]{3}$/.test(w))
+      )];
+
+      if (!candidates.length) {
+        return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
+      }
+
+      await status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
+
+      // Verify names against Roblox API (batch of 100)
+      const verified = [];
+      for (let i = 0; i < candidates.length; i += 100) {
+        try {
+          const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ usernames: candidates.slice(i, i + 100), excludeBannedUsers: false })
+          })).json();
+          if (res.data) verified.push(...res.data);
+        } catch {}
+      }
+
+      if (!verified.length) {
+        return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription("none of the detected names matched real Roblox users — try a clearer screenshot")] });
+      }
+
+      await status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`verified **${verified.length}** Roblox user${verified.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
+
+      // For each Roblox user, check local verify data first, then fall back to RoVer
+      const localVerify = loadVerify();
+      let posted = 0;
+      for (const robloxUser of verified) {
+        let discordDisplay = '*(not linked)*';
+        // Check local link first
+        const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
+        if (localDiscordId) {
+          discordDisplay = `<@${localDiscordId}>`;
+        } else {
+          // Fall back to RoVer
+          try {
+            const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json();
+            if (rover.status === 'ok' && rover.discordId) {
+              discordDisplay = `<@${rover.discordId}>`;
+            }
+          } catch {}
+        }
+
+        const attendEmbed = new EmbedBuilder()
+          .setColor(0xFFFFFF)
+          .setTitle('USER ATTENDED THIS RAID')
+          .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+          .addFields(
+            { name: 'Discord', value: discordDisplay,                inline: false },
+            { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
+          )
+          .setTimestamp()
+          .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+
+        await qCh.send({ embeds: [attendEmbed] });
+        posted++;
+
+        // small delay to avoid rate limits
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`scan complete — logged **${posted}** raid member${posted !== 1 ? 's' : ''} to ${qCh}`)] });
+
+    } catch (err) {
+      return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`scan failed — ${err.message}\n\nmake sure \`tesseract.js\` is installed (\`npm install tesseract.js\`)`)] });
+    }
+  }
+
+  // ── .attend ───────────────────────────────────────────────────────────────────
+  if (command === 'attend') {
+    if (!message.guild) return;
+
+    // Usage: .attend @discordUser robloxUsername
+    // or:   .attend discordId robloxUsername
+    // or:   .attend @user1 roblox1 @user2 roblox2 ... (bulk)
+    if (!args.length) return message.reply(`usage: \`${prefix}attend @user robloxUsername\``);
+
+    const queueData = loadQueue();
+    const queueChannelId = queueData[message.guild.id]?.channelId;
+    const queueChannel = queueChannelId
+      ? message.guild.channels.cache.get(queueChannelId) ?? message.channel
+      : message.channel;
+
+    // Pair up args: could be interleaved mentions + roblox names
+    // Simple approach: pair each mention/id with the next non-mention arg as roblox name
+    await message.guild.members.fetch();
+
+    const pairs = [];
+    const tokens = [...args];
+    let i = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      // Try to resolve as Discord user
+      let member = null;
+      const mentionMatch = token.match(/^<@!?(\d+)>$/);
+      if (mentionMatch) {
+        member = message.guild.members.cache.get(mentionMatch[1]);
+      } else if (/^\d{17,19}$/.test(token)) {
+        member = message.guild.members.cache.get(token);
+      } else {
+        // could be a username
+        member = message.guild.members.cache.find(m =>
+          m.user.username.toLowerCase() === token.toLowerCase() ||
+          m.displayName.toLowerCase() === token.toLowerCase()
+        );
+      }
+
+      if (member) {
+        // next token should be roblox username
+        const roblox = tokens[i + 1] && !tokens[i + 1].startsWith('<@') && !/^\d{17,19}$/.test(tokens[i + 1])
+          ? tokens[i + 1]
+          : null;
+        pairs.push({ member, roblox: roblox || 'unknown' });
+        i += roblox ? 2 : 1;
+      } else {
+        i++;
+      }
+    }
+
+    // If no pairs found from mentions, try simple mode: first arg = user, second = roblox
+    if (!pairs.length) {
+      const userToken = args[0];
+      const robloxName = args.slice(1).join('_') || 'unknown';
+      const mentionMatch = userToken?.match(/^<@!?(\d+)>$/);
+      let member = null;
+      if (mentionMatch) member = message.guild.members.cache.get(mentionMatch[1]);
+      else if (/^\d{17,19}$/.test(userToken)) member = message.guild.members.cache.get(userToken);
+      if (member) pairs.push({ member, roblox: robloxName });
+    }
+
+    if (!pairs.length) return message.reply("couldn't resolve any Discord users — try mentioning them");
+
+    for (const { member, roblox } of pairs) {
+      const attendEmbed = new EmbedBuilder()
+        .setColor(0xFFFFFF)
+        .setTitle('USER ATTENDED THIS RAID')
+        .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+        .addFields(
+          { name: 'Discord', value: `${member}`, inline: false },
+          { name: 'Roblox',  value: `\`${roblox}\``, inline: false }
+        )
+        .setTimestamp()
+        .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+      await queueChannel.send({ embeds: [attendEmbed] });
+    }
+
+    if (queueChannel.id !== message.channel.id) {
+      await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`logged **${pairs.length}** attendee${pairs.length !== 1 ? 's' : ''} to ${queueChannel}`)] });
+    }
+    return;
+  }
+
+  // ── .setqueue ─────────────────────────────────────────────────────────────────
+  if (command === 'setqueue') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('you need to be whitelisted to set the queue channel')] });
+    const ch = message.mentions.channels?.first();
+    if (!ch?.isTextBased()) return message.reply(`usage: \`${prefix}setqueue #channel\``);
+    const queueData = loadQueue();
+    if (!queueData[message.guild.id]) queueData[message.guild.id] = {};
+    queueData[message.guild.id].channelId = ch.id;
+    saveQueue(queueData);
+    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Queue Channel Set')
+      .setDescription(`raid attendance logs will now post to ${ch}`)
+      .setTimestamp()] });
+  }
+
   // ── .img2gif ──────────────────────────────────────────────────────────────────
   if (command === 'img2gif') {
     if (!message.guild) return;
@@ -4784,6 +5389,81 @@ client.on('messageCreate', async message => {
     }
     return;
   }
+});
+
+
+// ─── Automatic raid attendance HTTP server ────────────────────────────────────
+// Roblox game scripts POST to this endpoint when a player joins the raid.
+// Body (JSON): { discordId, robloxUsername, guildId, secret }
+// secret must match process.env.ATTEND_SECRET (optional but recommended)
+const ATTEND_PORT   = process.env.ATTEND_PORT   || 3001;
+const ATTEND_SECRET = process.env.ATTEND_SECRET || '';
+
+http.createServer(async (req, res) => {
+  // Health check
+  if (req.method === 'GET' && req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('attend server ok');
+    return;
+  }
+
+  if (req.method !== 'POST' || req.url !== '/attend') {
+    res.writeHead(404); res.end('not found'); return;
+  }
+
+  let body = '';
+  req.on('data', chunk => { body += chunk; });
+  req.on('end', async () => {
+    try {
+      const data = JSON.parse(body);
+
+      // Optional secret check
+      if (ATTEND_SECRET && data.secret !== ATTEND_SECRET) {
+        res.writeHead(401); res.end('unauthorized'); return;
+      }
+
+      const { discordId, robloxUsername, guildId } = data;
+      if (!robloxUsername || !guildId) {
+        res.writeHead(400); res.end('missing robloxUsername or guildId'); return;
+      }
+
+      const guild = client.guilds.cache.get(String(guildId));
+      if (!guild) { res.writeHead(404); res.end('guild not found'); return; }
+
+      const queueData = loadQueue();
+      const queueChannelId = queueData[String(guildId)]?.channelId;
+      if (!queueChannelId) { res.writeHead(404); res.end('no queue channel set — run .setqueue in Discord first'); return; }
+
+      const queueChannel = guild.channels.cache.get(queueChannelId);
+      if (!queueChannel) { res.writeHead(404); res.end('queue channel not found'); return; }
+
+      // Resolve Discord member if an ID was provided
+      let discordDisplay = discordId ? `<@${discordId}>` : '*(no discord linked)*';
+      if (discordId) {
+        try { await guild.members.fetch(String(discordId)); } catch {}
+      }
+
+      const attendEmbed = new EmbedBuilder()
+        .setColor(0xFFFFFF)
+        .setTitle('USER ATTENDED THIS RAID')
+        .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+        .addFields(
+          { name: 'Discord', value: discordDisplay,               inline: false },
+          { name: 'Roblox',  value: `\`${robloxUsername}\``, inline: false }
+        )
+        .setTimestamp()
+        .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+
+      await queueChannel.send({ embeds: [attendEmbed] });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      console.error('attend server error:', err.message);
+      res.writeHead(500); res.end(err.message);
+    }
+  });
+}).listen(ATTEND_PORT, () => {
+  console.log(`attend server listening on port ${ATTEND_PORT}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
