@@ -334,6 +334,23 @@ async function rankRobloxUser(robloxUsername, roleId) {
   return { userId, displayName: userBasic.name, avatarUrl: avatarData.data?.[0]?.imageUrl ?? null };
 }
 
+async function buildJoinButton(userId) {
+  try {
+    const cookie = process.env.ROBLOX_COOKIE;
+    const headers = { 'Content-Type': 'application/json' };
+    if (cookie) headers['Cookie'] = `.ROBLOSECURITY=${cookie}`;
+    const presData = await (await fetch('https://presence.roblox.com/v1/presence/users', {
+      method: 'POST', headers, body: JSON.stringify({ userIds: [userId] })
+    })).json();
+    const p = presData.userPresences?.[0];
+    if (p?.userPresenceType === 2 && p.placeId && p.gameId) {
+      const joinUrl = `https://www.roblox.com/games/start?placeId=${p.placeId}&gameInstanceId=${p.gameId}`;
+      return new ButtonBuilder().setLabel('JOIN').setStyle(ButtonStyle.Link).setURL(joinUrl);
+    }
+  } catch {}
+  return new ButtonBuilder().setLabel('Not In Game').setStyle(ButtonStyle.Secondary).setCustomId('noop_notingame').setDisabled(true);
+}
+
 // ─── Jail helpers ─────────────────────────────────────────────────────────────
 async function jailMember(guild, member, reason, modTag) {
   const jailData = loadJail();
@@ -451,6 +468,7 @@ const HELP_SECTIONS = [
       '{p}attend @user robloxname',
       '{p}setattendance #channel',
       '{p}ulattendance #channel',
+      '{p}rc',
     ]
   },
   {
@@ -1491,9 +1509,10 @@ client.on('interactionCreate', async interaction => {
       if (pastNames.length) embed.addFields({ name: `🔄 Past Usernames (${pastNames.length})`, value: pastNames.map(n => `\`${n}\``).join(', '), inline: false });
       if (groupsRaw.length) embed.addFields({ name: `🏠 Groups (${groupsRaw.length})`, value: groupsRaw.slice(0, 10).map(g => `↗ [${g.group.name}](https://www.roblox.com/communities/${g.group.id}/about)`).join('\n'), inline: false });
       embed.setTimestamp();
+      const joinBtn = await buildJoinButton(userId);
       return interaction.editReply({
         embeds: [embed],
-        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Open Profile').setStyle(ButtonStyle.Link).setURL(profileUrl))]
+        components: [new ActionRowBuilder().addComponents(joinBtn)]
       });
     } catch (e) { return interaction.editReply("something went wrong loading their info, try again"); }
   }
@@ -3011,9 +3030,10 @@ client.on('messageCreate', async message => {
       if (pastNames.length) embed.addFields({ name: `🔄 Past Usernames (${pastNames.length})`, value: pastNames.map(n => `\`${n}\``).join(', '), inline: false });
       if (groupsRaw.length) embed.addFields({ name: `🏠 Groups (${groupsRaw.length})`, value: groupsRaw.slice(0, 10).map(g => `↗ [${g.group.name}](https://www.roblox.com/communities/${g.group.id}/about)`).join('\n'), inline: false });
       embed.setTimestamp();
+      const joinBtn = await buildJoinButton(userId);
       return message.reply({
         embeds: [embed],
-        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Open Profile').setStyle(ButtonStyle.Link).setURL(profileUrl))]
+        components: [new ActionRowBuilder().addComponents(joinBtn)]
       });
     } catch { return message.reply("something went wrong loading their info, try again"); }
   }
@@ -3389,6 +3409,37 @@ client.on('messageCreate', async message => {
       });
     } catch (err) {
       return message.reply(`couldn't nuke — ${err.message}`);
+    }
+    return;
+  }
+
+  // ── .rc (raid clear — deletes all non-pinned messages in the channel) ─────────
+  if (command === 'rc') {
+    if (!isWhitelisted(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('you need to be whitelisted to use `.rc`')] });
+    if (!message.guild) return;
+    try {
+      const ch = message.channel;
+      const pinned = await ch.messages.fetchPinned();
+      const pinnedIds = new Set(pinned.map(m => m.id));
+      let deleted = 0;
+      let lastId;
+      while (true) {
+        const opts = { limit: 100 };
+        if (lastId) opts.before = lastId;
+        const batch = await ch.messages.fetch(opts);
+        if (!batch.size) break;
+        const toDelete = batch.filter(m => !pinnedIds.has(m.id));
+        if (toDelete.size > 0) {
+          const removed = await ch.bulkDelete(toDelete, true);
+          deleted += removed.size;
+        }
+        if (batch.size < 100) break;
+        lastId = batch.last().id;
+      }
+      const confirm = await ch.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('raid channel cleared').setDescription(`deleted **${deleted}** message${deleted !== 1 ? 's' : ''} — pinned messages were kept`).setTimestamp()] });
+      setTimeout(() => confirm.delete().catch(() => {}), 8000);
+    } catch (err) {
+      return message.reply(`couldn't clear — ${err.message}`);
     }
     return;
   }
@@ -4420,9 +4471,10 @@ client.on('messageCreate', async message => {
           { name: '📅 Created',   value: created,         inline: true },
         )
         .setTimestamp();
+      const joinBtn = await buildJoinButton(input);
       return message.reply({
         embeds: [e],
-        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Open Profile').setStyle(ButtonStyle.Link).setURL(profileUrl))]
+        components: [new ActionRowBuilder().addComponents(joinBtn)]
       });
     } catch { return message.reply("something went wrong fetching that user, try again"); }
   }
