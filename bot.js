@@ -267,43 +267,106 @@ function isWlManager(userId) {
 
 const getPrefix = () => loadConfig().prefix || '.'
 
-// ─── Vision-based username extraction ────────────────────────────────────────
-// Sends an image to GPT-4o vision and returns the Roblox usernames it finds
-// in the player list. Far more accurate than Tesseract — no crop guessing,
-// no false positives from UI text, and it can handle any Roblox UI layout.
+// ─── OCR-based username extraction (no API key required) ─────────────────────
+// Uses sharp for image preprocessing and tesseract.js for OCR to extract
+// Roblox usernames from player list panels. No AI key needed.
 async function extractUsernamesVision(imagePath) {
-  const base64 = fs.readFileSync(imagePath).toString('base64')
-  const ext = path.extname(imagePath).toLowerCase().replace('.', '') || 'png'
-  const mimeType = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png'
-  const apiKey = process.env.GROQ_API_KEY || ''
-  if (!apiKey) throw new Error('GROQ_API_KEY is not set — add it to your Railway environment variables (get it free at console.groq.com)')
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: 'This is a Roblox game screenshot or video frame. Look for the in-game player list panel — the popup/overlay that lists who is currently in the server. It usually appears as a dark or semi-transparent box with player names (and sometimes avatars) listed vertically. Your job is to extract EVERY SINGLE Roblox username visible inside that player list — do not skip any, do not summarize, do not stop early. Scan the entire panel top to bottom and list every name you can see, even partially. Return them one per line with absolutely nothing else — no numbers, no bullets, no labels, no extra words. Only valid Roblox usernames: letters, numbers, underscores, 3–20 characters, starting and ending with a letter or number. Do NOT include button labels like "CURRENT", "LEAVE", "LEADERBOARD", display names, group names, tab names, or any text that is not a Roblox username in the player list. After listing every name, double-check: did you miss any name visible in the player list? If yes, add it. If you cannot see a player list panel in this image, respond with only the word NONE.'
-          },
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }
-        ]
-      }],
-      max_tokens: 1000,
-    }),
+  const { default: sharp } = await import('sharp')
+  const { createWorker } = await import('tesseract.js')
+
+  // Get image dimensions to compute crop regions
+  const meta = await sharp(imagePath).metadata()
+  const { width = 1920, height = 1080 } = meta
+
+  // The Roblox player list typically appears in the top-right or center-right
+  // of the screen. We try several crop regions and union all results.
+  // Each region is defined as [left%, top%, widthFraction, heightFraction]
+  const cropRegions = [
+    // Full right third — catches most player list positions
+    { left: Math.floor(width * 0.62), top: 0, width: Math.floor(width * 0.38), height },
+    // Center-right — player list sometimes appears more centered
+    { left: Math.floor(width * 0.35), top: 0, width: Math.floor(width * 0.65), height },
+    // Full image as fallback — catches unusual layouts
+    { left: 0, top: 0, width, height },
+  ]
+
+  const nameSet = new Set()
+  const tmpFiles = []
+  const { join } = await import('path')
+  const { tmpdir } = await import('os')
+
+  // Filter a raw OCR line to a valid Roblox username, or null
+  function parseUsername(raw) {
+    // Strip everything except alphanumeric and underscore
+    const cleaned = raw.replace(/[^a-zA-Z0-9_]/g, '').trim()
+    // Roblox usernames: 3–20 chars, start and end with letter or number
+    if (
+      cleaned.length >= 3 &&
+      cleaned.length <= 20 &&
+      /^[a-zA-Z0-9]/.test(cleaned) &&
+      /[a-zA-Z0-9]$/.test(cleaned)
+    ) return cleaned
+    return null
+  }
+
+  // Known Roblox UI labels to exclude
+  const SKIP_WORDS = new Set([
+    'CURRENT','LEAVE','LEADERBOARD','PLAYERS','SERVER','GAME','REPORT',
+    'FRIEND','FOLLOW','BLOCK','MENU','TEAM','SPECTATE','SCORE','RANK',
+    'PING','FPS','RESUME','RESET','SETTINGS','HELP','CHAT','INVENTORY',
+    'SHOP','STORE','TRADES','PROFILE','HOME','BACK','CLOSE','EXIT',
+  ])
+
+  // Create a single Tesseract worker (reuse across crops for speed)
+  const worker = await createWorker('eng', 1, {
+    logger: () => {},
+    errorHandler: () => {},
   })
-  const data = await res.json()
-  if (data.error) throw new Error(`Groq error: ${data.error.message}`)
-  const text = (data.choices?.[0]?.message?.content ?? '').trim()
-  if (text.toUpperCase() === 'NONE' || !text) return []
-  return [...new Set(
-    text.split('\n')
-      .map(l => l.replace(/[^a-zA-Z0-9_]/g, '').trim())
-      .filter(l => l.length >= 3 && l.length <= 20 && /^[a-zA-Z0-9]/.test(l) && /[a-zA-Z0-9]$/.test(l))
-  )]
+  await worker.setParameters({
+    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
+    preserve_interword_spaces: '0',
+  })
+
+  try {
+    for (const region of cropRegions) {
+      // Preprocess: crop, convert to grayscale, boost contrast and sharpness
+      const cropPath = join(tmpdir(), `ocr_crop_${Date.now()}_${region.left}.png`)
+      tmpFiles.push(cropPath)
+
+      await sharp(imagePath)
+        .extract({
+          left: Math.max(0, region.left),
+          top: Math.max(0, region.top),
+          width: Math.min(region.width, width - Math.max(0, region.left)),
+          height: Math.min(region.height, height - Math.max(0, region.top)),
+        })
+        .greyscale()
+        .normalise()
+        .linear(1.8, -(128 * 0.8))  // boost contrast
+        .sharpen()
+        .png()
+        .toFile(cropPath)
+
+      const { data: { text } } = await worker.recognize(cropPath)
+
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        // Try whole token and each whitespace-split word
+        for (const token of [trimmed, ...trimmed.split(/\s+/)]) {
+          const name = parseUsername(token)
+          if (name && !SKIP_WORDS.has(name.toUpperCase())) {
+            nameSet.add(name)
+          }
+        }
+      }
+    }
+  } finally {
+    await worker.terminate()
+    for (const f of tmpFiles) { try { fs.unlinkSync(f) } catch {} }
+  }
+
+  return [...nameSet]
 }
 
 // Shared scan runner used by both slash and prefix scan commands.
