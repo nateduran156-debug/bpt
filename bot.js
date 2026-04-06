@@ -3053,75 +3053,115 @@ client.on('interactionCreate', async interaction => {
       if (isVideo) {
         let duration = 10;
         try { const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', tmpInput], { encoding: 'utf8' }); const parsed = parseFloat(probe.stdout?.trim()); if (!isNaN(parsed) && parsed > 0) duration = parsed; } catch {}
-        const step = 0.5; const maxFrames = 60; const times = [];
-        for (let t = 0; t < duration && times.length < maxFrames; t += step) times.push(+t.toFixed(2));
+
+        // Perceptual hash helpers (dHash 8×8 = 56-bit)
         const { createCanvas: _cc, loadImage: _li } = await import('canvas');
-        const seenHashes = []; const HASH_SIZE = 8; const HASH_BITS = HASH_SIZE * (HASH_SIZE - 1); const SIM_THRESH = Math.floor(HASH_BITS * 0.12);
+        const HASH_SIZE = 8; const HASH_BITS = HASH_SIZE * (HASH_SIZE - 1); const SIM_THRESH = Math.floor(HASH_BITS * 0.12);
         const dHash = async (imgPath) => { try { const img = await _li(imgPath); const c = _cc(HASH_SIZE + 1, HASH_SIZE); const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, HASH_SIZE + 1, HASH_SIZE); const px = ctx.getImageData(0, 0, HASH_SIZE + 1, HASH_SIZE).data; let hash = 0n; for (let row = 0; row < HASH_SIZE; row++) { for (let col = 0; col < HASH_SIZE; col++) { const i2 = (row * (HASH_SIZE + 1) + col) * 4; const lum = 0.299 * px[i2] + 0.587 * px[i2 + 1] + 0.114 * px[i2 + 2]; const j = (row * (HASH_SIZE + 1) + col + 1) * 4; const lum2 = 0.299 * px[j] + 0.587 * px[j + 1] + 0.114 * px[j + 2]; hash = (hash << 1n) | (lum < lum2 ? 1n : 0n); } } return hash; } catch { return null; } };
         const hammingDist = (a, b) => { let diff = a ^ b, dist = 0; while (diff) { dist += Number(diff & 1n); diff >>= 1n; } return dist; };
-        const isTooSimilar = (hash) => { if (hash === null) return false; return seenHashes.some(h => hammingDist(h, hash) <= SIM_THRESH); };
-        for (const ts of times) {
-          const raw = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
-          try {
-            spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
-            if (!fs.existsSync(raw)) continue; tmpFrames.push(raw);
-            const hash = await dHash(raw); if (isTooSimilar(hash)) continue; if (hash !== null) seenHashes.push(hash);
-            const vars = await buildVariants(raw, `scan_${Date.now()}_${ts}`);
-            if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(raw); }
-          } catch {}
+
+        // Create OCR workers once — shared across both passes
+        const { createWorker } = await import('tesseract.js');
+        const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
+        const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => { const w = await createWorker('eng'); await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm }); return w; }));
+
+        // Extracts frames at `offset, offset+0.5, offset+1.0 ...`, OCRs them, returns Set of candidate names
+        const runPass = async (offset) => {
+          const step = 0.5; const maxFrames = 60; const times = [];
+          for (let t = offset; t < duration && times.length < maxFrames; t += step) times.push(+t.toFixed(2));
+          const passHashes = [];
+          const isSimilar = (hash) => hash === null ? false : passHashes.some(h => hammingDist(h, hash) <= SIM_THRESH);
+          const passImgPaths = [];
+          for (const ts of times) {
+            const raw = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
+            try {
+              spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
+              if (!fs.existsSync(raw)) continue; tmpFrames.push(raw);
+              const hash = await dHash(raw); if (isSimilar(hash)) continue; if (hash !== null) passHashes.push(hash);
+              const vars = await buildVariants(raw, `scan_${Date.now()}_${ts}`);
+              if (vars.length) { for (const v of vars) passImgPaths.push(v); } else { passImgPaths.push(raw); }
+            } catch {}
+          }
+          const passTexts = [];
+          for (const imgPath of passImgPaths) { for (const w of [wPSM4, wPSM6, wPSM11]) { try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) passTexts.push(text); } catch {} } }
+          const toks = passTexts.join('\n').split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
+          return new Set(toks.map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim()).filter(w => w.length >= 3 && w.length <= 20 && /^[a-zA-Z0-9]/.test(w) && /[a-zA-Z0-9]$/.test(w)));
+        };
+
+        // PASS 1: frames at 0.0 s, 0.5 s, 1.0 s, ...
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 1 of 2...')] });
+        const candidates1 = await runPass(0);
+        // PASS 2: frames at 0.25 s, 0.75 s, 1.25 s, ... (staggered 0.25 s)
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 2 of 2...')] });
+        const candidates2 = await runPass(0.25);
+
+        await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
+        try { fs.unlinkSync(tmpInput); } catch {}
+        for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
+
+        // Only keep names confirmed in BOTH passes — eliminates single-frame OCR noise/false positives
+        const confirmed = [...candidates1].filter(c => candidates2.has(c));
+        if (!confirmed.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't confirm any usernames across both video passes — make sure the player list is clearly visible throughout the recording")] });
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`confirmed **${confirmed.length}** name${confirmed.length !== 1 ? 's' : ''} across both video passes, verifying on Roblox...`)] });
+
+        const verifiedUsers = [];
+        for (let i2 = 0; i2 < confirmed.length; i2 += 100) { try { const res = await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: confirmed.slice(i2, i2 + 100), excludeBannedUsers: false }) })).json(); if (res.data) verifiedUsers.push(...res.data); } catch {} }
+        if (!verifiedUsers.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("none of the confirmed names matched real Roblox users — try a clearer recording")] });
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verifiedUsers.length}** Roblox user${verifiedUsers.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
+
+        const localVerify = loadVerify(); let posted = 0;
+        for (const robloxUser of verifiedUsers) {
+          let discordId = null;
+          const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
+          if (localDiscordId) { discordId = localDiscordId; } else { try { const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json(); if (rover.status === 'ok' && rover.discordId) discordId = rover.discordId; } catch {} }
+          if (discordId) {
+            await qCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+            posted++;
+          } else if (ulCh) {
+            await ulCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('UNLINKED USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+          }
+          await new Promise(r => setTimeout(r, 300));
         }
-        if (!imagePaths.length) imagePaths.push(tmpInput);
+        const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : '';
+        return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
+
       } else {
+        // For a still image — single pass (no double-check needed for screenshots)
         const vars = await buildVariants(tmpInput, `scan_proc_${Date.now()}`);
         if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(tmpInput); }
-      }
-      const { createWorker } = await import('tesseract.js');
-      const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
-      // Three OCR workers with different page-segmentation modes run on every variant:
-      //   PSM 4  — single column of text (perfect for vertical player lists)
-      //   PSM 6  — single uniform text block
-      //   PSM 11 — sparse text (catches names scattered across the region)
-      // 4 variants × 3 PSM modes = up to 12 OCR passes per unique frame.
-      const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => {
-        const w = await createWorker('eng');
-        await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm });
-        return w;
-      }));
-      const allText = [];
-      for (const imgPath of imagePaths) {
-        for (const w of [wPSM4, wPSM6, wPSM11]) {
-          try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) allText.push(text); } catch {}
+        const { createWorker } = await import('tesseract.js');
+        const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
+        const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => { const w = await createWorker('eng'); await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm }); return w; }));
+        const allText = [];
+        for (const imgPath of imagePaths) { for (const w of [wPSM4, wPSM6, wPSM11]) { try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) allText.push(text); } catch {} } }
+        await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
+        try { fs.unlinkSync(tmpInput); } catch {}
+        for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
+        const combinedText = allText.join('\n');
+        const tokens = combinedText.split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
+        const candidates = [...new Set(tokens.map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim()).filter(w => w.length >= 3 && w.length <= 20 && /^[a-zA-Z0-9]/.test(w) && /[a-zA-Z0-9]$/.test(w)))];
+        if (!candidates.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
+        const verifiedUsers = [];
+        for (let i2 = 0; i2 < candidates.length; i2 += 100) { try { const res = await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: candidates.slice(i2, i2 + 100), excludeBannedUsers: false }) })).json(); if (res.data) verifiedUsers.push(...res.data); } catch {} }
+        if (!verifiedUsers.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("none of the detected names matched real Roblox users — try a clearer screenshot")] });
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verifiedUsers.length}** Roblox user${verifiedUsers.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
+        const localVerify = loadVerify(); let posted = 0;
+        for (const robloxUser of verifiedUsers) {
+          let discordId = null;
+          const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
+          if (localDiscordId) { discordId = localDiscordId; } else { try { const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json(); if (rover.status === 'ok' && rover.discordId) discordId = rover.discordId; } catch {} }
+          if (discordId) {
+            await qCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+            posted++;
+          } else if (ulCh) {
+            await ulCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('UNLINKED USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+          }
+          await new Promise(r => setTimeout(r, 300));
         }
+        const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : '';
+        return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
       }
-      await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
-      try { fs.unlinkSync(tmpInput); } catch {}
-      for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
-      const combinedText = allText.join('\n');
-      const tokens = combinedText.split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
-      // Min 3 chars — Roblox allows usernames as short as 3 characters.
-      // The Roblox API batch-lookup acts as the real filter; noise gets dropped there.
-      const candidates = [...new Set(tokens.map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim()).filter(w => w.length >= 3 && w.length <= 20 && /^[a-zA-Z0-9]/.test(w) && /[a-zA-Z0-9]$/.test(w)))];
-      if (!candidates.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
-      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
-      const verifiedUsers = [];
-      for (let i2 = 0; i2 < candidates.length; i2 += 100) { try { const res = await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: candidates.slice(i2, i2 + 100), excludeBannedUsers: false }) })).json(); if (res.data) verifiedUsers.push(...res.data); } catch {} }
-      if (!verifiedUsers.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("none of the detected names matched real Roblox users — try a clearer screenshot")] });
-      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verifiedUsers.length}** Roblox user${verifiedUsers.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
-      const localVerify = loadVerify(); let posted = 0;
-      for (const robloxUser of verifiedUsers) {
-        let discordId = null;
-        const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
-        if (localDiscordId) { discordId = localDiscordId; } else { try { const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json(); if (rover.status === 'ok' && rover.discordId) discordId = rover.discordId; } catch {} }
-        if (discordId) {
-          await qCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
-          posted++;
-        } else if (ulCh) {
-          await ulCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('UNLINKED USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
-        }
-        await new Promise(r => setTimeout(r, 300));
-      }
-      const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : '';
-      return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
     } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}`)] }); }
   }
 
@@ -5637,20 +5677,11 @@ client.on('messageCreate', async message => {
           if (!isNaN(parsed) && parsed > 0) duration = parsed;
         } catch {}
 
-        // One frame every 0.5 s, capped at 60 frames
-        const step      = 0.5;
-        const maxFrames = 60;
-        const times     = [];
-        for (let t = 0; t < duration && times.length < maxFrames; t += step) times.push(+t.toFixed(2));
-
-        // Perceptual hash (dHash 8×8 = 56-bit) — skip frames visually identical
-        // to ones already processed so scroll-backs don't re-OCR the same content
+        // Perceptual hash helpers (dHash 8×8 = 56-bit)
         const { createCanvas: _cc, loadImage: _li } = await import('canvas');
-        const seenHashes = [];
         const HASH_SIZE  = 8;
         const HASH_BITS  = HASH_SIZE * (HASH_SIZE - 1);
         const SIM_THRESH = Math.floor(HASH_BITS * 0.12);
-
         const dHash = async (imgPath) => {
           try {
             const img = await _li(imgPath);
@@ -5671,158 +5702,233 @@ client.on('messageCreate', async message => {
             return hash;
           } catch { return null; }
         };
+        const hammingDist = (a, b) => { let diff = a ^ b, dist = 0; while (diff) { dist += Number(diff & 1n); diff >>= 1n; } return dist; };
 
-        const hammingDist = (a, b) => {
-          let diff = a ^ b, dist = 0;
-          while (diff) { dist += Number(diff & 1n); diff >>= 1n; }
-          return dist;
+        // Create OCR workers once — shared across both passes
+        const { createWorker } = await import('tesseract.js');
+        const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
+        const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => {
+          const w = await createWorker('eng');
+          await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm });
+          return w;
+        }));
+
+        // Extracts frames starting at `offset` seconds (every 0.5 s, max 60 frames),
+        // deduplicates visually-identical frames, runs OCR, and returns a Set of
+        // candidate Roblox usernames found in this pass.
+        const runPass = async (offset) => {
+          const step = 0.5; const maxFrames = 60; const times = [];
+          for (let t = offset; t < duration && times.length < maxFrames; t += step)
+            times.push(+t.toFixed(2));
+          const passHashes = [];
+          const isSimilar  = (hash) => hash === null ? false : passHashes.some(h => hammingDist(h, hash) <= SIM_THRESH);
+          const passImgPaths = [];
+          for (const ts of times) {
+            const raw = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
+            try {
+              spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
+              if (!fs.existsSync(raw)) continue;
+              tmpFrames.push(raw);
+              const hash = await dHash(raw);
+              if (isSimilar(hash)) continue;
+              if (hash !== null) passHashes.push(hash);
+              const vars = await buildVariants(raw, `scan_${Date.now()}_${ts}`);
+              if (vars.length) { for (const v of vars) passImgPaths.push(v); } else { passImgPaths.push(raw); }
+            } catch {}
+          }
+          // OCR every frame variant in this pass
+          const passTexts = [];
+          for (const imgPath of passImgPaths) {
+            for (const w of [wPSM4, wPSM6, wPSM11]) {
+              try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) passTexts.push(text); } catch {}
+            }
+          }
+          const toks = passTexts.join('\n').split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
+          return new Set(toks.map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim()).filter(w => w.length >= 3 && w.length <= 20 && /^[a-zA-Z0-9]/.test(w) && /[a-zA-Z0-9]$/.test(w)));
         };
 
-        const isTooSimilar = (hash) => {
-          if (hash === null) return false;
-          return seenHashes.some(h => hammingDist(h, hash) <= SIM_THRESH);
-        };
+        // PASS 1: sample frames at 0.0 s, 0.5 s, 1.0 s, ...
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 1 of 2...')] });
+        const candidates1 = await runPass(0);
 
-        for (const ts of times) {
-          const raw = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
+        // PASS 2: sample frames at 0.25 s, 0.75 s, 1.25 s, ... (staggered 0.25 s)
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 2 of 2...')] });
+        const candidates2 = await runPass(0.25);
+
+        await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
+        try { fs.unlinkSync(tmpInput); } catch {}
+        for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
+
+        // Only keep names confirmed in BOTH passes — eliminates single-frame OCR noise/false positives
+        const confirmed = [...candidates1].filter(c => candidates2.has(c));
+
+        if (!confirmed.length) {
+          return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't confirm any usernames across both video passes — make sure the player list is clearly visible throughout the recording")] });
+        }
+
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`confirmed **${confirmed.length}** name${confirmed.length !== 1 ? 's' : ''} across both video passes, verifying on Roblox...`)] });
+
+        // Verify confirmed names against Roblox API (batch of 100)
+        const verified = [];
+        for (let i = 0; i < confirmed.length; i += 100) {
           try {
-            spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
-            if (!fs.existsSync(raw)) continue;
-            tmpFrames.push(raw);
-            const hash = await dHash(raw);
-            if (isTooSimilar(hash)) continue;
-            if (hash !== null) seenHashes.push(hash);
-            const vars = await buildVariants(raw, `scan_${Date.now()}_${ts}`);
-            if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(raw); }
+            const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ usernames: confirmed.slice(i, i + 100), excludeBannedUsers: false })
+            })).json();
+            if (res.data) verified.push(...res.data);
           } catch {}
         }
-        if (!imagePaths.length) imagePaths.push(tmpInput);
+
+        if (!verified.length) {
+          return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("none of the confirmed names matched real Roblox users — try a clearer recording")] });
+        }
+
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verified.length}** Roblox user${verified.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
+
+        const localVerify = loadVerify();
+        let posted = 0;
+        for (const robloxUser of verified) {
+          let discordId = null;
+          const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
+          if (localDiscordId) {
+            discordId = localDiscordId;
+          } else {
+            try {
+              const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json();
+              if (rover.status === 'ok' && rover.discordId) discordId = rover.discordId;
+            } catch {}
+          }
+          if (discordId) {
+            // Linked user → post to the main queue channel
+            await qCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+            posted++;
+          } else if (ulCh) {
+            // Unlinked user → post to the unlinked attendance channel
+            await ulCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('UNLINKED USER ATTENDED THIS RAID').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+          }
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : '';
+        return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
+
       } else {
         // For a still image build all four variants
         const vars = await buildVariants(tmpInput, `scan_proc_${Date.now()}`);
         if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(tmpInput); }
-      }
 
-      // OCR via tesseract.js — three workers × four image variants = up to 12 passes per frame.
-      //   PSM 4  — single column of text (perfect for vertical player lists)
-      //   PSM 6  — single uniform text block
-      //   PSM 11 — sparse text (catches names scattered across the region)
-      const { createWorker } = await import('tesseract.js');
-      const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
-      const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => {
-        const w = await createWorker('eng');
-        await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm });
-        return w;
-      }));
+        // OCR via tesseract.js — three workers × four image variants = up to 12 passes per frame.
+        //   PSM 4  — single column of text (perfect for vertical player lists)
+        //   PSM 6  — single uniform text block
+        //   PSM 11 — sparse text (catches names scattered across the region)
+        const { createWorker } = await import('tesseract.js');
+        const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
+        const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => {
+          const w = await createWorker('eng');
+          await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm });
+          return w;
+        }));
 
-      const allText = [];
-      for (const imgPath of imagePaths) {
-        for (const w of [wPSM4, wPSM6, wPSM11]) {
-          try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) allText.push(text); } catch {}
+        const allText = [];
+        for (const imgPath of imagePaths) {
+          for (const w of [wPSM4, wPSM6, wPSM11]) {
+            try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) allText.push(text); } catch {}
+          }
         }
-      }
-      await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
+        await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
 
-      // Cleanup every temp file
-      try { fs.unlinkSync(tmpInput); } catch {}
-      for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
+        // Cleanup every temp file
+        try { fs.unlinkSync(tmpInput); } catch {}
+        for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
 
-      // Extract candidate Roblox usernames from all OCR passes combined.
-      // Min 3 chars — Roblox allows usernames as short as 3 characters.
-      // The Roblox API batch-lookup acts as the real filter; noise gets dropped there.
-      const combinedText = allText.join('\n');
-      const tokens = combinedText.split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
-      const candidates = [...new Set(
-        tokens
-          .map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim())
-          .filter(w => w.length >= 3 && w.length <= 20
-                    && /^[a-zA-Z0-9]/.test(w)
-                    && /[a-zA-Z0-9]$/.test(w))
-      )];
+        // Extract candidate Roblox usernames from all OCR passes combined.
+        // Min 3 chars — Roblox allows usernames as short as 3 characters.
+        // The Roblox API batch-lookup acts as the real filter; noise gets dropped there.
+        const combinedText = allText.join('\n');
+        const tokens = combinedText.split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
+        const candidates = [...new Set(
+          tokens
+            .map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim())
+            .filter(w => w.length >= 3 && w.length <= 20
+                      && /^[a-zA-Z0-9]/.test(w)
+                      && /[a-zA-Z0-9]$/.test(w))
+        )];
 
-      if (!candidates.length) {
-        return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
-      }
+        if (!candidates.length) {
+          return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
+        }
 
-      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
 
-      // Verify names against Roblox API (batch of 100)
-      const verified = [];
-      for (let i = 0; i < candidates.length; i += 100) {
-        try {
-          const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ usernames: candidates.slice(i, i + 100), excludeBannedUsers: false })
-          })).json();
-          if (res.data) verified.push(...res.data);
-        } catch {}
-      }
-
-      if (!verified.length) {
-        return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("none of the detected names matched real Roblox users — try a clearer screenshot")] });
-      }
-
-      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verified.length}** Roblox user${verified.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
-
-      // For each Roblox user, check local verify data first, then fall back to RoVer.
-      // Only post users who have a linked Discord account (in linked_verified.json or RoVer).
-      const localVerify = loadVerify();
-      let posted = 0;
-      for (const robloxUser of verified) {
-        let discordId = null;
-
-        // Check local link first
-        const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
-        if (localDiscordId) {
-          discordId = localDiscordId;
-        } else {
-          // Fall back to RoVer
+        // Verify names against Roblox API (batch of 100)
+        const verified = [];
+        for (let i = 0; i < candidates.length; i += 100) {
           try {
-            const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json();
-            if (rover.status === 'ok' && rover.discordId) {
-              discordId = rover.discordId;
-            }
+            const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ usernames: candidates.slice(i, i + 100), excludeBannedUsers: false })
+            })).json();
+            if (res.data) verified.push(...res.data);
           } catch {}
         }
 
-        if (discordId) {
-          // Linked user → post to the main queue channel
-          const attendEmbed = new EmbedBuilder()
-            .setColor(0x8B0000)
-            .setTitle('USER ATTENDED THIS RAID')
-            .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
-            .addFields(
-              { name: 'Discord', value: `<@${discordId}>`, inline: false },
-              { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
-            )
-            .setTimestamp()
-            .setFooter({ text: getBotName(), iconURL: LOGO_URL });
-
-          await qCh.send({ embeds: [attendEmbed] });
-          posted++;
-        } else if (ulCh) {
-          // Unlinked user → post to the unlinked attendance channel
-          const ulEmbed = new EmbedBuilder()
-            .setColor(0x8B0000)
-            .setTitle('UNLINKED USER ATTENDED THIS RAID')
-            .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
-            .addFields(
-              { name: 'Discord', value: '*(not linked)*', inline: false },
-              { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
-            )
-            .setTimestamp()
-            .setFooter({ text: getBotName(), iconURL: LOGO_URL });
-
-          await ulCh.send({ embeds: [ulEmbed] });
+        if (!verified.length) {
+          return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("none of the detected names matched real Roblox users — try a clearer screenshot")] });
         }
 
-        // small delay to avoid rate limits
-        await new Promise(r => setTimeout(r, 300));
-      }
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verified.length}** Roblox user${verified.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
 
-      const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : '';
-      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
+        // For each Roblox user, check local verify data first, then fall back to RoVer.
+        const localVerify = loadVerify();
+        let posted = 0;
+        for (const robloxUser of verified) {
+          let discordId = null;
+          const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
+          if (localDiscordId) {
+            discordId = localDiscordId;
+          } else {
+            try {
+              const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json();
+              if (rover.status === 'ok' && rover.discordId) discordId = rover.discordId;
+            } catch {}
+          }
+          if (discordId) {
+            // Linked user → post to the main queue channel
+            const attendEmbed = new EmbedBuilder()
+              .setColor(0x8B0000)
+              .setTitle('USER ATTENDED THIS RAID')
+              .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+              .addFields(
+                { name: 'Discord', value: `<@${discordId}>`, inline: false },
+                { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
+              )
+              .setTimestamp()
+              .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+            await qCh.send({ embeds: [attendEmbed] });
+            posted++;
+          } else if (ulCh) {
+            // Unlinked user → post to the unlinked attendance channel
+            const ulEmbed = new EmbedBuilder()
+              .setColor(0x8B0000)
+              .setTitle('UNLINKED USER ATTENDED THIS RAID')
+              .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+              .addFields(
+                { name: 'Discord', value: '*(not linked)*', inline: false },
+                { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
+              )
+              .setTimestamp()
+              .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+            await ulCh.send({ embeds: [ulEmbed] });
+          }
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : '';
+        return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
+      }
 
     } catch (err) {
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}\n\nmake sure \`tesseract.js\` is installed (\`npm install tesseract.js\`)`)] });
