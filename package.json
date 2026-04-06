@@ -1,14 +1,20 @@
 {
-  "name": "@workspace/discord-bot",
+  "name": "mtxx-bot",
   "version": "1.0.0",
+  "description": "MTXX Discord raid attendance bot",
   "type": "module",
-  "private": true,
+  "main": "bot.js",
   "scripts": {
-    "dev": "node bot.js",
     "start": "node bot.js"
   },
   "dependencies": {
-    "discord.js": "^14.16.3",
-    "ffmpeg-static": "^5.2.0"
+    "canvas": "^2.11.2",
+    "discord.js": "^14.18.0",
+    "ffmpeg-static": "^5.2.0",
+    "gifencoder": "^2.0.1",
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
