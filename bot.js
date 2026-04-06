@@ -307,8 +307,11 @@ async function extractUsernamesVision(imagePath) {
 }
 
 // Shared scan runner used by both slash and prefix scan commands.
+// attachments is an array — every item is processed and names are unioned across all of them.
 // editFn(descriptionText) updates the status message shown to the user.
-async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
+async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
+  if (!Array.isArray(attachments)) attachments = [attachments]
+  attachments = attachments.filter(Boolean)
   const { tmpdir } = await import('os')
   const { extname: _ext, join } = await import('path')
   const { spawnSync } = await import('child_process')
@@ -329,82 +332,84 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
     return fs.existsSync(dest) ? dest : srcPath
   }
 
-  const ext = _ext(attachment.name || '').toLowerCase() || '.png'
-  const isVideo = ['.mp4', '.mov', '.webm', '.avi', '.mkv'].includes(ext)
-  const tmpInput = join(tmpdir(), `scan_${Date.now()}${ext}`)
-  const tmpFiles = [tmpInput]
+  const globalNameSet = new Set()
+  const allTmpFiles = []
 
-  const dlRes = await fetch(attachment.url)
-  fs.writeFileSync(tmpInput, Buffer.from(await dlRes.arrayBuffer()))
+  for (let aIdx = 0; aIdx < attachments.length; aIdx++) {
+    const attachment = attachments[aIdx]
+    const label = attachments.length > 1 ? ` (file ${aIdx + 1}/${attachments.length})` : ''
 
-  let allNames = []
+    const ext = _ext(attachment.name || '').toLowerCase() || '.png'
+    const isVideo = ['.mp4', '.mov', '.webm', '.avi', '.mkv'].includes(ext)
+    const tmpInput = join(tmpdir(), `scan_${Date.now()}_${aIdx}${ext}`)
+    allTmpFiles.push(tmpInput)
 
-  if (isVideo) {
-    // Get duration using ffmpeg -i (parses Duration from stderr output)
-    let duration = 30
-    try {
-      const probe = spawnSync(ffmpegBin, ['-i', tmpInput], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] })
-      const match = (probe.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
-      if (match) {
-        duration = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3])
-      }
-    } catch {}
+    const dlRes = await fetch(attachment.url)
+    fs.writeFileSync(tmpInput, Buffer.from(await dlRes.arrayBuffer()))
 
-    // Sample a frame every 0.5 seconds so fast scrolling through the player list never skips anyone
-    const FRAME_INTERVAL = 0.5
-    const maxFrames = Math.min(60, Math.max(1, Math.ceil(duration / FRAME_INTERVAL)))
-    const step = duration / maxFrames
-    const times = []
-    for (let i = 0; i < maxFrames; i++) times.push(+(i * step).toFixed(2))
+    if (isVideo) {
+      // Get duration using ffmpeg -i (parses Duration from stderr output)
+      let duration = 30
+      try {
+        const probe = spawnSync(ffmpegBin, ['-i', tmpInput], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] })
+        const match = (probe.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
+        if (match) {
+          duration = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3])
+        }
+      } catch {}
 
-    // Extract each frame via ffmpeg, then upscale it 3x for the vision model
-    const frameFiles = []
-    for (const ts of times) {
-      const fp = join(tmpdir(), `scan_f_${Date.now()}_${ts}.png`)
-      spawnSync(ffmpegBin, ['-ss', String(ts), '-i', tmpInput, '-frames:v', '1', fp, '-y'], { stdio: 'ignore' })
-      if (fs.existsSync(fp)) {
-        tmpFiles.push(fp)
-        const upscaled = upscaleImage(fp)
-        if (upscaled !== fp) tmpFiles.push(upscaled)
-        frameFiles.push(upscaled)
-      }
-    }
+      // Sample a frame every 0.5 seconds so fast scrolling through the player list never skips anyone
+      const FRAME_INTERVAL = 0.5
+      const maxFrames = Math.min(60, Math.max(1, Math.ceil(duration / FRAME_INTERVAL)))
+      const step = duration / maxFrames
+      const times = []
+      for (let i = 0; i < maxFrames; i++) times.push(+(i * step).toFixed(2))
 
-    if (!frameFiles.length) throw new Error('could not extract frames from the video — make sure it is a valid mp4/mov file')
-
-    // Run 3 vision passes per frame and union everything — catches names the AI misses in a single pass
-    const nameSet = new Set()
-    let lastErr = null
-    for (let i = 0; i < frameFiles.length; i++) {
-      await editFn(`scanning video — frame ${i + 1}/${frameFiles.length}...`)
-      for (let pass = 0; pass < 3; pass++) {
-        try {
-          const names = await extractUsernamesVision(frameFiles[i])
-          for (const n of names) nameSet.add(n)
-        } catch (e) {
-          lastErr = e
+      // Extract each frame via ffmpeg, then upscale it 3x for the vision model
+      const frameFiles = []
+      for (const ts of times) {
+        const fp = join(tmpdir(), `scan_f_${Date.now()}_${aIdx}_${ts}.png`)
+        spawnSync(ffmpegBin, ['-ss', String(ts), '-i', tmpInput, '-frames:v', '1', fp, '-y'], { stdio: 'ignore' })
+        if (fs.existsSync(fp)) {
+          allTmpFiles.push(fp)
+          const upscaled = upscaleImage(fp)
+          if (upscaled !== fp) allTmpFiles.push(upscaled)
+          frameFiles.push(upscaled)
         }
       }
-    }
-    // If every call failed (e.g. bad API key), surface the real error
-    if (nameSet.size === 0 && lastErr) throw lastErr
-    allNames = [...nameSet]
 
-  } else {
-    // Upscale the image 3x before scanning so small player-list text is readable without manual zoom
-    await editFn('reading image...')
-    const upscaled = upscaleImage(tmpInput)
-    if (upscaled !== tmpInput) tmpFiles.push(upscaled)
-    const nameSet = new Set()
-    for (let pass = 0; pass < 3; pass++) {
-      const names = await extractUsernamesVision(upscaled)
-      for (const n of names) nameSet.add(n)
+      if (!frameFiles.length) throw new Error(`could not extract frames from video ${aIdx + 1} — make sure it is a valid mp4/mov file`)
+
+      // Run 3 vision passes per frame and union everything — catches names the AI misses in a single pass
+      let lastErr = null
+      for (let i = 0; i < frameFiles.length; i++) {
+        await editFn(`scanning video${label} — frame ${i + 1}/${frameFiles.length}...`)
+        for (let pass = 0; pass < 3; pass++) {
+          try {
+            const names = await extractUsernamesVision(frameFiles[i])
+            for (const n of names) globalNameSet.add(n)
+          } catch (e) {
+            lastErr = e
+          }
+        }
+      }
+      if (globalNameSet.size === 0 && lastErr) throw lastErr
+
+    } else {
+      // Upscale the image 3x before scanning so small player-list text is readable without manual zoom
+      await editFn(`reading image${label}...`)
+      const upscaled = upscaleImage(tmpInput)
+      if (upscaled !== tmpInput) allTmpFiles.push(upscaled)
+      for (let pass = 0; pass < 3; pass++) {
+        const names = await extractUsernamesVision(upscaled)
+        for (const n of names) globalNameSet.add(n)
+      }
     }
-    allNames = [...nameSet]
   }
 
-  for (const f of tmpFiles) { try { fs.unlinkSync(f) } catch {} }
+  for (const f of allTmpFiles) { try { fs.unlinkSync(f) } catch {} }
 
+  const allNames = [...globalNameSet]
   if (!allNames.length) throw new Error("couldn't find any usernames — make sure the player list is clearly visible")
 
   await editFn(`found **${allNames.length}** name${allNames.length !== 1 ? 's' : ''}, verifying on Roblox...`)
@@ -1160,9 +1165,13 @@ const slashCommands = [
   // ── attendance / scan commands ────────────────────────────────────────────
   new SlashCommandBuilder().setName('rc').setDescription('clear all non-pinned messages in the channel (raid clear)')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
-  new SlashCommandBuilder().setName('scan').setDescription('scan a screenshot or video of the player list for raid attendance')
+  new SlashCommandBuilder().setName('scan').setDescription('scan one or more screenshots/videos of the player list for raid attendance')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addAttachmentOption(o => o.setName('file').setDescription('screenshot or video of the in-game player list').setRequired(true)),
+    .addAttachmentOption(o => o.setName('file').setDescription('screenshot or video of the in-game player list').setRequired(true))
+    .addAttachmentOption(o => o.setName('file2').setDescription('additional screenshot or video').setRequired(false))
+    .addAttachmentOption(o => o.setName('file3').setDescription('additional screenshot or video').setRequired(false))
+    .addAttachmentOption(o => o.setName('file4').setDescription('additional screenshot or video').setRequired(false))
+    .addAttachmentOption(o => o.setName('file5').setDescription('additional screenshot or video').setRequired(false)),
   new SlashCommandBuilder().setName('whoisin').setDescription('see which MTXX group members are currently in a Roblox game')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('game').setDescription('Roblox game URL or place ID').setRequired(true)),
@@ -3173,8 +3182,10 @@ client.on('interactionCreate', async interaction => {
   // ── scan ─────────────────────────────────────────────────────────────────
   if (commandName === 'scan') {
     if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
-    const attachment = interaction.options.getAttachment('file');
-    if (!attachment) return interaction.reply({ content: 'attach a screenshot or video of the player list', ephemeral: true });
+    const attachmentList = ['file', 'file2', 'file3', 'file4', 'file5']
+      .map(k => interaction.options.getAttachment(k))
+      .filter(Boolean);
+    if (!attachmentList.length) return interaction.reply({ content: 'attach at least one screenshot or video of the player list', ephemeral: true });
     const queueData = loadQueue();
     const qCh = (queueData[guild.id]?.channelId ? guild.channels.cache.get(queueData[guild.id].channelId) : null) ?? channel;
     const ulCh = queueData[guild.id]?.ulChannelId ? (guild.channels.cache.get(queueData[guild.id].ulChannelId) ?? null) : null;
@@ -3182,7 +3193,7 @@ client.on('interactionCreate', async interaction => {
     await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning for raid members...')] });
     const editFn = (desc) => interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(desc)] });
     try {
-      const result = await runScanCommand(attachment, guild, qCh, ulCh, editFn);
+      const result = await runScanCommand(attachmentList, guild, qCh, ulCh, editFn);
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(result)] });
     } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}`)] }); }
   }
@@ -5736,9 +5747,9 @@ client.on('messageCreate', async message => {
   // Video frame extraction requires ffmpeg to be installed on the host.
   if (command === 'scan') {
     if (!message.guild) return;
-    const attachment = message.attachments.first();
-    if (!attachment)
-      return message.reply(`attach a screenshot or video showing the player list, e.g. \`${prefix}scan\` with an image`);
+    const attachmentList = [...message.attachments.values()];
+    if (!attachmentList.length)
+      return message.reply(`attach one or more screenshots/videos showing the player list, e.g. \`${prefix}scan\` with images`);
 
     const queueData = loadQueue();
     const queueChannelId = queueData[message.guild.id]?.channelId;
@@ -5756,7 +5767,7 @@ client.on('messageCreate', async message => {
     const editFn = (desc) => status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(desc)] });
 
     try {
-      const result = await runScanCommand(attachment, message.guild, qCh, ulCh, editFn);
+      const result = await runScanCommand(attachmentList, message.guild, qCh, ulCh, editFn);
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(result)] });
     } catch (err) {
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}`)] });
