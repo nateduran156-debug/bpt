@@ -452,17 +452,15 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
         frameFiles.push(upscaled)
       }
 
-      // Run 3 vision passes per frame and union everything — catches names the AI misses in a single pass
+      // One OCR pass per frame — OCR is deterministic so repeating gives the same result
       let lastErr = null
       for (let i = 0; i < frameFiles.length; i++) {
         await editFn(`scanning video${label} — frame ${i + 1}/${frameFiles.length}...`)
-        for (let pass = 0; pass < 3; pass++) {
-          try {
-            const names = await extractUsernamesVision(frameFiles[i])
-            for (const n of names) globalNameSet.add(n)
-          } catch (e) {
-            lastErr = e
-          }
+        try {
+          const names = await extractUsernamesVision(frameFiles[i])
+          for (const n of names) globalNameSet.add(n)
+        } catch (e) {
+          lastErr = e
         }
       }
       if (globalNameSet.size === 0 && lastErr) throw lastErr
@@ -472,10 +470,8 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
       await editFn(`reading image${label}...`)
       const upscaled = upscaleImage(tmpInput)
       if (upscaled !== tmpInput) allTmpFiles.push(upscaled)
-      for (let pass = 0; pass < 3; pass++) {
-        const names = await extractUsernamesVision(upscaled)
-        for (const n of names) globalNameSet.add(n)
-      }
+      const names = await extractUsernamesVision(upscaled)
+      for (const n of names) globalNameSet.add(n)
     }
   }
 
@@ -499,12 +495,43 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
 
   if (!verifiedUsers.length) throw new Error("none of the detected names matched real Roblox users — try a clearer image")
 
-  await editFn(`verified **${verifiedUsers.length}** Roblox user${verifiedUsers.length !== 1 ? 's' : ''}, looking up Discord accounts...`)
+  // ── Group membership filter ────────────────────────────────────────────────
+  // Only log users who are members of group 206868002. Skip everyone else.
+  const SCAN_REQUIRED_GROUP = 206868002
+
+  async function isInGroup(robloxUserId) {
+    try {
+      const res = await fetch(`https://groups.roblox.com/v1/users/${robloxUserId}/groups/roles`)
+      const data = await res.json()
+      if (!Array.isArray(data.data)) return false
+      return data.data.some(entry => entry.group?.id === SCAN_REQUIRED_GROUP)
+    } catch {
+      return false
+    }
+  }
+
+  await editFn(`verified **${verifiedUsers.length}** Roblox user${verifiedUsers.length !== 1 ? 's' : ''}, checking group membership...`)
+
+  // Filter to only group members first, in parallel batches of 10
+  const groupMembers = []
+  for (let i = 0; i < verifiedUsers.length; i += 10) {
+    const batch = verifiedUsers.slice(i, i + 10)
+    const results = await Promise.all(batch.map(async u => ({ user: u, inGroup: await isInGroup(u.id) })))
+    for (const { user, inGroup } of results) {
+      if (inGroup) groupMembers.push(user)
+    }
+  }
+
+  if (!groupMembers.length) {
+    return `scan complete — no users from group https://www.roblox.com/communities/206868002 were found in the video`
+  }
+
+  await editFn(`**${groupMembers.length}** group member${groupMembers.length !== 1 ? 's' : ''} found, looking up Discord accounts...`)
 
   const localVerify = loadVerify()
   let posted = 0
 
-  for (const robloxUser of verifiedUsers) {
+  for (const robloxUser of groupMembers) {
     let discordId = null
     const localId = localVerify.robloxToDiscord?.[String(robloxUser.id)]
     if (localId) {
