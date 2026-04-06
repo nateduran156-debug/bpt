@@ -267,6 +267,27 @@ function isWlManager(userId) {
 
 const getPrefix = () => loadConfig().prefix || '.'
 
+// ─── Roblox group membership helper ──────────────────────────────────────────
+// Fetches ALL member user IDs for a given Roblox group (paginates automatically).
+// Returns a Set<string> of roblox user IDs that belong to the group.
+async function fetchGroupMemberIds(groupId) {
+  const memberIds = new Set();
+  let cursor = '';
+  do {
+    try {
+      const url = `https://groups.roblox.com/v1/groups/${groupId}/users?limit=100&sortOrder=Asc${cursor ? `&cursor=${cursor}` : ''}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      for (const entry of (json.data || [])) {
+        if (entry?.user?.userId) memberIds.add(String(entry.user.userId));
+      }
+      cursor = json.nextPageCursor || '';
+    } catch { break; }
+  } while (cursor);
+  return memberIds;
+}
+const ATTEND_GROUP_ID = '206868002';
+
 // ─── OCR-based username extraction (no API key required) ─────────────────────
 // Uses sharp for image preprocessing and tesseract.js for OCR to extract
 // Roblox usernames from player list panels. No AI key needed.
@@ -3773,10 +3794,12 @@ client.on('interactionCreate', async interaction => {
       const vData = loadVerify();
       const allRegistered = Object.entries(vData.verified || {});
       if (!allRegistered.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('no registered members to check')] });
-      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is in **${gameName}** — checking ${allRegistered.length} registered members...`)] });
-      const allRobloxIds = allRegistered.map(([, v]) => v.robloxId);
+      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is in **${gameName}** — fetching group members & checking presence...`)] });
+      // Only include users who are members of the required Roblox group
+      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
+      const allRegisteredInGroup = allRegistered.filter(([, v]) => groupMembers.has(String(v.robloxId)));
+      const allRobloxIds = allRegisteredInGroup.map(([, v]) => v.robloxId);
       const inSameServer = [];
-      const inQueue = [];
       for (let i = 0; i < allRobloxIds.length; i += 50) {
         try {
           const batch = allRobloxIds.slice(i, i + 50);
@@ -3787,23 +3810,34 @@ client.on('interactionCreate', async interaction => {
           for (const p of (bRes.userPresences || [])) {
             if (String(p.userId) === String(targetUser.id)) continue;
             const discordId = vData.robloxToDiscord?.[String(p.userId)];
-            const robloxName = allRegistered.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
+            const robloxName = allRegisteredInGroup.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
             if (p.gameId === gameId) {
               inSameServer.push({ discordId, robloxName });
-            } else if (p.userPresenceType === 1 || p.userPresenceType === 2 || p.userPresenceType === 3) {
-              inQueue.push({ discordId, robloxName });
             }
           }
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
+      // Post attendance embeds to the attendance channel for everyone in the same server
+      const queueData = loadQueue();
+      const queueChannelId = queueData[guild.id]?.channelId;
+      const queueChannel = queueChannelId ? (guild.channels.cache.get(queueChannelId) ?? null) : null;
+      if (queueChannel && inSameServer.length) {
+        for (const { discordId, robloxName } of inSameServer) {
+          await queueChannel.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+            .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+            .addFields({ name: 'Discord', value: discordId ? `<@${discordId}>` : '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
+            .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
       const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\``;
-      const ingameSection = inSameServer.length ? `**In-game (${inSameServer.length})**\n${inSameServer.map(formatLine).join('\n')}` : '**In-game** — none';
-      const queueSection = inQueue.length ? `**In queue (${inQueue.length})**\n${inQueue.map(formatLine).join('\n')}` : '**In queue** — none';
+      const ingameSection = inSameServer.length ? `**In same server (${inSameServer.length})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
+      const attendNote = queueChannel && inSameServer.length ? `\n\n*logged ${inSameServer.length} member${inSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
-        .setDescription(`${ingameSection}\n\n${queueSection}`)
-        .setFooter({ text: `${allRegistered.length} registered members checked • looking up ${targetUser.name}'s server` })
+        .setDescription(`${ingameSection}${attendNote}`)
+        .setFooter({ text: `${allRegisteredInGroup.length} registered group members checked • looking up ${targetUser.name}'s server` })
         .setTimestamp()] });
     } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ingame failed — ${err.message}`)] }); }
   }
@@ -6234,10 +6268,12 @@ client.on('messageCreate', async message => {
       const vData = loadVerify();
       const allRegistered = Object.entries(vData.verified || {});
       if (!allRegistered.length) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('no registered members to check')] });
-      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is in **${gameName}** — checking ${allRegistered.length} registered members...`)] });
-      const allRobloxIds = allRegistered.map(([, v]) => v.robloxId);
+      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is in **${gameName}** — fetching group members & checking presence...`)] });
+      // Only include users who are members of the required Roblox group
+      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
+      const allRegisteredInGroup = allRegistered.filter(([, v]) => groupMembers.has(String(v.robloxId)));
+      const allRobloxIds = allRegisteredInGroup.map(([, v]) => v.robloxId);
       const inSameServer = [];
-      const inQueue = [];
       for (let i = 0; i < allRobloxIds.length; i += 50) {
         try {
           const batch = allRobloxIds.slice(i, i + 50);
@@ -6248,23 +6284,20 @@ client.on('messageCreate', async message => {
           for (const p of (bRes.userPresences || [])) {
             if (String(p.userId) === String(targetUser.id)) continue;
             const discordId = vData.robloxToDiscord?.[String(p.userId)];
-            const robloxName = allRegistered.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
+            const robloxName = allRegisteredInGroup.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
             if (p.gameId === gameId) {
               inSameServer.push({ discordId, robloxName });
-            } else if (p.userPresenceType === 1 || p.userPresenceType === 2 || p.userPresenceType === 3) {
-              inQueue.push({ discordId, robloxName });
             }
           }
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
-      // Post attendance embeds to the queue channel for everyone found
+      // Post attendance embeds to the queue channel for everyone in the same server
       const queueData = loadQueue();
       const queueChannelId = queueData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? (message.guild.channels.cache.get(queueChannelId) ?? null) : null;
-      const allFound = [...inSameServer, ...inQueue];
-      if (queueChannel && allFound.length) {
-        for (const { discordId, robloxName } of allFound) {
+      if (queueChannel && inSameServer.length) {
+        for (const { discordId, robloxName } of inSameServer) {
           await queueChannel.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
             .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
             .addFields({ name: 'Discord', value: discordId ? `<@${discordId}>` : '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
@@ -6273,13 +6306,12 @@ client.on('messageCreate', async message => {
         }
       }
       const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\``;
-      const ingameSection = inSameServer.length ? `**In-game (${inSameServer.length})**\n${inSameServer.map(formatLine).join('\n')}` : '**In-game** — none';
-      const queueSection = inQueue.length ? `**In queue (${inQueue.length})**\n${inQueue.map(formatLine).join('\n')}` : '**In queue** — none';
-      const attendNote = queueChannel && allFound.length ? `\n\n*logged ${allFound.length} member${allFound.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
+      const ingameSection = inSameServer.length ? `**In same server (${inSameServer.length})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
+      const attendNote = queueChannel && inSameServer.length ? `\n\n*logged ${inSameServer.length} member${inSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
-        .setDescription(`${ingameSection}\n\n${queueSection}${attendNote}`)
-        .setFooter({ text: `${allRegistered.length} registered members checked` })
+        .setDescription(`${ingameSection}${attendNote}`)
+        .setFooter({ text: `${allRegisteredInGroup.length} registered group members checked` })
         .setTimestamp()] });
     } catch (err) { return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ingame failed — ${err.message}`)] }); }
   }
