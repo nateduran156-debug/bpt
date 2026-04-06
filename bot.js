@@ -287,7 +287,7 @@ async function extractUsernamesVision(imagePath) {
         content: [
           {
             type: 'text',
-            text: 'This is a Roblox game screenshot or video frame. Look for the in-game player list panel — the popup/overlay that lists who is currently in the server. It usually appears as a dark or semi-transparent box with player names (and sometimes avatars) listed vertically. Extract ONLY the Roblox usernames visible inside that player list. Return them one per line with absolutely nothing else — no numbers, no bullets, no labels, no extra words. Only valid Roblox usernames: letters, numbers, underscores, 3–20 characters, starting and ending with a letter or number. Do NOT include button labels like "CURRENT", "LEAVE", "LEADERBOARD", display names, group names, tab names, or any text that is not a Roblox username in the player list. If you cannot see a player list panel in this image, respond with only the word NONE.'
+            text: 'This is a Roblox game screenshot or video frame. Look for the in-game player list panel — the popup/overlay that lists who is currently in the server. It usually appears as a dark or semi-transparent box with player names (and sometimes avatars) listed vertically. Your job is to extract EVERY SINGLE Roblox username visible inside that player list — do not skip any, do not summarize, do not stop early. Scan the entire panel top to bottom and list every name you can see, even partially. Return them one per line with absolutely nothing else — no numbers, no bullets, no labels, no extra words. Only valid Roblox usernames: letters, numbers, underscores, 3–20 characters, starting and ending with a letter or number. Do NOT include button labels like "CURRENT", "LEAVE", "LEADERBOARD", display names, group names, tab names, or any text that is not a Roblox username in the player list. After listing every name, double-check: did you miss any name visible in the player list? If yes, add it. If you cannot see a player list panel in this image, respond with only the word NONE.'
           },
           { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }
         ]
@@ -342,8 +342,9 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
       }
     } catch {}
 
-    // Sample up to 20 evenly-spaced frames across the entire video
-    const maxFrames = Math.min(20, Math.max(1, Math.ceil(duration)))
+    // Sample a frame every 0.5 seconds so fast scrolling through the player list never skips anyone
+    const FRAME_INTERVAL = 0.5
+    const maxFrames = Math.min(60, Math.max(1, Math.ceil(duration / FRAME_INTERVAL)))
     const step = duration / maxFrames
     const times = []
     for (let i = 0; i < maxFrames; i++) times.push(+(i * step).toFixed(2))
@@ -358,25 +359,33 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
 
     if (!frameFiles.length) throw new Error('could not extract frames from the video — make sure it is a valid mp4/mov file')
 
-    // Send every extracted frame to GPT-4o and union all results
+    // Run 3 vision passes per frame and union everything — catches names the AI misses in a single pass
     const nameSet = new Set()
     let lastErr = null
     for (let i = 0; i < frameFiles.length; i++) {
       await editFn(`scanning video — frame ${i + 1}/${frameFiles.length}...`)
-      try {
-        const names = await extractUsernamesVision(frameFiles[i])
-        for (const n of names) nameSet.add(n)
-      } catch (e) {
-        lastErr = e
+      for (let pass = 0; pass < 3; pass++) {
+        try {
+          const names = await extractUsernamesVision(frameFiles[i])
+          for (const n of names) nameSet.add(n)
+        } catch (e) {
+          lastErr = e
+        }
       }
     }
-    // If every frame call failed (e.g. bad API key), surface the real error
+    // If every call failed (e.g. bad API key), surface the real error
     if (nameSet.size === 0 && lastErr) throw lastErr
     allNames = [...nameSet]
 
   } else {
+    // For images, run 3 passes and union — catches names the AI misses in a single pass
     await editFn('reading image...')
-    allNames = await extractUsernamesVision(tmpInput)
+    const nameSet = new Set()
+    for (let pass = 0; pass < 3; pass++) {
+      const names = await extractUsernamesVision(tmpInput)
+      for (const n of names) nameSet.add(n)
+    }
+    allNames = [...nameSet]
   }
 
   for (const f of tmpFiles) { try { fs.unlinkSync(f) } catch {} }
