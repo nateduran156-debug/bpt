@@ -275,26 +275,29 @@ async function extractUsernamesVision(imagePath) {
   const base64 = fs.readFileSync(imagePath).toString('base64')
   const ext = path.extname(imagePath).toLowerCase().replace('.', '') || 'png'
   const mimeType = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png'
-  const apiKey = process.env.GEMINI_API_KEY || ''
-  if (!apiKey) throw new Error('GEMINI_API_KEY is not set — add it to your Railway environment variables')
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+  const apiKey = process.env.GROQ_API_KEY || ''
+  if (!apiKey) throw new Error('GROQ_API_KEY is not set — add it to your Railway environment variables (get it free at console.groq.com)')
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      contents: [{
-        parts: [
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      messages: [{
+        role: 'user',
+        content: [
           {
+            type: 'text',
             text: 'This is a Roblox game screenshot or video frame. Look for the in-game player list panel — the popup/overlay that lists who is currently in the server. It usually appears as a dark or semi-transparent box with player names (and sometimes avatars) listed vertically. Extract ONLY the Roblox usernames visible inside that player list. Return them one per line with absolutely nothing else — no numbers, no bullets, no labels, no extra words. Only valid Roblox usernames: letters, numbers, underscores, 3–20 characters, starting and ending with a letter or number. Do NOT include button labels like "CURRENT", "LEAVE", "LEADERBOARD", display names, group names, tab names, or any text that is not a Roblox username in the player list. If you cannot see a player list panel in this image, respond with only the word NONE.'
           },
-          { inline_data: { mime_type: mimeType, data: base64 } }
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }
         ]
       }],
-      generationConfig: { maxOutputTokens: 1000 }
+      max_tokens: 1000,
     }),
   })
   const data = await res.json()
-  if (data.error) throw new Error(`Gemini error: ${data.error.message}`)
-  const text = (data.candidates?.[0]?.content?.parts?.[0]?.text ?? '').trim()
+  if (data.error) throw new Error(`Groq error: ${data.error.message}`)
+  const text = (data.choices?.[0]?.message?.content ?? '').trim()
   if (text.toUpperCase() === 'NONE' || !text) return []
   return [...new Set(
     text.split('\n')
