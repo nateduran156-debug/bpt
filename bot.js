@@ -981,6 +981,9 @@ const slashCommands = [
   new SlashCommandBuilder().setName('scan').setDescription('scan a screenshot or video of the player list for raid attendance')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addAttachmentOption(o => o.setName('file').setDescription('screenshot or video of the in-game player list').setRequired(true)),
+  new SlashCommandBuilder().setName('whoisin').setDescription('see which MTXX group members are currently in a Roblox game')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addStringOption(o => o.setName('game').setDescription('Roblox game URL or place ID').setRequired(true)),
   new SlashCommandBuilder().setName('attend').setDescription('manually log a Discord user as attending a raid')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('Discord member').setRequired(true))
@@ -3089,20 +3092,28 @@ client.on('interactionCreate', async interaction => {
         };
 
         // PASS 1: frames at 0.0 s, 0.5 s, 1.0 s, ...
-        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 1 of 2...')] });
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 1 of 3...')] });
         const candidates1 = await runPass(0);
-        // PASS 2: frames at 0.25 s, 0.75 s, 1.25 s, ... (staggered 0.25 s)
-        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 2 of 2...')] });
-        const candidates2 = await runPass(0.25);
+        // PASS 2: frames at 0.167 s, 0.667 s, 1.167 s, ...
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 2 of 3...')] });
+        const candidates2 = await runPass(0.167);
+        // PASS 3: frames at 0.333 s, 0.833 s, 1.333 s, ...
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 3 of 3...')] });
+        const candidates3 = await runPass(0.333);
 
         await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
         try { fs.unlinkSync(tmpInput); } catch {}
         for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
 
-        // Only keep names confirmed in BOTH passes — eliminates single-frame OCR noise/false positives
-        const confirmed = [...candidates1].filter(c => candidates2.has(c));
-        if (!confirmed.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't confirm any usernames across both video passes — make sure the player list is clearly visible throughout the recording")] });
-        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`confirmed **${confirmed.length}** name${confirmed.length !== 1 ? 's' : ''} across both video passes, verifying on Roblox...`)] });
+        // Majority vote across 3 passes: must appear in at least 2 of 3 to be confirmed.
+        // 2 or 3 passes confirmed → send  |  0 or 1 pass confirmed → skip (noise/false positive)
+        const allVideoNames = new Set([...candidates1, ...candidates2, ...candidates3]);
+        const confirmed = [...allVideoNames].filter(c => {
+          const votes = (candidates1.has(c) ? 1 : 0) + (candidates2.has(c) ? 1 : 0) + (candidates3.has(c) ? 1 : 0);
+          return votes >= 2;
+        });
+        if (!confirmed.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't confirm any usernames across 3 video passes — make sure the player list is clearly visible throughout the recording")] });
+        await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`confirmed **${confirmed.length}** name${confirmed.length !== 1 ? 's' : ''} across 3 video passes, verifying on Roblox...`)] });
 
         const verifiedUsers = [];
         for (let i2 = 0; i2 < confirmed.length; i2 += 100) { try { const res = await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: confirmed.slice(i2, i2 + 100), excludeBannedUsers: false }) })).json(); if (res.data) verifiedUsers.push(...res.data); } catch {} }
@@ -3163,6 +3174,88 @@ client.on('interactionCreate', async interaction => {
         return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
       }
     } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}`)] }); }
+  }
+
+  // ── whoisin ──────────────────────────────────────────────────────────────
+  if (commandName === 'whoisin') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    const input = interaction.options.getString('game')?.trim();
+    if (!input) return interaction.reply({ content: 'provide a Roblox game URL or place ID', ephemeral: true });
+    await interaction.deferReply();
+    await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('fetching group members and game servers...')] });
+    const WHOISIN_GROUP = 206868002;
+    try {
+      // Parse place ID — supports:
+      //   roblox.com/games/start?placeId=123&gameInstanceId=...
+      //   roblox.com/games/123/game-name
+      //   raw numeric place ID
+      let placeId = null;
+      const qsMatch = input.match(/[?&]place[iI][dD]=(\d+)/i);
+      const pathMatch = input.match(/roblox\.com\/games\/(\d+)/i);
+      if (qsMatch) placeId = qsMatch[1];
+      else if (pathMatch) placeId = pathMatch[1];
+      else if (/^\d+$/.test(input)) placeId = input;
+      if (!placeId) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't parse a place ID — paste a Roblox game URL or server link, e.g. `roblox.com/games/start?placeId=123&gameInstanceId=...`")] });
+
+      // Resolve place ID → universe ID
+      const placeDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`)).json();
+      const universeId = placeDetail?.data?.[0]?.universeId;
+      if (!universeId) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find a game for place ID \`${placeId}\` — make sure the game exists and is public`)] });
+
+      // Get game name
+      let gameName = `Place ${placeId}`;
+      try { const gr = await (await fetch(`https://games.roblox.com/v1/games?universeIds=${universeId}`)).json(); if (gr?.data?.[0]?.name) gameName = gr.data[0].name; } catch {}
+
+      // Load all group members (paginated)
+      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('loading group members...')] });
+      const memberIds = new Set();
+      const memberNames = {};
+      let cur = '';
+      do {
+        try {
+          const res = await (await fetch(`https://members.roblox.com/v1/groups/${WHOISIN_GROUP}/users?limit=100&sortOrder=Asc${cur ? `&cursor=${cur}` : ''}`)).json();
+          for (const m of (res.data || [])) { memberIds.add(m.user.userId); memberNames[m.user.userId] = m.user.username; }
+          cur = res.nextPageCursor || '';
+        } catch { cur = ''; break; }
+      } while (cur);
+      if (!memberIds.size) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('could not load group members — Roblox API may be unavailable')] });
+
+      // Scan all public servers, collect player tokens
+      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`loaded **${memberIds.size}** group members, scanning servers...`)] });
+      const allTokens = [];
+      let sCur = ''; let serverCount = 0;
+      do {
+        try {
+          const res = await (await fetch(`https://games.roblox.com/v1/games/${universeId}/servers/Public?limit=100${sCur ? `&cursor=${sCur}` : ''}`)).json();
+          for (const srv of (res.data || [])) { serverCount++; for (const p of (srv.players || [])) { if (p.playerToken) allTokens.push(p.playerToken); } }
+          sCur = res.nextPageCursor || '';
+        } catch { sCur = ''; break; }
+      } while (sCur);
+
+      if (!allTokens.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scanned **${serverCount}** server${serverCount !== 1 ? 's' : ''} — no players found (game may be empty or servers private)`)] });
+
+      // Resolve player tokens → Roblox user IDs via thumbnail batch API
+      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`resolving **${allTokens.length}** player${allTokens.length !== 1 ? 's' : ''} across **${serverCount}** server${serverCount !== 1 ? 's' : ''}...`)] });
+      const resolvedIds = new Set();
+      for (let i = 0; i < allTokens.length; i += 100) {
+        try {
+          const batch = allTokens.slice(i, i + 100).map((token, idx) => ({ requestId: `${i + idx}`, token, type: 'AvatarHeadShot', size: '150x150', format: 'png', isCircular: false }));
+          const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch) })).json();
+          for (const item of (res.data || [])) { if (item.targetId && item.targetId !== 0) resolvedIds.add(item.targetId); }
+        } catch {}
+      }
+
+      // Filter to group members only
+      const inGame = [...resolvedIds].filter(id => memberIds.has(id));
+      if (!inGame.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`no group members found in **${gameName}**\n*(checked ${serverCount} server${serverCount !== 1 ? 's' : ''}, ${resolvedIds.size} total player${resolvedIds.size !== 1 ? 's' : ''})*`)] });
+
+      const lines = inGame.map(id => `• \`${memberNames[id] || id}\``).join('\n');
+      return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000)
+        .setTitle(`Group members in ${gameName}`)
+        .setDescription(`**${inGame.length}** group member${inGame.length !== 1 ? 's' : ''} currently in-game:\n\n${lines}`)
+        .setFooter({ text: `${serverCount} server${serverCount !== 1 ? 's' : ''} scanned • group ${WHOISIN_GROUP}` })
+        .setTimestamp()] });
+    } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`whoisin failed — ${err.message}`)] }); }
   }
 
   // ── attend ───────────────────────────────────────────────────────────────
@@ -5095,6 +5188,57 @@ client.on('messageCreate', async message => {
     } catch { return message.reply("something went wrong fetching that user, try again"); }
   }
 
+  // ── .id ───────────────────────────────────────────────────────────────────────
+  // Usage: .id <roblox username>
+  // Shows the player's current game server join link if they are in a game.
+  if (command === 'id') {
+    const input = args[0];
+    if (!input) return message.reply(`usage: \`${prefix}id <roblox username>\``);
+    try {
+      // Resolve username → userId
+      const lookupRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [input], excludeBannedUsers: false })
+      })).json();
+      const robloxUser = lookupRes.data?.[0];
+      if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find a Roblox user named \`${input}\``)] });
+
+      // Check presence
+      const cookie = process.env.ROBLOX_COOKIE;
+      const headers = { 'Content-Type': 'application/json' };
+      if (cookie) headers['Cookie'] = `.ROBLOSECURITY=${cookie}`;
+      const presData = await (await fetch('https://presence.roblox.com/v1/presence/users', {
+        method: 'POST', headers, body: JSON.stringify({ userIds: [robloxUser.id] })
+      })).json();
+      const p = presData.userPresences?.[0];
+
+      const profileUrl = `https://www.roblox.com/users/${robloxUser.id}/profile`;
+      const avatarRes = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUser.id}&size=150x150&format=Png&isCircular=false`)).json().catch(() => ({ data: [] }));
+      const avatarUrl = avatarRes?.data?.[0]?.imageUrl;
+
+      const embed = baseEmbed()
+        .setColor(0x8B0000)
+        .setTitle(`${robloxUser.displayName} (@${robloxUser.name})`)
+        .setURL(profileUrl)
+        .setThumbnail(avatarUrl ?? null);
+
+      if (p?.userPresenceType === 2 && p.placeId && p.gameId) {
+        const joinLink = `https://www.roblox.com/games/start?placeId=${p.placeId}&gameInstanceId=${p.gameId}`;
+        embed.setDescription(`**currently in a game**\n\`\`\`${joinLink}\`\`\``);
+        const joinBtn = new ButtonBuilder().setLabel('JOIN SERVER').setStyle(ButtonStyle.Link).setURL(joinLink);
+        return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(joinBtn)] });
+      } else if (p?.userPresenceType === 1) {
+        embed.setDescription('online on Roblox but not in a game');
+      } else {
+        embed.setDescription('not currently online or in a game');
+      }
+      return message.reply({ embeds: [embed] });
+    } catch (err) {
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`failed to look up \`${input}\` — ${err.message}`)] });
+    }
+  }
+
   // ── .leaveserver (WL managers only) ──────────────────────────────────────────
   if (command === 'leaveserver') {
     if (!isWlManager(message.author.id))
@@ -5748,25 +5892,34 @@ client.on('messageCreate', async message => {
         };
 
         // PASS 1: sample frames at 0.0 s, 0.5 s, 1.0 s, ...
-        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 1 of 2...')] });
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 1 of 3...')] });
         const candidates1 = await runPass(0);
 
-        // PASS 2: sample frames at 0.25 s, 0.75 s, 1.25 s, ... (staggered 0.25 s)
-        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 2 of 2...')] });
-        const candidates2 = await runPass(0.25);
+        // PASS 2: sample frames at 0.167 s, 0.667 s, 1.167 s, ...
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 2 of 3...')] });
+        const candidates2 = await runPass(0.167);
+
+        // PASS 3: sample frames at 0.333 s, 0.833 s, 1.333 s, ...
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning video — pass 3 of 3...')] });
+        const candidates3 = await runPass(0.333);
 
         await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
         try { fs.unlinkSync(tmpInput); } catch {}
         for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
 
-        // Only keep names confirmed in BOTH passes — eliminates single-frame OCR noise/false positives
-        const confirmed = [...candidates1].filter(c => candidates2.has(c));
+        // Majority vote across 3 passes: must appear in at least 2 of 3 to be confirmed.
+        // 2 or 3 passes confirmed → send  |  0 or 1 pass confirmed → skip (noise/false positive)
+        const allVideoNames = new Set([...candidates1, ...candidates2, ...candidates3]);
+        const confirmed = [...allVideoNames].filter(c => {
+          const votes = (candidates1.has(c) ? 1 : 0) + (candidates2.has(c) ? 1 : 0) + (candidates3.has(c) ? 1 : 0);
+          return votes >= 2;
+        });
 
         if (!confirmed.length) {
-          return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't confirm any usernames across both video passes — make sure the player list is clearly visible throughout the recording")] });
+          return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't confirm any usernames across 3 video passes — make sure the player list is clearly visible throughout the recording")] });
         }
 
-        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`confirmed **${confirmed.length}** name${confirmed.length !== 1 ? 's' : ''} across both video passes, verifying on Roblox...`)] });
+        await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`confirmed **${confirmed.length}** name${confirmed.length !== 1 ? 's' : ''} across 3 video passes, verifying on Roblox...`)] });
 
         // Verify confirmed names against Roblox API (batch of 100)
         const verified = [];
@@ -6017,6 +6170,91 @@ client.on('messageCreate', async message => {
       await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`logged **${pairs.length}** attendee${pairs.length !== 1 ? 's' : ''} to ${queueChannel}`)] });
     }
     return;
+  }
+
+  // ── .whoisin ──────────────────────────────────────────────────────────────────────
+  // Usage: .whoisin <roblox game URL or place ID>
+  // Checks which members of group 206868002 are currently in that game.
+  if (command === 'whoisin') {
+    if (!message.guild) return;
+    const input = args[0];
+    if (!input) return message.reply(`usage: \`${prefix}whoisin <roblox game URL or place ID>\``);
+    const WHOISIN_GROUP = 206868002;
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('fetching group members and game servers...')] });
+    try {
+      // Parse place ID — supports:
+      //   roblox.com/games/start?placeId=123&gameInstanceId=...
+      //   roblox.com/games/123/game-name
+      //   raw numeric place ID
+      let placeId = null;
+      const qsMatch = input.match(/[?&]place[iI][dD]=(\d+)/i);
+      const pathMatch = input.match(/roblox\.com\/games\/(\d+)/i);
+      if (qsMatch) placeId = qsMatch[1];
+      else if (pathMatch) placeId = pathMatch[1];
+      else if (/^\d+$/.test(input)) placeId = input;
+      if (!placeId) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't parse a place ID — paste a Roblox game URL or server link, e.g. `roblox.com/games/start?placeId=123&gameInstanceId=...`")] });
+
+      // Resolve place ID → universe ID
+      const placeDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`)).json();
+      const universeId = placeDetail?.data?.[0]?.universeId;
+      if (!universeId) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find a game for place ID \`${placeId}\` — make sure the game exists and is public`)] });
+
+      // Get game name
+      let gameName = `Place ${placeId}`;
+      try { const gr = await (await fetch(`https://games.roblox.com/v1/games?universeIds=${universeId}`)).json(); if (gr?.data?.[0]?.name) gameName = gr.data[0].name; } catch {}
+
+      // Load ALL group members (paginated)
+      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('loading group members...')] });
+      const memberIds = new Set();
+      const memberNames = {};
+      let cur = '';
+      do {
+        try {
+          const res = await (await fetch(`https://members.roblox.com/v1/groups/${WHOISIN_GROUP}/users?limit=100&sortOrder=Asc${cur ? `&cursor=${cur}` : ''}`)).json();
+          for (const m of (res.data || [])) { memberIds.add(m.user.userId); memberNames[m.user.userId] = m.user.username; }
+          cur = res.nextPageCursor || '';
+        } catch { cur = ''; break; }
+      } while (cur);
+      if (!memberIds.size) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('could not load group members — Roblox API may be unavailable')] });
+
+      // Scan all public game servers, collect player tokens
+      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`loaded **${memberIds.size}** group members, scanning servers...`)] });
+      const allTokens = [];
+      let sCur = ''; let serverCount = 0;
+      do {
+        try {
+          const res = await (await fetch(`https://games.roblox.com/v1/games/${universeId}/servers/Public?limit=100${sCur ? `&cursor=${sCur}` : ''}`)).json();
+          for (const srv of (res.data || [])) { serverCount++; for (const p of (srv.players || [])) { if (p.playerToken) allTokens.push(p.playerToken); } }
+          sCur = res.nextPageCursor || '';
+        } catch { sCur = ''; break; }
+      } while (sCur);
+
+      if (!allTokens.length) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scanned **${serverCount}** server${serverCount !== 1 ? 's' : ''} — no players found (game may be empty or servers private)`)] });
+
+      // Resolve player tokens → Roblox user IDs via thumbnail batch API
+      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`resolving **${allTokens.length}** player${allTokens.length !== 1 ? 's' : ''} across **${serverCount}** server${serverCount !== 1 ? 's' : ''}...`)] });
+      const resolvedIds = new Set();
+      for (let i = 0; i < allTokens.length; i += 100) {
+        try {
+          const batch = allTokens.slice(i, i + 100).map((token, idx) => ({ requestId: `${i + idx}`, token, type: 'AvatarHeadShot', size: '150x150', format: 'png', isCircular: false }));
+          const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch) })).json();
+          for (const item of (res.data || [])) { if (item.targetId && item.targetId !== 0) resolvedIds.add(item.targetId); }
+        } catch {}
+      }
+
+      // Cross-reference: keep only players who are group members
+      const inGame = [...resolvedIds].filter(id => memberIds.has(id));
+      if (!inGame.length) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`no group members found in **${gameName}**\n*(checked ${serverCount} server${serverCount !== 1 ? 's' : ''}, ${resolvedIds.size} total player${resolvedIds.size !== 1 ? 's' : ''})*`)] });
+
+      const lines = inGame.map(id => `• \`${memberNames[id] || id}\``).join('\n');
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000)
+        .setTitle(`Group members in ${gameName}`)
+        .setDescription(`**${inGame.length}** group member${inGame.length !== 1 ? 's' : ''} currently in-game:\n\n${lines}`)
+        .setFooter({ text: `${serverCount} server${serverCount !== 1 ? 's' : ''} scanned • group ${WHOISIN_GROUP}` })
+        .setTimestamp()] });
+    } catch (err) {
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`whoisin failed — ${err.message}`)] });
+    }
   }
 
   // ── .setattendance ─────────────────────────────────────────────────────────────────
