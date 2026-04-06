@@ -461,6 +461,8 @@ const HELP_SECTIONS = [
       '{p}verify status',
       '{p}verify remove',
       '{p}verifylist',
+      '{p}mverify @user RobloxUsername',
+      '{p}munverify @user',
       '{p}dfile',
       '{p}lvfile',
       '{p}linked @user or RobloxUsername',
@@ -1032,6 +1034,15 @@ const slashCommands = [
   new SlashCommandBuilder().setName('img2gif').setDescription('convert an image (PNG/JPG/WEBP) to a GIF')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addAttachmentOption(o => o.setName('image').setDescription('image file to convert').setRequired(true)),
+
+  // ── manual verify ─────────────────────────────────────────────────────────
+  new SlashCommandBuilder().setName('mverify').setDescription('manually link a Discord user to a Roblox account (whitelist only)')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('user').setDescription('Discord member to verify').setRequired(true))
+    .addStringOption(o => o.setName('roblox').setDescription('Roblox username to link them to').setRequired(true)),
+  new SlashCommandBuilder().setName('munverify').setDescription('manually remove a Discord-to-Roblox link (whitelist only)')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('user').setDescription('Discord member to unlink').setRequired(true)),
 ].map(c => c.toJSON());
 
 // ─── Status helper ────────────────────────────────────────────────────────────
@@ -2997,10 +3008,18 @@ client.on('interactionCreate', async interaction => {
       const preprocessFrame = async (srcPath, destPath) => {
         try {
           const { createCanvas, loadImage } = await import('canvas');
-          const img = await loadImage(srcPath); const scale = 2;
-          const canvas = createCanvas(img.width * scale, img.height * scale); const ctx = canvas.getContext('2d');
+          const img = await loadImage(srcPath);
+          // Crop to the center region where the in-game player list popup appears.
+          // This excludes the game world background, side UI panels, and leaderboard
+          // so OCR only reads names from inside the player list box.
+          const cropX = Math.floor(img.width * 0.20);
+          const cropY = Math.floor(img.height * 0.15);
+          const cropW = Math.floor(img.width * 0.55);
+          const cropH = Math.floor(img.height * 0.65);
+          const scale = 2;
+          const canvas = createCanvas(cropW * scale, cropH * scale); const ctx = canvas.getContext('2d');
           ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW * scale, cropH * scale);
           const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height); const d = imgData.data;
           for (let p = 0; p < d.length; p += 4) {
             const lum = 0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2];
@@ -3106,6 +3125,95 @@ client.on('interactionCreate', async interaction => {
     queueData[guild.id].ulChannelId = ch.id;
     saveQueue(queueData);
     return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Unlinked Attendance Channel Set').setDescription(`unlinked raid members from \`${getPrefix()}scan\` will now log to ${ch}`).setTimestamp()] });
+  }
+
+  // ── mverify ──────────────────────────────────────────────────────────────
+  // Manually link a Discord user to a Roblox account without the bio-code step.
+  // Whitelist-only command for staff to force-verify members.
+  if (commandName === 'mverify') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!loadWhitelist().includes(interaction.user.id) && !isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'only whitelisted staff can manually verify members', ephemeral: true });
+
+    const targetUser = interaction.options.getUser('user');
+    const robloxInput = interaction.options.getString('roblox')?.trim();
+    if (!targetUser || !robloxInput) return interaction.reply({ content: 'provide both a Discord user and a Roblox username', ephemeral: true });
+
+    await interaction.deferReply();
+    try {
+      const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
+      })).json();
+      const robloxUser = res.data?.[0];
+      if (!robloxUser) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find a Roblox user named \`${robloxInput}\``)] });
+
+      const vData = loadVerify();
+      if (!vData.verified) vData.verified = {};
+      if (!vData.robloxToDiscord) vData.robloxToDiscord = {};
+
+      // Check if this Roblox account is already linked to a different Discord user
+      const existingDiscordId = vData.robloxToDiscord[String(robloxUser.id)];
+      if (existingDiscordId && existingDiscordId !== targetUser.id) {
+        return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000)
+          .setDescription(`\`${robloxUser.name}\` is already linked to <@${existingDiscordId}> — unlink them first with \`/munverify\``)] });
+      }
+
+      // Remove any previous Roblox link the Discord user had
+      const prevEntry = vData.verified[targetUser.id];
+      if (prevEntry && String(prevEntry.robloxId) !== String(robloxUser.id)) {
+        delete vData.robloxToDiscord[String(prevEntry.robloxId)];
+      }
+
+      vData.verified[targetUser.id]              = { robloxId: robloxUser.id, robloxName: robloxUser.name, verifiedAt: Date.now(), manualBy: interaction.user.id };
+      vData.robloxToDiscord[String(robloxUser.id)] = targetUser.id;
+      saveVerify(vData);
+      saveLinkedVerified(vData);
+
+      const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUser.id}&size=420x420&format=Png&isCircular=false`)).json();
+      const avatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+
+      return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000)
+        .setTitle('Manual Verification Successful')
+        .setThumbnail(avatarUrl ?? LOGO_URL)
+        .setDescription(`<@${targetUser.id}> has been manually linked to **${robloxUser.name}**`)
+        .addFields(
+          { name: 'Discord', value: `<@${targetUser.id}>`, inline: true },
+          { name: 'Roblox',  value: `[\`${robloxUser.name}\`](https://www.roblox.com/users/${robloxUser.id}/profile)`, inline: true },
+          { name: 'Verified by', value: `<@${interaction.user.id}>`, inline: true }
+        ).setTimestamp()] });
+    } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`mverify failed — ${err.message}`)] }); }
+  }
+
+  // ── munverify ────────────────────────────────────────────────────────────
+  // Manually remove a Discord-to-Roblox link. Whitelist-only.
+  if (commandName === 'munverify') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!loadWhitelist().includes(interaction.user.id) && !isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'only whitelisted staff can manually unverify members', ephemeral: true });
+
+    const targetUser = interaction.options.getUser('user');
+    if (!targetUser) return interaction.reply({ content: 'provide a Discord user to unlink', ephemeral: true });
+
+    const vData = loadVerify();
+    const entry = vData.verified?.[targetUser.id];
+    if (!entry) return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`<@${targetUser.id}> has no linked Roblox account`)], ephemeral: true });
+
+    const robloxName = entry.robloxName;
+    delete vData.verified[targetUser.id];
+    delete vData.robloxToDiscord[String(entry.robloxId)];
+    delete vData.pending?.[targetUser.id];
+    saveVerify(vData);
+    saveLinkedVerified(vData);
+
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000)
+      .setTitle('Manual Unverify Successful')
+      .setDescription(`<@${targetUser.id}> has been unlinked from **${robloxName}**`)
+      .addFields(
+        { name: 'Discord', value: `<@${targetUser.id}>`, inline: true },
+        { name: 'Roblox',  value: `\`${robloxName}\``, inline: true },
+        { name: 'Removed by', value: `<@${interaction.user.id}>`, inline: true }
+      ).setTimestamp()] });
   }
 
   // ── verifylist ───────────────────────────────────────────────────────────
@@ -5240,6 +5348,106 @@ client.on('messageCreate', async message => {
     return;
   }
 
+  // ── .mverify ──────────────────────────────────────────────────────────────────
+  // Usage: .mverify @discordUser RobloxUsername
+  // Manually links a Discord user to a Roblox account without the bio-code step.
+  // Whitelist-only.
+  if (command === 'mverify') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelisted staff can manually verify members')] });
+
+    // Support both @mention and raw Discord ID
+    let resolvedUser = message.mentions.users.first();
+    if (!resolvedUser && args[0] && /^\d{17,20}$/.test(args[0])) {
+      try { resolvedUser = await client.users.fetch(args[0]); } catch {}
+    }
+    const robloxInput = message.mentions.users.size > 0 ? args[1]?.trim() : args[0]?.trim();
+
+    if (!resolvedUser || !robloxInput)
+      return message.reply(`usage: \`${prefix}mverify @user RobloxUsername\``);
+
+    try {
+      const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
+      })).json();
+      const robloxUser = res.data?.[0];
+      if (!robloxUser)
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find a Roblox user named \`${robloxInput}\``)] });
+
+      const vData = loadVerify();
+      if (!vData.verified) vData.verified = {};
+      if (!vData.robloxToDiscord) vData.robloxToDiscord = {};
+
+      const existingDiscordId = vData.robloxToDiscord[String(robloxUser.id)];
+      if (existingDiscordId && existingDiscordId !== resolvedUser.id) {
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
+          .setDescription(`\`${robloxUser.name}\` is already linked to <@${existingDiscordId}> — use \`${prefix}munverify @user\` to unlink them first`)] });
+      }
+
+      const prevEntry = vData.verified[resolvedUser.id];
+      if (prevEntry && String(prevEntry.robloxId) !== String(robloxUser.id)) {
+        delete vData.robloxToDiscord[String(prevEntry.robloxId)];
+      }
+
+      vData.verified[resolvedUser.id]              = { robloxId: robloxUser.id, robloxName: robloxUser.name, verifiedAt: Date.now(), manualBy: message.author.id };
+      vData.robloxToDiscord[String(robloxUser.id)] = resolvedUser.id;
+      saveVerify(vData);
+      saveLinkedVerified(vData);
+
+      const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUser.id}&size=420x420&format=Png&isCircular=false`)).json();
+      const avatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
+        .setTitle('Manual Verification Successful')
+        .setThumbnail(avatarUrl ?? LOGO_URL)
+        .setDescription(`<@${resolvedUser.id}> has been manually linked to **${robloxUser.name}**`)
+        .addFields(
+          { name: 'Discord', value: `<@${resolvedUser.id}>`, inline: true },
+          { name: 'Roblox',  value: `[\`${robloxUser.name}\`](https://www.roblox.com/users/${robloxUser.id}/profile)`, inline: true },
+          { name: 'Verified by', value: message.author.tag, inline: true }
+        ).setTimestamp()] });
+    } catch (err) { return message.reply(`mverify failed — ${err.message}`); }
+  }
+
+  // ── .munverify ────────────────────────────────────────────────────────────────
+  // Usage: .munverify @discordUser
+  // Manually removes a Discord-to-Roblox link. Whitelist-only.
+  if (command === 'munverify') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelisted staff can manually unverify members')] });
+
+    let resolvedUser = message.mentions.users.first();
+    if (!resolvedUser && args[0] && /^\d{17,20}$/.test(args[0])) {
+      try { resolvedUser = await client.users.fetch(args[0]); } catch {}
+    }
+    if (!resolvedUser)
+      return message.reply(`usage: \`${prefix}munverify @user\``);
+
+    const vData = loadVerify();
+    const entry = vData.verified?.[resolvedUser.id];
+    if (!entry)
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`<@${resolvedUser.id}> has no linked Roblox account`)] });
+
+    const robloxName = entry.robloxName;
+    delete vData.verified[resolvedUser.id];
+    delete vData.robloxToDiscord[String(entry.robloxId)];
+    if (vData.pending?.[resolvedUser.id]) delete vData.pending[resolvedUser.id];
+    saveVerify(vData);
+    saveLinkedVerified(vData);
+
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
+      .setTitle('Manual Unverify Successful')
+      .setDescription(`<@${resolvedUser.id}> has been unlinked from **${robloxName}**`)
+      .addFields(
+        { name: 'Discord', value: `<@${resolvedUser.id}>`, inline: true },
+        { name: 'Roblox',  value: `\`${robloxName}\``, inline: true },
+        { name: 'Removed by', value: message.author.tag, inline: true }
+      ).setTimestamp()] });
+  }
+
   if (command === 'linked') {
     const vData = loadVerify();
     const mention = message.mentions.users.first();
@@ -5329,20 +5537,27 @@ client.on('messageCreate', async message => {
       const imagePaths = [];
       const tmpFrames  = [];
 
-      // Helper: preprocess a frame with canvas for better OCR accuracy
-      // — upscales 2×, converts to grayscale, boosts contrast
+      // Helper: preprocess a frame with canvas for better OCR accuracy.
+      // Crops to the center region where the in-game player list popup appears,
+      // then upscales 2×, converts to grayscale, and boosts contrast.
+      // This prevents OCR from picking up names from the game world background,
+      // side panels, leaderboard, or any other on-screen UI outside the popup.
       const preprocessFrame = async (srcPath, destPath) => {
         try {
           const { createCanvas, loadImage } = await import('canvas');
           const img    = await loadImage(srcPath);
+          // Crop to center region where the player list popup appears
+          const cropX = Math.floor(img.width * 0.20);
+          const cropY = Math.floor(img.height * 0.15);
+          const cropW = Math.floor(img.width * 0.55);
+          const cropH = Math.floor(img.height * 0.65);
           const scale  = 2;
-          const canvas = createCanvas(img.width * scale, img.height * scale);
+          const canvas = createCanvas(cropW * scale, cropH * scale);
           const ctx    = canvas.getContext('2d');
-          // White background
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
-          // Draw upscaled
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          // Draw only the cropped center region, upscaled
+          ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW * scale, cropH * scale);
           // Grayscale + high contrast via pixel manipulation
           const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const d = imgData.data;
