@@ -45,31 +45,31 @@ function baseEmbed() {
     .setFooter({ text: getBotName(), iconURL: LOGO_URL })
 }
 
-// unified white color palette
+// unified dark red color palette
 const COLOR = {
-  success : 0xFFFFFF,
-  error   : 0xFFFFFF,
-  mod     : 0xFFFFFF,
-  info    : 0xFFFFFF,
-  roblox  : 0xFFFFFF,
-  warn    : 0xFFFFFF,
-  star    : 0xFFFFFF,
-  lock    : 0xFFFFFF,
-  voice   : 0xFFFFFF,
-  tag     : 0xFFFFFF,
-  user    : 0xFFFFFF,
-  log     : 0xFFFFFF,
-  setup   : 0xFFFFFF,
-  vanity  : 0xFFFFFF,
-  warning : 0xFFFFFF,
-  mute    : 0xFFFFFF,
-  action  : 0xFFFFFF,
+  success : 0x8B0000,
+  error   : 0x8B0000,
+  mod     : 0x8B0000,
+  info    : 0x8B0000,
+  roblox  : 0x8B0000,
+  warn    : 0x8B0000,
+  star    : 0x8B0000,
+  lock    : 0x8B0000,
+  voice   : 0x8B0000,
+  tag     : 0x8B0000,
+  user    : 0x8B0000,
+  log     : 0x8B0000,
+  setup   : 0x8B0000,
+  vanity  : 0x8B0000,
+  warning : 0x8B0000,
+  mute    : 0x8B0000,
+  action  : 0x8B0000,
 }
 
 // core typed builder — returns a fully styled embed with a bold title
 function embed(type, title) {
   return baseEmbed()
-    .setColor(0xFFFFFF)
+    .setColor(0x8B0000)
     .setTitle(title)
 }
 
@@ -346,7 +346,7 @@ async function jailMember(guild, member, reason, modTag) {
 
   jailData[guild.id][member.id] = { jailChannelId: jailChannel.id, deniedChannels };
   saveJail(jailData);
-  return baseEmbed().setTitle('jailed').setColor(0xFFFFFF).setThumbnail(member.user.displayAvatarURL())
+  return baseEmbed().setTitle('jailed').setColor(0x8B0000).setThumbnail(member.user.displayAvatarURL())
     .addFields({ name: 'user', value: member.user.tag, inline: true }, { name: 'mod', value: modTag, inline: true }, { name: 'reason', value: reason })
     .setDescription(`they can only see ${jailChannel}`).setTimestamp();
 }
@@ -361,7 +361,7 @@ async function unjailMember(guild, member, modTag) {
   try { const jailCh = guild.channels.cache.get(entry.jailChannelId); if (jailCh) await jailCh.permissionOverwrites.delete(member.id); } catch {}
   delete jailData[guild.id][member.id];
   saveJail(jailData);
-  return baseEmbed().setTitle('unjailed').setColor(0xFFFFFF).setThumbnail(member.user.displayAvatarURL())
+  return baseEmbed().setTitle('unjailed').setColor(0x8B0000).setThumbnail(member.user.displayAvatarURL())
     .addFields({ name: 'user', value: member.user.tag, inline: true }, { name: 'mod', value: modTag, inline: true }).setTimestamp();
 }
 
@@ -432,13 +432,21 @@ const HELP_SECTIONS = [
       '{p}role @member @role1 @role2...',
       '{p}inrole @role/roleId',
       '{p}img2gif',
+    ]
+  },
+  {
+    title: 'Attendance / Verify',
+
+    commands: [
       '{p}verify YourRobloxUsername',
       '{p}verify confirm',
       '{p}verify status',
+      '{p}verify remove',
+      '{p}verifylist',
       '{p}linked @user or RobloxUsername',
       '{p}scan (attach image/video)',
       '{p}attend @user robloxname',
-      '{p}setqueue #channel',
+      '{p}setattendance #channel',
     ]
   },
   {
@@ -517,7 +525,7 @@ function buildHelpEmbed(page) {
     return `**\`${cmd}\`** ${args}`
   })
   return new EmbedBuilder()
-    .setColor(0xFFFFFF)
+    .setColor(0x8B0000)
     .setAuthor({ name: `${getBotName()} — Help`, iconURL: LOGO_URL })
     .setTitle(section.title)
     .setDescription(lines.join('\n'))
@@ -538,7 +546,7 @@ function buildGcEmbed(username, groups, avatarUrl, page) {
   const slice = groups.slice(page * GC_PER_PAGE, page * GC_PER_PAGE + GC_PER_PAGE);
   const groupLines = slice.map(g => `↗ [**${g.group.name}**](https://www.roblox.com/communities/${g.group.id}/about)`).join('\n');
   const embed = new EmbedBuilder()
-    .setColor(0xFFFFFF)
+    .setColor(0x8B0000)
     .setTitle('Group Check')
     .setThumbnail(avatarUrl ?? LOGO_URL)
     .setDescription(`> Showing groups **${page * GC_PER_PAGE + 1}–${Math.min((page + 1) * GC_PER_PAGE, groups.length)}** of **${groups.length}** total\n\n${groupLines}`)
@@ -550,7 +558,7 @@ function buildGcEmbed(username, groups, avatarUrl, page) {
 
 function buildGcNotInGroupEmbed(displayName) {
   return new EmbedBuilder()
-    .setColor(0xFFFFFF)
+    .setColor(0x8B0000)
     .setTitle('⛔  Not In Group')
     .setDescription(`**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.\n\n> **Group ID:** \`${MTXX_GROUP_ID}\`\n> **Link:** [Click to Join](${MTXX_GROUP_LINK})`)
     .setFooter({ text: `${getBotName()} • mtxx`, iconURL: LOGO_URL })
@@ -559,7 +567,7 @@ function buildGcNotInGroupEmbed(displayName) {
 
 function buildGcInGroupEmbed(displayName) {
   return new EmbedBuilder()
-    .setColor(0xFFFFFF)
+    .setColor(0x8B0000)
     .setTitle('✅  In Group')
     .setDescription(`**${displayName}** is in the group and ready to be verified.\n\n> **Group ID:** \`${MTXX_GROUP_ID}\`\n> **Link:** [View Group](${MTXX_GROUP_LINK})`)
     .setFooter({ text: `${getBotName()} • mtxx`, iconURL: LOGO_URL })
@@ -575,7 +583,7 @@ function buildGcRow(username, groups, page) {
 }
 
 function buildVmInterfaceEmbed(guild) {
-  return baseEmbed().setColor(0xFFFFFF).setTitle('voicemaster')
+  return baseEmbed().setColor(0x8B0000).setTitle('voicemaster')
     .setDescription('use the buttons below to manage your vc')
     .addFields({ name: 'buttons', value: [
       '🔒 — **lock** the vc', '🔓 — **unlock** the vc',
@@ -607,7 +615,7 @@ function buildVmInterfaceRows() {
 
 function buildVmHelpEmbed(prefix) {
   const p = prefix || getPrefix();
-  return baseEmbed().setColor(0xFFFFFF).setTitle('🎙️  VoiceMaster').setDescription([
+  return baseEmbed().setColor(0x8B0000).setTitle('🎙️  VoiceMaster').setDescription([
     `\`${p}vm setup\` — set up the voicemaster system`,
     `\`${p}vm lock\` — lock your channel`,
     `\`${p}vm unlock\` — unlock your channel`,
@@ -1019,7 +1027,7 @@ client.once('clientReady', async () => {
       await ch.send({
         embeds: [
           baseEmbed()
-            .setColor(0xFFFFFF)
+            .setColor(0x8B0000)
             .setTitle(`${client.user.username} is online`)
             .setDescription('online and ready')
             .setTimestamp()
@@ -1042,7 +1050,7 @@ client.on('guildCreate', async guild => {
   if (startupChannelId) {
     try {
       const ch = await client.channels.fetch(startupChannelId);
-      await ch.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Joined New Server')
+      await ch.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Joined New Server')
         .addFields(
           { name: 'server', value: guild.name, inline: true },
           { name: 'members', value: `${guild.memberCount}`, inline: true },
@@ -1058,7 +1066,7 @@ client.on('guildCreate', async guild => {
       ch.permissionsFor(guild.members.me)?.has(PermissionsBitField.Flags.SendMessages)
     );
     if (textChannel) {
-      await textChannel.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`Getting started with ${client.user.username}`)
+      await textChannel.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle(`Getting started with ${client.user.username}`)
         .setDescription(`Hey! Thanks for adding **${client.user.username}** to your server!\n\nUse \`/help\` or prefix commands to get started. Set your prefix with \`/prefix\`.`)
         .addFields(
           { name: 'Moderation', value: 'ban, kick, timeout, mute, jail, hush, nuke', inline: true },
@@ -1076,7 +1084,7 @@ client.on('guildDelete', async guild => {
   if (startupChannelId) {
     try {
       const ch = await client.channels.fetch(startupChannelId);
-      await ch.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Left Server')
+      await ch.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Left Server')
         .addFields(
           { name: 'server', value: guild.name, inline: true },
           { name: 'id', value: guild.id, inline: true }
@@ -1147,7 +1155,7 @@ client.on('guildMemberAdd', async member => {
     try {
       const logCh = guild.channels.cache.get(logsChannelId);
       if (logCh?.isTextBased()) {
-        await logCh.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Member Joined')
+        await logCh.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Member Joined')
           .setThumbnail(member.user.displayAvatarURL())
           .addFields(
             { name: 'user', value: `${member.user.tag} (<@${member.id}>)`, inline: true },
@@ -1168,7 +1176,7 @@ client.on('guildMemberRemove', async member => {
   try {
     const logCh = guild.channels.cache.get(logsChannelId);
     if (logCh?.isTextBased()) {
-      await logCh.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Member Left')
+      await logCh.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Member Left')
         .setThumbnail(member.user.displayAvatarURL())
         .addFields(
           { name: 'user', value: `${member.user.tag} (<@${member.id}>)`, inline: true },
@@ -1278,7 +1286,7 @@ client.on('interactionCreate', async interaction => {
     if (vmc[vc.id].ownerId !== interaction.user.id) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
     try {
       await vc.setName(newName);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`✏️ renamed to **${newName}**`)], ephemeral: true });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`✏️ renamed to **${newName}**`)], ephemeral: true });
     } catch (e) { return interaction.reply({ content: `couldn't rename — ${e.message}`, ephemeral: true }); }
   }
 
@@ -1293,10 +1301,10 @@ client.on('interactionCreate', async interaction => {
       if (!pending) return interaction.update({ content: 'this has expired, run the command again', embeds: [], components: [] });
       striptagPending.delete(interaction.user.id);
       if (interaction.customId === 'striptag_cancel') {
-        return interaction.update({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('striptag cancelled').setDescription(`cancelled stripping tag **${pending.tagName}**`)], components: [] });
+        return interaction.update({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('striptag cancelled').setDescription(`cancelled stripping tag **${pending.tagName}**`)], components: [] });
       }
       // confirmed — execute the strip
-      await interaction.update({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`stripping **${pending.members.length}** user${pending.members.length !== 1 ? 's' : ''} from tag **${pending.tagName}**...`)], components: [] });
+      await interaction.update({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`stripping **${pending.members.length}** user${pending.members.length !== 1 ? 's' : ''} from tag **${pending.tagName}**...`)], components: [] });
       const succeeded = [];
       const failed = [];
       for (const robloxUsername of pending.members) {
@@ -1316,7 +1324,7 @@ client.on('interactionCreate', async interaction => {
       const resultEmbed = baseEmbed().setColor(succeeded.length ? 0x23D160 : 0xFF3860).setTitle(`striptag — ${pending.tagName}`)
         .setDescription(desc.join('\n\n') || 'done').setTimestamp();
       await interaction.editReply({ embeds: [resultEmbed], components: [] });
-      const logEmbed = baseEmbed().setTitle('striptag log').setColor(0xFFFFFF)
+      const logEmbed = baseEmbed().setTitle('striptag log').setColor(0x8B0000)
         .addFields(
           { name: 'tag', value: pending.tagName, inline: true },
           { name: 'stripped by', value: `<@${interaction.user.id}>`, inline: true },
@@ -1363,34 +1371,34 @@ client.on('interactionCreate', async interaction => {
       if (interaction.customId === 'vm_lock') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
         await vc.permissionOverwrites.edit(everyone, { Connect: false });
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔒 channel locked')], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔒 channel locked')], ephemeral: true });
       }
       if (interaction.customId === 'vm_unlock') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
         await vc.permissionOverwrites.edit(everyone, { Connect: null });
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔓 channel unlocked')], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔓 channel unlocked')], ephemeral: true });
       }
       if (interaction.customId === 'vm_ghost') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
         await vc.permissionOverwrites.edit(everyone, { ViewChannel: false });
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('👻 channel hidden')], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('👻 channel hidden')], ephemeral: true });
       }
       if (interaction.customId === 'vm_reveal') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
         await vc.permissionOverwrites.edit(everyone, { ViewChannel: null });
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('👁️ channel visible')], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('👁️ channel visible')], ephemeral: true });
       }
       if (interaction.customId === 'vm_claim') {
         if (vc.members.has(chData.ownerId)) return interaction.reply({ content: "the owner is still in the channel", ephemeral: true });
         chData.ownerId = interaction.user.id;
         vmChannels[vc.id] = chData;
         saveVmChannels(vmChannels);
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`👑 you now own **${vc.name}**`)], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`👑 you now own **${vc.name}**`)], ephemeral: true });
       }
       if (interaction.customId === 'vm_info') {
         const limit = vc.userLimit === 0 ? 'no limit' : vc.userLimit;
         const owner = await interaction.guild.members.fetch(chData.ownerId).catch(() => null);
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('📋 channel info')
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('📋 channel info')
           .addFields({ name: 'name', value: vc.name, inline: true }, { name: 'owner', value: owner?.displayName ?? 'unknown', inline: true },
             { name: 'members', value: `${vc.members.size}`, inline: true }, { name: 'limit', value: `${limit}`, inline: true })
         ], ephemeral: true });
@@ -1399,13 +1407,13 @@ client.on('interactionCreate', async interaction => {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
         const newLimit = Math.min((vc.userLimit || 0) + 1, 99);
         await vc.setUserLimit(newLimit);
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`➕ limit set to **${newLimit}**`)], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`➕ limit set to **${newLimit}**`)], ephemeral: true });
       }
       if (interaction.customId === 'vm_limit_down') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
         const newLimit = Math.max((vc.userLimit || 1) - 1, 0);
         await vc.setUserLimit(newLimit);
-        return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`➖ limit set to **${newLimit === 0 ? 'no limit' : newLimit}**`)], ephemeral: true });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`➖ limit set to **${newLimit === 0 ? 'no limit' : newLimit}**`)], ephemeral: true });
       }
       if (interaction.customId === 'vm_rename') {
         if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
@@ -1510,7 +1518,7 @@ client.on('interactionCreate', async interaction => {
       : `${count} usernames generated`
 
     const e = baseEmbed()
-      .setColor(0xFFFFFF)
+      .setColor(0x8B0000)
       .setTitle(`${platformLabel} Usernames — ${typeLabel}`)
       .setDescription(usernames.length > 0 ? usernames.map(u => `\`${u}\``).join('\n') : 'No available usernames found after checking — try again.')
       .setFooter({ text: footerText, iconURL: LOGO_URL })
@@ -1542,7 +1550,7 @@ client.on('interactionCreate', async interaction => {
       const embed = baseEmbed()
         .setTitle(`${user.displayName} (@${user.name})`)
         .setURL(profileUrl)
-        .setColor(0xFFFFFF)
+        .setColor(0x8B0000)
         .setDescription(`> **${user.name}** — [View Profile](${profileUrl})`)
         .setThumbnail(avatarUrl)
         .addFields(
@@ -1597,14 +1605,14 @@ client.on('interactionCreate', async interaction => {
     const afk = loadAfk();
     afk[interaction.user.id] = { reason, since: Date.now() };
     saveAfk(afk);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`you're now afk${reason ? `: ${reason}` : ''}`)], ephemeral: true })
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`you're now afk${reason ? `: ${reason}` : ''}`)], ephemeral: true })
   }
 
   if (commandName === 'snipe') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const sniped = snipeCache.get(channel.id);
-    if (!sniped) return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('nothing to snipe rn')] });
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('sniped')
+    if (!sniped) return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('nothing to snipe rn')] });
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('sniped')
       .setDescription(sniped.content)
       .addFields({ name: 'author', value: sniped.author, inline: true }, { name: 'deleted', value: `<t:${Math.floor(sniped.deletedAt / 1000)}:R>`, inline: true })
       .setThumbnail(sniped.avatarUrl)] });
@@ -1615,12 +1623,12 @@ client.on('interactionCreate', async interaction => {
     const amount = interaction.options.getInteger('amount');
     try {
       const deleted = await channel.bulkDelete(amount, true);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`deleted **${deleted.size}** messages`)], ephemeral: true });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`deleted **${deleted.size}** messages`)], ephemeral: true });
     } catch (err) { return interaction.reply({ content: `couldn't purge — ${err.message}`, ephemeral: true }); }
   }
 
   if (commandName === 'about') {
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`About ${client.user.username}`)
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle(`About ${client.user.username}`)
       .setDescription(`A custom Discord bot built for **mtxx**.\n\nUse \`/help\` to see all commands.`)
       .addFields(
         { name: 'servers', value: `${client.guilds.cache.size}`, inline: true },
@@ -1636,7 +1644,7 @@ client.on('interactionCreate', async interaction => {
     const groupId = vc[guild.id]?.groupId;
     const wlRoles = (vwl[guild.id]?.roles || []).map(id => `<@&${id}>`).join(', ') || 'none';
     const wlUsers = (vwl[guild.id]?.users || []).map(id => `<@${id}>`).join(', ') || 'none';
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify System Status')
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify System Status')
       .addFields(
         { name: 'verify role', value: roleId ? `<@&${roleId}>` : 'not set', inline: true },
         { name: 'group id', value: groupId || 'not set', inline: true },
@@ -1676,7 +1684,7 @@ client.on('interactionCreate', async interaction => {
       if (!hardbans[guild.id]) hardbans[guild.id] = {};
       hardbans[guild.id][userId] = { reason, bannedBy: interaction.user.id, at: Date.now() };
       saveHardbans(hardbans);
-      return interaction.reply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0xFFFFFF).setDescription(`<@${userId}> has been hardbanned`)
+      return interaction.reply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0x8B0000).setDescription(`<@${userId}> has been hardbanned`)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
     } catch (err) { return interaction.reply({ content: `couldn't ban — ${err.message}`, ephemeral: true }); }
   }
@@ -1693,7 +1701,7 @@ client.on('interactionCreate', async interaction => {
       saveHardbans(hardbans);
       let username = userId;
       try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {}
-      return interaction.reply({ embeds: [baseEmbed().setTitle('hardban removed').setColor(0xFFFFFF)
+      return interaction.reply({ embeds: [baseEmbed().setTitle('hardban removed').setColor(0x8B0000)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
     } catch (err) { return interaction.reply({ content: `couldn't remove hardban — ${err.message}`, ephemeral: true }); }
   }
@@ -1705,7 +1713,7 @@ client.on('interactionCreate', async interaction => {
     if (!target.bannable) return interaction.reply({ content: "can't ban them, they might be above me", ephemeral: true });
     const reason = interaction.options.getString('reason') || 'no reason';
     await target.ban({ reason, deleteMessageSeconds: 86400 });
-    return interaction.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been banned`)
+    return interaction.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been banned`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -1716,7 +1724,7 @@ client.on('interactionCreate', async interaction => {
     if (!target.kickable) return interaction.reply({ content: "can't kick them, they might be above me", ephemeral: true });
     const reason = interaction.options.getString('reason') || 'no reason';
     try { await target.kick(reason); } catch { return interaction.reply({ content: "couldn't kick them", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`<@${target.user.id}> has been kicked`)
+    return interaction.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`<@${target.user.id}> has been kicked`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
   }
 
@@ -1729,7 +1737,7 @@ client.on('interactionCreate', async interaction => {
       await guild.members.unban(userId, reason);
       let username = userId;
       try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {}
-      return interaction.reply({ embeds: [baseEmbed().setTitle('unbanned').setColor(0xFFFFFF)
+      return interaction.reply({ embeds: [baseEmbed().setTitle('unbanned').setColor(0x8B0000)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
     } catch (err) { return interaction.reply({ content: `couldn't unban — ${err.message}`, ephemeral: true }); }
   }
@@ -1741,7 +1749,7 @@ client.on('interactionCreate', async interaction => {
     const reason  = interaction.options.getString('reason') || 'no reason';
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try { await target.timeout(minutes * 60 * 1000, reason); } catch { return interaction.reply({ content: "couldn't time them out", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been timed out for ${minutes}m`)
+    return interaction.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been timed out for ${minutes}m`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'duration', value: `${minutes}m`, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -1750,7 +1758,7 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getMember('user');
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try { await target.timeout(null); } catch { return interaction.reply({ content: "couldn't remove their timeout", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('timeout removed').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('timeout removed').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -1760,7 +1768,7 @@ client.on('interactionCreate', async interaction => {
     const reason = interaction.options.getString('reason') || 'no reason';
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try { await target.timeout(28 * 24 * 60 * 60 * 1000, reason); } catch { return interaction.reply({ content: "couldn't mute them", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
+    return interaction.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -1769,7 +1777,7 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getMember('user');
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try { await target.timeout(null); } catch { return interaction.reply({ content: "couldn't unmute them", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('unmuted').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('unmuted').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -1780,7 +1788,7 @@ client.on('interactionCreate', async interaction => {
     if (hushedData[target.id]) return interaction.reply({ content: `**${target.tag}** is already hushed`, ephemeral: true });
     hushedData[target.id] = { hushedBy: interaction.user.id, at: Date.now() };
     saveHushed(hushedData);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL()).setDescription(`@${target.username} has been hushed`)
+    return interaction.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0x8B0000).setThumbnail(target.displayAvatarURL()).setDescription(`@${target.username} has been hushed`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -1791,7 +1799,7 @@ client.on('interactionCreate', async interaction => {
     if (!hushedData[target.id]) return interaction.reply({ content: `**${target.tag}** isn't hushed`, ephemeral: true });
     delete hushedData[target.id];
     saveHushed(hushedData);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('unhushed').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('unhushed').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -1804,7 +1812,7 @@ client.on('interactionCreate', async interaction => {
     if (skullData[guild.id].includes(target.id)) return interaction.reply({ content: `already skulling **${target.tag}**`, ephemeral: true });
     skullData[guild.id].push(target.id);
     saveSkull(skullData);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('skull').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('skull').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`now reacting to every message from **${target.tag}** with 💀`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
@@ -1817,7 +1825,7 @@ client.on('interactionCreate', async interaction => {
     if (!skullData[guild.id]?.includes(target.id)) return interaction.reply({ content: `not skulling **${target.tag}**`, ephemeral: true });
     skullData[guild.id] = skullData[guild.id].filter(id => id !== target.id);
     saveSkull(skullData);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('unskull').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('unskull').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`stopped skulling **${target.tag}**`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
@@ -1831,7 +1839,7 @@ client.on('interactionCreate', async interaction => {
     if (annoyData[guild.id].includes(target.id)) return interaction.reply({ content: `already annoying **${target.tag}**`, ephemeral: true });
     annoyData[guild.id].push(target.id);
     saveAnnoy(annoyData);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('annoy').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('annoy').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`now reacting to every message from **${target.tag}** with 10 random emojis`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
@@ -1844,7 +1852,7 @@ client.on('interactionCreate', async interaction => {
     if (!annoyData[guild.id]?.includes(target.id)) return interaction.reply({ content: `not annoying **${target.tag}**`, ephemeral: true });
     annoyData[guild.id] = annoyData[guild.id].filter(id => id !== target.id);
     saveAnnoy(annoyData);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('unannoy').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return interaction.reply({ embeds: [baseEmbed().setTitle('unannoy').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`stopped annoying **${target.tag}**`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
@@ -1852,14 +1860,14 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'lock') {
     try {
       await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: false });
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔒 channel locked')] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔒 channel locked')] });
     } catch { return interaction.reply({ content: "couldn't lock the channel, check my perms", ephemeral: true }); }
   }
 
   if (commandName === 'unlock') {
     try {
       await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null });
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔓 channel unlocked')] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔓 channel unlocked')] });
     } catch { return interaction.reply({ content: "couldn't unlock the channel, check my perms", ephemeral: true }); }
   }
 
@@ -1879,7 +1887,7 @@ client.on('interactionCreate', async interaction => {
       await newCh.send({
         embeds: [
           baseEmbed()
-            .setColor(0xFFFFFF)
+            .setColor(0x8B0000)
             .setTitle('channel nuked')
             .setDescription(`nuked by **${interaction.user.tag}**`)
             .setTimestamp()
@@ -1910,7 +1918,7 @@ client.on('interactionCreate', async interaction => {
       const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
       if (!data.roles?.length) return interaction.editReply('no roles found for this group');
       const lines = data.roles.sort((a, b) => a.rank - b.rank).map(r => `\`${String(r.rank).padStart(3, '0')}\`  **${r.name}**  —  ID: \`${r.id}\``);
-      return interaction.editReply({ embeds: [baseEmbed().setTitle('group roles').setColor(0xFFFFFF).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
+      return interaction.editReply({ embeds: [baseEmbed().setTitle('group roles').setColor(0x8B0000).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
     } catch { return interaction.editReply("couldn't load group roles, try again"); }
   }
 
@@ -1920,7 +1928,7 @@ client.on('interactionCreate', async interaction => {
     const robloxUser = interaction.options.getString('robloxuser');
     if (content) {
       const tags = loadTags(); const isNew = !tags[name]; tags[name] = content; saveTags(tags);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
     }
     if (robloxUser) {
       const tags = loadTags();
@@ -1930,12 +1938,12 @@ client.on('interactionCreate', async interaction => {
       await interaction.deferReply();
       try {
         const result = await rankRobloxUser(robloxUser, roleId);
-        const embed = baseEmbed().setTitle('got em ranked').setColor(0xFFFFFF)
+        const embed = baseEmbed().setTitle('got em ranked').setColor(0x8B0000)
           .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: name, inline: true }, { name: 'role id', value: roleId, inline: true })
           .setFooter({ text: `ranked by ${interaction.user.tag}` }).setTimestamp();
         if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
         return interaction.editReply({ embeds: [embed] });
-      } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't rank them — ${err.message}`)] }); }
+      } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't rank them — ${err.message}`)] }); }
     }
     const tags = loadTags();
     if (!tags[name]) return interaction.reply({ content: `no tag called **${name}** exists`, ephemeral: true });
@@ -1971,7 +1979,7 @@ client.on('interactionCreate', async interaction => {
     if (!newPrefix) return interaction.reply({ content: `prefix is \`${p}\` rn`, ephemeral: true });
     if (newPrefix.length > 5) return interaction.reply({ content: "prefix can't be more than 5 chars", ephemeral: true });
     const cfg = loadConfig(); cfg.prefix = newPrefix; saveConfig(cfg);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`prefix is \`${newPrefix}\` now`)] });
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`prefix is \`${newPrefix}\` now`)] });
   }
 
   if (commandName === 'status') {
@@ -1980,14 +1988,14 @@ client.on('interactionCreate', async interaction => {
     const statusData = { type, text };
     applyStatus(statusData);
     const cfg = loadConfig(); cfg.status = statusData; saveConfig(cfg);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`status changed to **${type}** ${text}`)] });
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`status changed to **${type}** ${text}`)] });
   }
 
   if (commandName === 'setlog') {
     const ch = interaction.options.getChannel('channel');
     if (!ch?.isTextBased()) return interaction.reply({ content: 'that needs to be a text channel', ephemeral: true });
     const cfg2 = loadConfig(); cfg2.logChannelId = ch.id; saveConfig(cfg2);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0xFFFFFF).setDescription(`logs going to ${ch} now`).setTimestamp()] });
+    return interaction.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0x8B0000).setDescription(`logs going to ${ch} now`).setTimestamp()] });
   }
 
   if (commandName === 'wlmanager') {
@@ -1996,8 +2004,8 @@ client.on('interactionCreate', async interaction => {
     if (sub === 'list') {
       if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "only whitelist managers can view the manager list", ephemeral: true });
       const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)])];
-      if (!all.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription('no managers set')] });
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()}> (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
+      if (!all.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x8B0000).setDescription('no managers set')] });
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x8B0000).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()}> (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
     }
     if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "ur not a whitelist manager", ephemeral: true });
     if (sub === 'add') {
@@ -2005,7 +2013,7 @@ client.on('interactionCreate', async interaction => {
       if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
       if (mgrs.includes(target.id)) return interaction.reply({ content: `**${target.tag}** is already a whitelist manager`, ephemeral: true });
       mgrs.push(target.id); saveWlManagers(mgrs);
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist manager added').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist manager added').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'remove') {
@@ -2013,7 +2021,7 @@ client.on('interactionCreate', async interaction => {
       if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
       if (!mgrs.includes(target.id)) return interaction.reply({ content: `**${target.tag}** isn't a whitelist manager`, ephemeral: true });
       saveWlManagers(mgrs.filter(id => id !== target.id));
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist manager removed').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist manager removed').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'removed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
   }
@@ -2027,7 +2035,7 @@ client.on('interactionCreate', async interaction => {
       if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
       if (wl.includes(target.id)) return interaction.reply({ content: `**${target.tag}** is already on the whitelist`, ephemeral: true });
       wl.push(target.id); saveWhitelist(wl);
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelisted').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelisted').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'remove') {
@@ -2035,12 +2043,12 @@ client.on('interactionCreate', async interaction => {
       if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
       if (!wl.includes(target.id)) return interaction.reply({ content: `**${target.tag}** isn't on the whitelist`, ephemeral: true });
       saveWhitelist(wl.filter(id => id !== target.id));
-      return interaction.reply({ embeds: [baseEmbed().setTitle('removed from whitelist').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+      return interaction.reply({ embeds: [baseEmbed().setTitle('removed from whitelist').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'removed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'list') {
-      if (!wl.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0xFFFFFF).setDescription('nobody on the whitelist rn')] });
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0xFFFFFF).setDescription(wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
+      if (!wl.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x8B0000).setDescription('nobody on the whitelist rn')] });
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x8B0000).setDescription(wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
     }
   }
 
@@ -2055,7 +2063,7 @@ client.on('interactionCreate', async interaction => {
       const acMessage = interaction.options.getString('message') || 'Activity Check';
       checks[guild.id] = { startedBy: interaction.user.id, startedAt: Date.now(), active: true, checkins: [], acMessage };
       saveActivityCheck(checks);
-      const acEmbed = baseEmbed().setColor(0xFFFFFF).setTitle(acMessage)
+      const acEmbed = baseEmbed().setColor(0x8B0000).setTitle(acMessage)
         .setDescription('Click react to react to activity check!')
         .addFields({ name: 'started by', value: interaction.user.tag, inline: true })
         .setTimestamp();
@@ -2073,7 +2081,7 @@ client.on('interactionCreate', async interaction => {
       checks[guild.id] = { active: false };
       saveActivityCheck(checks);
       const checkinList = checkins.length ? checkins.map(id => `<@${id}>`).join(', ') : 'nobody checked in';
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`${acMessage} — Ended`)
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle(`${acMessage} — Ended`)
         .addFields(
           { name: 'ended by', value: interaction.user.tag, inline: true },
           { name: 'started by', value: `<@${startedBy}>`, inline: true },
@@ -2092,7 +2100,7 @@ client.on('interactionCreate', async interaction => {
     if (!cfg.serverConfig[guild.id]) cfg.serverConfig[guild.id] = {};
     cfg.serverConfig[guild.id][setting] = value;
     saveConfig(cfg);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Config Updated')
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Config Updated')
       .addFields({ name: setting, value: value, inline: true }).setTimestamp()] });
   }
 
@@ -2118,7 +2126,7 @@ client.on('interactionCreate', async interaction => {
       if (action === 'rank') {
         if (!value) return interaction.editReply("give a role id to rank them to");
         const result = await rankRobloxUser(username, value);
-        return interaction.editReply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Ranked')
+        return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Ranked')
           .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'role id', value: value, inline: true }).setTimestamp()] });
       }
       if (action === 'exile') {
@@ -2130,7 +2138,7 @@ client.on('interactionCreate', async interaction => {
           method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
         });
         if (!res.ok) return interaction.editReply(`couldn't exile — HTTP ${res.status}`);
-        return interaction.editReply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Exiled')
+        return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Exiled')
           .addFields({ name: 'user', value: userBasic.name, inline: true }, { name: 'exiled by', value: interaction.user.tag, inline: true }).setTimestamp()] });
       }
     } catch (err) { return interaction.editReply(`something went wrong — ${err.message}`); }
@@ -2143,7 +2151,7 @@ client.on('interactionCreate', async interaction => {
     if (!vc[guild.id]) vc[guild.id] = {};
     vc[guild.id].roleId = role.id;
     saveVerifyConfig(vc);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Role Set')
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Role Set')
       .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -2163,7 +2171,7 @@ client.on('interactionCreate', async interaction => {
     if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
     try {
       await target.roles.add(guildVc.roleId, `verified by ${interaction.user.tag}`);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verified')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verified')
         .setThumbnail(target.user.displayAvatarURL())
         .addFields(
           { name: 'user', value: target.user.tag, inline: true },
@@ -2181,7 +2189,7 @@ client.on('interactionCreate', async interaction => {
     if (vwl[guild.id].roles.includes(role.id)) return interaction.reply({ content: `<@&${role.id}> is already whitelisted`, ephemeral: true });
     vwl[guild.id].roles.push(role.id);
     saveVerifyWhitelist(vwl);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Whitelist — Role Added')
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — Role Added')
       .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'added by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -2193,7 +2201,7 @@ client.on('interactionCreate', async interaction => {
     if (vwl[guild.id].users.includes(target.id)) return interaction.reply({ content: `**${target.tag}** is already whitelisted`, ephemeral: true });
     vwl[guild.id].users.push(target.id);
     saveVerifyWhitelist(vwl);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Whitelist — User Added')
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — User Added')
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -2216,7 +2224,7 @@ client.on('interactionCreate', async interaction => {
       lines.push(`user: ${target.tag}`);
     }
     saveVerifyWhitelist(vwl);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Whitelist — Removed')
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — Removed')
       .setDescription(lines.join('\n'))
       .addFields({ name: 'removed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
@@ -2233,17 +2241,17 @@ client.on('interactionCreate', async interaction => {
       if (!autoroleData[guild.id]) autoroleData[guild.id] = {};
       autoroleData[guild.id].roleId = role.id;
       saveAutorole(autoroleData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Autorole Set')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Autorole Set')
         .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (action === 'disable') {
       if (autoroleData[guild.id]) delete autoroleData[guild.id].roleId;
       saveAutorole(autoroleData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Autorole Disabled').setTimestamp()] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Autorole Disabled').setTimestamp()] });
     }
     if (action === 'status') {
       const roleId = autoroleData[guild.id]?.roleId;
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Autorole Status')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Autorole Status')
         .addFields({ name: 'status', value: roleId ? 'enabled' : 'disabled', inline: true },
           roleId ? { name: 'role', value: `<@&${roleId}>`, inline: true } : { name: 'role', value: 'not set', inline: true }
         ).setTimestamp()] });
@@ -2260,7 +2268,7 @@ client.on('interactionCreate', async interaction => {
       if (!ch?.isTextBased()) return interaction.reply({ content: "that needs to be a text channel", ephemeral: true });
       welcomeData[guild.id].channelId = ch.id;
       saveWelcome(welcomeData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Channel Set')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Channel Set')
         .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (action === 'setmessage') {
@@ -2268,17 +2276,17 @@ client.on('interactionCreate', async interaction => {
       if (!msg) return interaction.reply({ content: "give a message (use {user}, {guild}, {membercount})", ephemeral: true });
       welcomeData[guild.id].message = msg;
       saveWelcome(welcomeData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Message Set')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Message Set')
         .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}` `{membercount}`' }).setTimestamp()] });
     }
     if (action === 'disable') {
       delete welcomeData[guild.id];
       saveWelcome(welcomeData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Messages Disabled').setTimestamp()] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Messages Disabled').setTimestamp()] });
     }
     if (action === 'status') {
       const gw = welcomeData[guild.id];
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Status')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Status')
         .addFields(
           { name: 'channel', value: gw?.channelId ? `<#${gw.channelId}>` : 'not set', inline: true },
           { name: 'message', value: gw?.message || 'not set' }
@@ -2294,17 +2302,17 @@ client.on('interactionCreate', async interaction => {
       if (!aiData[guild.id]) aiData[guild.id] = {};
       aiData[guild.id].enabled = true;
       saveAntiinvite(aiData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Anti-Invite Enabled')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Anti-Invite Enabled')
         .setDescription('Discord invite links will now be auto-deleted').setTimestamp()] });
     }
     if (action === 'disable') {
       if (aiData[guild.id]) aiData[guild.id].enabled = false;
       saveAntiinvite(aiData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Anti-Invite Disabled').setTimestamp()] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Anti-Invite Disabled').setTimestamp()] });
     }
     if (action === 'status') {
       const enabled = aiData[guild.id]?.enabled ?? false;
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Anti-Invite Status')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Anti-Invite Status')
         .addFields({ name: 'status', value: enabled ? 'enabled' : 'disabled', inline: true }).setTimestamp()] });
     }
   }
@@ -2317,17 +2325,17 @@ client.on('interactionCreate', async interaction => {
       if (!adData[guild.id]) adData[guild.id] = {};
       adData[guild.id].enabled = true;
       saveAltdentifier(adData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Altdentifier Enabled')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Altdentifier Enabled')
         .setDescription('Accounts younger than 14 days will be kicked on join').setTimestamp()] });
     }
     if (action === 'disable') {
       if (adData[guild.id]) adData[guild.id].enabled = false;
       saveAltdentifier(adData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Altdentifier Disabled').setTimestamp()] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Altdentifier Disabled').setTimestamp()] });
     }
     if (action === 'status') {
       const enabled = adData[guild.id]?.enabled ?? false;
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Altdentifier Status')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Altdentifier Status')
         .addFields({ name: 'status', value: enabled ? 'enabled' : 'disabled', inline: true },
           { name: 'min account age', value: '14 days', inline: true }).setTimestamp()] });
     }
@@ -2344,17 +2352,17 @@ client.on('interactionCreate', async interaction => {
       jdData[guild.id].message = msg;
       jdData[guild.id].enabled = true;
       saveJoindm(jdData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Join DM Set')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Join DM Set')
         .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}`' }).setTimestamp()] });
     }
     if (action === 'disable') {
       jdData[guild.id].enabled = false;
       saveJoindm(jdData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Join DM Disabled').setTimestamp()] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Join DM Disabled').setTimestamp()] });
     }
     if (action === 'status') {
       const gd = jdData[guild.id];
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Join DM Status')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Join DM Status')
         .addFields(
           { name: 'status', value: gd?.enabled ? 'enabled' : 'disabled', inline: true },
           { name: 'message', value: gd?.message || 'not set' }
@@ -2370,7 +2378,7 @@ client.on('interactionCreate', async interaction => {
     if (!logsData[guild.id]) logsData[guild.id] = {};
     logsData[guild.id].channelId = ch.id;
     saveLogs(logsData);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Logs Channel Set')
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Logs Channel Set')
       .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
@@ -2734,7 +2742,7 @@ client.on('interactionCreate', async interaction => {
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Roblox ID Lookup')
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Roblox ID Lookup')
         .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
         .setFooter({ text: 'roblox user id' }).setTimestamp()] });
     } catch { return interaction.reply({ content: 'something went wrong, try again', ephemeral: true }); }
@@ -2757,7 +2765,7 @@ client.on('interactionCreate', async interaction => {
       for (const [, member] of members) {
         if (member.user.bot) continue;
         try {
-          await member.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${interaction.user.tag}` }).setTimestamp()] });
+          await member.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${interaction.user.tag}` }).setTimestamp()] });
           sent++;
         } catch { failed++; }
         await new Promise(r => setTimeout(r, 500));
@@ -2766,7 +2774,7 @@ client.on('interactionCreate', async interaction => {
     }
     if (target.bot) return interaction.reply({ content: "can't DM a bot", ephemeral: true });
     try {
-      await target.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${interaction.user.tag}` }).setTimestamp()] });
+      await target.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${interaction.user.tag}` }).setTimestamp()] });
       return interaction.reply({ content: `DM sent to **${target.tag}**`, ephemeral: true });
     } catch { return interaction.reply({ content: `couldn't DM **${target.tag}** — they might have DMs off`, ephemeral: true }); }
   }
@@ -2780,7 +2788,7 @@ client.on('interactionCreate', async interaction => {
     if (!myVc) return interaction.reply({ content: "you're not in a voice channel", ephemeral: true });
     try {
       await target.voice.setChannel(myVc);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`dragged **${target.displayName}** to **${myVc.name}**`)] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`dragged **${target.displayName}** to **${myVc.name}**`)] });
     } catch { return interaction.reply({ content: "couldn't drag them — they might not be in a vc", ephemeral: true }); }
   }
 
@@ -2813,7 +2821,7 @@ client.on('interactionCreate', async interaction => {
           result = { displayName: userBasic?.name || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
         } else { throw rankErr; }
       }
-      const embed = baseEmbed().setTitle('strip').setColor(0xFFFFFF)
+      const embed = baseEmbed().setTitle('strip').setColor(0x8B0000)
         .addFields(
           { name: 'user',       value: result.displayName,           inline: true },
           { name: 'stripped by', value: interaction.user.tag,        inline: true },
@@ -2822,7 +2830,7 @@ client.on('interactionCreate', async interaction => {
       if (skipReason)       embed.setFooter({ text: skipReason });
       if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
       await interaction.editReply({ embeds: [embed] });
-      const sLog = baseEmbed().setTitle('strip log').setColor(0xFFFFFF)
+      const sLog = baseEmbed().setTitle('strip log').setColor(0x8B0000)
         .addFields(
           { name: 'user',       value: result.displayName,              inline: true },
           { name: 'stripped by', value: `<@${interaction.user.id}>`,   inline: true },
@@ -2831,8 +2839,8 @@ client.on('interactionCreate', async interaction => {
       if (result.avatarUrl) sLog.setThumbnail(result.avatarUrl);
       await sendStripLog(guild, sLog);
     } catch (err) {
-      await interaction.editReply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't strip them — ${err.message}`)] });
-      await sendStripLog(guild, baseEmbed().setTitle('strip failed').setColor(0xFFFFFF)
+      await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't strip them — ${err.message}`)] });
+      await sendStripLog(guild, baseEmbed().setTitle('strip failed').setColor(0x8B0000)
         .addFields(
           { name: 'user', value: robloxUser, inline: true },
           { name: 'attempted by', value: `<@${interaction.user.id}>`, inline: true },
@@ -2875,7 +2883,7 @@ client.on('interactionCreate', async interaction => {
     }
     delete taggedMembers[tagName];
     saveTaggedMembers(taggedMembers);
-    return interaction.editReply({ embeds: [baseEmbed().setTitle('striptag complete').setColor(0xFFFFFF)
+    return interaction.editReply({ embeds: [baseEmbed().setTitle('striptag complete').setColor(0x8B0000)
       .addFields(
         { name: 'tag',      value: tagName,        inline: true },
         { name: 'stripped', value: `${stripped}`,  inline: true },
@@ -2899,7 +2907,7 @@ client.on('interactionCreate', async interaction => {
         const vmConfig = loadVmConfig();
         vmConfig[guild.id] = { categoryId: category.id, createChannelId: createVc.id, interfaceChannelId: iface.id, interfaceMessageId: ifaceMsg.id };
         saveVmConfig(vmConfig);
-        return interaction.editReply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`✅ voicemaster set up! join **${createVc.name}** to create a vc.`)] });
+        return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`✅ voicemaster set up! join **${createVc.name}** to create a vc.`)] });
       } catch (e) { return interaction.editReply(`setup failed — ${e.message}`); }
     }
     const vc = interaction.member?.voice?.channel;
@@ -2910,25 +2918,25 @@ client.on('interactionCreate', async interaction => {
     const isOwner = chData.ownerId === interaction.user.id;
     const everyone = guild.roles.everyone;
 
-    if (sub === 'lock')   { if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true }); await vc.permissionOverwrites.edit(everyone, { Connect: false }); return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔒 channel locked')] }); }
-    if (sub === 'unlock') { if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true }); await vc.permissionOverwrites.edit(everyone, { Connect: null }); return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔓 channel unlocked')] }); }
+    if (sub === 'lock')   { if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true }); await vc.permissionOverwrites.edit(everyone, { Connect: false }); return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔒 channel locked')] }); }
+    if (sub === 'unlock') { if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true }); await vc.permissionOverwrites.edit(everyone, { Connect: null }); return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔓 channel unlocked')] }); }
     if (sub === 'claim')  {
       if (vc.members.has(chData.ownerId)) return interaction.reply({ content: 'the owner is still in the channel', ephemeral: true });
       chData.ownerId = interaction.user.id; vmChannels[vc.id] = chData; saveVmChannels(vmChannels);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`👑 you now own **${vc.name}**`)] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`👑 you now own **${vc.name}**`)] });
     }
     if (sub === 'limit') {
       if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
       const n = interaction.options.getInteger('limit') ?? 0;
       await vc.setUserLimit(n);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`limit set to **${n === 0 ? 'no limit' : n}**`)] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`limit set to **${n === 0 ? 'no limit' : n}**`)] });
     }
     if (sub === 'allow') {
       if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
       const target = interaction.options.getMember('user');
       if (!target) return interaction.reply({ content: 'provide a user with the user option', ephemeral: true });
       await vc.permissionOverwrites.edit(target.id, { Connect: true, ViewChannel: true });
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`allowed **${target.displayName}**`)] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`allowed **${target.displayName}**`)] });
     }
     if (sub === 'deny') {
       if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
@@ -2936,21 +2944,21 @@ client.on('interactionCreate', async interaction => {
       if (!target) return interaction.reply({ content: 'provide a user with the user option', ephemeral: true });
       await vc.permissionOverwrites.edit(target.id, { Connect: false });
       if (vc.members.has(target.id)) await target.voice.setChannel(null).catch(() => {});
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`denied **${target.displayName}**`)] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`denied **${target.displayName}**`)] });
     }
     if (sub === 'rename') {
       if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
       const newName = interaction.options.getString('name');
       if (!newName) return interaction.reply({ content: 'provide a name with the name option', ephemeral: true });
       await vc.setName(newName);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`renamed to **${newName}**`)] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`renamed to **${newName}**`)] });
     }
     if (sub === 'reset') {
       if (!isOwner) return interaction.reply({ content: "you don't own this channel", ephemeral: true });
       await vc.setName(`${interaction.member.displayName}'s VC`);
       await vc.setUserLimit(0);
       await vc.permissionOverwrites.edit(everyone, { Connect: null, ViewChannel: null });
-      return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('channel reset to defaults')] });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('channel reset to defaults')] });
     }
     return interaction.reply({ embeds: [buildVmHelpEmbed()] });
   }
@@ -2988,7 +2996,7 @@ client.on('interactionCreate', async interaction => {
     if (removed.length) lines.push(`➖ Removed ${removed.join(', ')} from ${targetMember}`);
     if (failed.length)  lines.push(`❌ Failed: ${failed.join(', ')} (missing perms?)`);
 
-    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(lines.join('\n') || 'nothing changed')] });
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(lines.join('\n') || 'nothing changed')] });
   }
 
   // ── /inrole ───────────────────────────────────────────────────────────────────
@@ -2999,7 +3007,7 @@ client.on('interactionCreate', async interaction => {
     await guild.members.fetch();
     const members = guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(role.id));
 
-    if (!members.size) return interaction.editReply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
+    if (!members.size) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
 
     const lines = [...members.values()]
       .sort((a, b) => a.user.username.localeCompare(b.user.username))
@@ -3011,7 +3019,7 @@ client.on('interactionCreate', async interaction => {
     for (let i = 0; i < lines.length; i += CHUNK) chunks.push(lines.slice(i, i + CHUNK));
 
     for (let i = 0; i < chunks.length; i++) {
-      const e = baseEmbed().setColor(0xFFFFFF)
+      const e = baseEmbed().setColor(0x8B0000)
         .setTitle(i === 0 ? `Members with ${role.name}` : `Members with ${role.name} (cont.)`)
         .setDescription(chunks[i])
         .setFooter({ text: `${members.size} total member${members.size !== 1 ? 's' : ''}`, iconURL: LOGO_URL });
@@ -3031,13 +3039,13 @@ client.on('interactionCreate', async interaction => {
     if (serverId) {
       const targetGuild = client.guilds.cache.get(serverId);
       if (!targetGuild) return interaction.reply({ content: `i'm not in a server with id \`${serverId}\``, ephemeral: true });
-      await interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${targetGuild.name}**...`)], ephemeral: true });
+      await interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`leaving **${targetGuild.name}**...`)], ephemeral: true });
       try { await targetGuild.leave(); } catch (e) { return interaction.editReply({ content: `couldn't leave — ${e.message}` }); }
       return;
     }
 
     if (!guild) return interaction.reply({ content: 'use this in a server or provide a server id', ephemeral: true });
-    await interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${guild.name}**...`)], ephemeral: true });
+    await interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`leaving **${guild.name}**...`)], ephemeral: true });
     try { await guild.leave(); } catch (e) { return interaction.editReply({ content: `couldn't leave — ${e.message}` }); }
     return;
   }
@@ -3125,7 +3133,7 @@ client.on('messageCreate', async message => {
     const mentioned = message.mentions.users.first()
     if (afkData[mentioned?.id]) {
       const e = afkData[mentioned.id]
-      await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`**${mentioned.username}** is afk: ${e.reason || 'no reason'}\n<t:${Math.floor(e.since / 1000)}:R>`)] })
+      await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${mentioned.username}** is afk: ${e.reason || 'no reason'}\n<t:${Math.floor(e.since / 1000)}:R>`)] })
     }
   }
 
@@ -3172,7 +3180,7 @@ client.on('messageCreate', async message => {
       const embed = baseEmbed()
         .setTitle(`${user.displayName} (@${user.name})`)
         .setURL(profileUrl)
-        .setColor(0xFFFFFF)
+        .setColor(0x8B0000)
         .setDescription(`> **${user.name}** — [View Profile](${profileUrl})`)
         .setThumbnail(avatarUrl)
         .addFields(
@@ -3223,7 +3231,7 @@ client.on('messageCreate', async message => {
   if (command === 'vmhelp') return message.reply({ embeds: [buildVmHelpEmbed(prefix)] });
 
   if (command === 'about') {
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`About ${client.user.username}`)
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle(`About ${client.user.username}`)
       .setDescription(`A custom Discord bot built for **mtxx**.\n\nUse \`${prefix}help\` or \`/help\` to see all commands.`)
       .addFields(
         { name: 'servers', value: `${client.guilds.cache.size}`, inline: true },
@@ -3237,7 +3245,7 @@ client.on('messageCreate', async message => {
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return message.reply("couldn't find that user");
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Roblox ID Lookup')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Roblox ID Lookup')
         .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
         .setFooter({ text: 'roblox user id' }).setTimestamp()] });
     } catch { return message.reply("something went wrong, try again"); }
@@ -3246,8 +3254,8 @@ client.on('messageCreate', async message => {
   if (command === 'snipe') {
     if (!message.guild) return;
     const sniped = snipeCache.get(message.channel.id);
-    if (!sniped) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('nothing to snipe rn')] });
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('sniped')
+    if (!sniped) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('nothing to snipe rn')] });
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('sniped')
       .setDescription(sniped.content)
       .addFields({ name: 'author', value: sniped.author, inline: true }, { name: 'deleted', value: `<t:${Math.floor(sniped.deletedAt / 1000)}:R>`, inline: true })
       .setThumbnail(sniped.avatarUrl)] });
@@ -3260,7 +3268,7 @@ client.on('messageCreate', async message => {
     if (!target) return message.reply('mention a user to drag');
     const myVc = message.member?.voice?.channel;
     if (!myVc) return message.reply("you're not in a voice channel");
-    try { await target.voice.setChannel(myVc); return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`dragged **${target.displayName}** to **${myVc.name}**`)] }); }
+    try { await target.voice.setChannel(myVc); return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`dragged **${target.displayName}** to **${myVc.name}**`)] }); }
     catch { return message.reply("couldn't drag them — they might not be in a vc"); }
   }
 
@@ -3278,7 +3286,7 @@ client.on('messageCreate', async message => {
         const vmConfig = loadVmConfig();
         vmConfig[message.guild.id] = { categoryId: category.id, createChannelId: createVc.id, interfaceChannelId: iface.id, interfaceMessageId: ifaceMsg.id };
         saveVmConfig(vmConfig);
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`✅ voicemaster set up! join **${createVc.name}** to create a vc.`)] });
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`✅ voicemaster set up! join **${createVc.name}** to create a vc.`)] });
       } catch (e) { return message.reply(`setup failed — ${e.message}`); }
     }
     const vc = message.member?.voice?.channel;
@@ -3289,26 +3297,26 @@ client.on('messageCreate', async message => {
     const isOwner = chData.ownerId === message.author.id;
     const everyone = message.guild.roles.everyone;
 
-    if (sub === 'lock')   { if (!isOwner) return message.reply("you don't own this channel"); await vc.permissionOverwrites.edit(everyone, { Connect: false }); return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔒 channel locked')] }); }
-    if (sub === 'unlock') { if (!isOwner) return message.reply("you don't own this channel"); await vc.permissionOverwrites.edit(everyone, { Connect: null }); return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔓 channel unlocked')] }); }
+    if (sub === 'lock')   { if (!isOwner) return message.reply("you don't own this channel"); await vc.permissionOverwrites.edit(everyone, { Connect: false }); return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔒 channel locked')] }); }
+    if (sub === 'unlock') { if (!isOwner) return message.reply("you don't own this channel"); await vc.permissionOverwrites.edit(everyone, { Connect: null }); return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔓 channel unlocked')] }); }
     if (sub === 'claim')  {
       if (vc.members.has(chData.ownerId)) return message.reply("the owner is still in the channel");
       chData.ownerId = message.author.id; vmChannels[vc.id] = chData; saveVmChannels(vmChannels);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`👑 you now own **${vc.name}**`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`👑 you now own **${vc.name}**`)] });
     }
     if (sub === 'limit') {
       if (!isOwner) return message.reply("you don't own this channel");
       const n = parseInt(args[1], 10);
       if (isNaN(n) || n < 0 || n > 99) return message.reply('give a number between 0 and 99 (0 means no limit)')
       await vc.setUserLimit(n);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`limit set to **${n === 0 ? 'no limit' : n}**`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`limit set to **${n === 0 ? 'no limit' : n}**`)] });
     }
     if (sub === 'allow') {
       if (!isOwner) return message.reply("you don't own this channel");
       const target = message.mentions.members?.first();
       if (!target) return message.reply('mention a user');
       await vc.permissionOverwrites.edit(target.id, { Connect: true, ViewChannel: true });
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`allowed **${target.displayName}**`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`allowed **${target.displayName}**`)] });
     }
     if (sub === 'deny') {
       if (!isOwner) return message.reply("you don't own this channel");
@@ -3316,28 +3324,28 @@ client.on('messageCreate', async message => {
       if (!target) return message.reply('mention a user');
       await vc.permissionOverwrites.edit(target.id, { Connect: false });
       if (vc.members.has(target.id)) await target.voice.setChannel(null).catch(() => {});
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`denied **${target.displayName}**`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`denied **${target.displayName}**`)] });
     }
     if (sub === 'rename') {
       if (!isOwner) return message.reply("you don't own this channel");
       const newName = args.slice(1).join(' ');
       if (!newName) return message.reply('type a name for the channel')
       await vc.setName(newName);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`renamed to **${newName}**`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`renamed to **${newName}**`)] });
     }
     if (sub === 'reset') {
       if (!isOwner) return message.reply("you don't own this channel");
       await vc.setName(`${message.member.displayName}'s VC`);
       await vc.setUserLimit(0);
       await vc.permissionOverwrites.edit(everyone, { Connect: null, ViewChannel: null });
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('channel reset to defaults')] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('channel reset to defaults')] });
     }
     return message.reply({ embeds: [buildVmHelpEmbed(prefix)] });
   }
 
   // ── Whitelist-required prefix commands ───────────────────────────────────────
   if (!loadWhitelist().includes(message.author.id)) {
-    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked']);
+    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'verifylist', 'vlist']);
     if (command === 'verify' && message.guild) {
       const sub0 = args[0]?.toLowerCase();
       // Roblox linking subcommands are open to everyone; role-give verify requires VWL
@@ -3356,7 +3364,7 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'hb') {
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.hb`')] });
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.hb`')] });
     const target = message.mentions.users.first();
     const rawId  = args[0];
     if (!target && !rawId) return message.reply("give a user mention or their id");
@@ -3371,13 +3379,13 @@ client.on('messageCreate', async message => {
       if (!hardbans[message.guild.id]) hardbans[message.guild.id] = {};
       hardbans[message.guild.id][userId] = { reason, bannedBy: message.author.id, at: Date.now() };
       saveHardbans(hardbans);
-      return message.reply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0xFFFFFF).setDescription(`<@${userId}> has been hardbanned`)
+      return message.reply({ embeds: [baseEmbed().setTitle("hardban'd").setColor(0x8B0000).setDescription(`<@${userId}> has been hardbanned`)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
     } catch (err) { return message.reply(`couldn't ban — ${err.message}`); }
   }
 
   if (command === 'unhb') {
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.unhb`')] });
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.unhb`')] });
     if (!message.guild) return;
     const userId = args[0];
     const reason = args.slice(1).join(' ') || 'no reason';
@@ -3389,7 +3397,7 @@ client.on('messageCreate', async message => {
       saveHardbans(hardbans);
       let username = userId;
       try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {}
-      return message.reply({ embeds: [baseEmbed().setTitle('hardban removed').setColor(0xFFFFFF)
+      return message.reply({ embeds: [baseEmbed().setTitle('hardban removed').setColor(0x8B0000)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
     } catch (err) { return message.reply(`couldn't remove hardban — ${err.message}`); }
   }
@@ -3400,7 +3408,7 @@ client.on('messageCreate', async message => {
     if (!target.bannable) return message.reply("can't ban them, they might be above me");
     const reason = args.slice(1).join(' ') || 'no reason';
     await target.ban({ reason, deleteMessageSeconds: 86400 });
-    return message.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been banned`)
+    return message.reply({ embeds: [baseEmbed().setTitle("they're gone").setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been banned`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -3410,7 +3418,7 @@ client.on('messageCreate', async message => {
     if (!target.kickable) return message.reply("can't kick them, they might be above me");
     const reason = args.slice(1).join(' ') || 'no reason';
     try { await target.kick(reason); } catch { return message.reply("couldn't kick them"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`<@${target.user.id}> has been kicked`)
+    return message.reply({ embeds: [baseEmbed().setTitle('kicked').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`<@${target.user.id}> has been kicked`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
   }
 
@@ -3422,7 +3430,7 @@ client.on('messageCreate', async message => {
       await message.guild.members.unban(userId, reason);
       let username = userId;
       try { const fetched = await client.users.fetch(userId); username = fetched.tag; } catch {}
-      return message.reply({ embeds: [baseEmbed().setTitle('unbanned').setColor(0xFFFFFF)
+      return message.reply({ embeds: [baseEmbed().setTitle('unbanned').setColor(0x8B0000)
         .addFields({ name: 'user', value: username, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setTimestamp()] });
     } catch (err) { return message.reply(`couldn't unban — ${err.message}`); }
   }
@@ -3434,7 +3442,7 @@ client.on('messageCreate', async message => {
     if (minutes < 1 || minutes > 40320) return message.reply('has to be between 1 and 40320 mins');
     const reason = args.slice(2).join(' ') || 'no reason';
     try { await target.timeout(minutes * 60 * 1000, reason); } catch { return message.reply("couldn't time them out"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been timed`)
+    return message.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been timed`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'duration', value: `${minutes}m`, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -3442,7 +3450,7 @@ client.on('messageCreate', async message => {
     const target = message.mentions.members.first();
     if (!target) return message.reply('mention someone');
     try { await target.timeout(null); } catch { return message.reply("couldn't remove their timeout"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('timeout removed').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('timeout removed').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
@@ -3451,7 +3459,7 @@ client.on('messageCreate', async message => {
     if (!target) return message.reply('mention someone');
     const reason = args.slice(1).join(' ') || 'no reason';
     try { await target.timeout(28 * 24 * 60 * 60 * 1000, reason); } catch { return message.reply("couldn't mute them"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
+    return message.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -3459,7 +3467,7 @@ client.on('messageCreate', async message => {
     const target = message.mentions.members.first();
     if (!target) return message.reply('mention someone');
     try { await target.timeout(null); } catch { return message.reply("couldn't unmute them"); }
-    return message.reply({ embeds: [baseEmbed().setTitle('unmuted').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('unmuted').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
@@ -3470,7 +3478,7 @@ client.on('messageCreate', async message => {
     if (hushedData[target.id]) return message.reply(`**${target.user.tag}** is already hushed — use \`${prefix}unhush\` to remove it`);
     hushedData[target.id] = { hushedBy: message.author.id, at: Date.now() };
     saveHushed(hushedData);
-    return message.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been hushed`)
+    return message.reply({ embeds: [baseEmbed().setTitle('hushed').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been hushed`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -3480,7 +3488,7 @@ client.on('messageCreate', async message => {
     const hushedData = loadHushed();
     if (!hushedData[target.id]) return message.reply(`**${target.user.tag}** isn't hushed`);
     delete hushedData[target.id]; saveHushed(hushedData);
-    return message.reply({ embeds: [baseEmbed().setTitle('unhushed').setColor(0xFFFFFF).setThumbnail(target.user.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('unhushed').setColor(0x8B0000).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
@@ -3493,7 +3501,7 @@ client.on('messageCreate', async message => {
     if (skullData[message.guild.id].includes(target.id)) return message.reply(`already skulling **${target.tag}**`);
     skullData[message.guild.id].push(target.id);
     saveSkull(skullData);
-    return message.reply({ embeds: [baseEmbed().setTitle('skull').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('skull').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`now reacting to every message from **${target.tag}** with 💀`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
@@ -3506,7 +3514,7 @@ client.on('messageCreate', async message => {
     if (!skullData[message.guild.id]?.includes(target.id)) return message.reply(`not skulling **${target.tag}**`);
     skullData[message.guild.id] = skullData[message.guild.id].filter(id => id !== target.id);
     saveSkull(skullData);
-    return message.reply({ embeds: [baseEmbed().setTitle('unskull').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('unskull').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`stopped skulling **${target.tag}**`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
@@ -3520,7 +3528,7 @@ client.on('messageCreate', async message => {
     if (annoyData[message.guild.id].includes(target.id)) return message.reply(`already annoying **${target.tag}**`);
     annoyData[message.guild.id].push(target.id);
     saveAnnoy(annoyData);
-    return message.reply({ embeds: [baseEmbed().setTitle('annoy').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('annoy').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`now reacting to every message from **${target.tag}** with 10 random emojis`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
@@ -3533,23 +3541,23 @@ client.on('messageCreate', async message => {
     if (!annoyData[message.guild.id]?.includes(target.id)) return message.reply(`not annoying **${target.tag}**`);
     annoyData[message.guild.id] = annoyData[message.guild.id].filter(id => id !== target.id);
     saveAnnoy(annoyData);
-    return message.reply({ embeds: [baseEmbed().setTitle('unannoy').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+    return message.reply({ embeds: [baseEmbed().setTitle('unannoy').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
       .setDescription(`stopped annoying **${target.tag}**`)
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'mod', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
   if (command === 'lock') {
-    try { await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }); return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔒 channel locked')] }); }
+    try { await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }); return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔒 channel locked')] }); }
     catch { return message.reply("couldn't lock the channel, check my perms"); }
   }
 
   if (command === 'unlock') {
-    try { await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null }); return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('🔓 channel unlocked')] }); }
+    try { await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null }); return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('🔓 channel unlocked')] }); }
     catch { return message.reply("couldn't unlock the channel, check my perms"); }
   }
 
   if (command === 'nuke') {
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.nuke`')] });
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.nuke`')] });
     if (!message.guild) return;
     try {
       const ch = message.channel;
@@ -3566,7 +3574,7 @@ client.on('messageCreate', async message => {
       await newCh.send({
         embeds: [
           baseEmbed()
-            .setColor(0xFFFFFF)
+            .setColor(0x8B0000)
             .setTitle('channel nuked')
             .setDescription(`nuked by **${nuker}**`)
             .setTimestamp()
@@ -3587,7 +3595,7 @@ client.on('messageCreate', async message => {
       const acMessage = args.slice(1).join(' ') || 'Activity Check';
       checks[message.guild.id] = { startedBy: message.author.id, startedAt: Date.now(), active: true, checkins: [], acMessage };
       saveActivityCheck(checks);
-      const acEmbed = baseEmbed().setColor(0xFFFFFF).setTitle(acMessage)
+      const acEmbed = baseEmbed().setColor(0x8B0000).setTitle(acMessage)
         .setDescription('Click react to react to activity check!')
         .addFields({ name: 'started by', value: message.author.tag, inline: true })
         .setTimestamp();
@@ -3605,7 +3613,7 @@ client.on('messageCreate', async message => {
       checks[message.guild.id] = { active: false };
       saveActivityCheck(checks);
       const checkinList = checkins.length ? checkins.map(id => `<@${id}>`).join(', ') : 'nobody checked in';
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`${acMessage} — Ended`)
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle(`${acMessage} — Ended`)
         .addFields(
           { name: 'ended by', value: message.author.tag, inline: true },
           { name: 'started by', value: `<@${startedBy}>`, inline: true },
@@ -3621,7 +3629,7 @@ client.on('messageCreate', async message => {
     if (!newPrefix) return message.reply(`prefix is \`${prefix}\` rn`);
     if (newPrefix.length > 5) return message.reply("prefix can't be more than 5 chars");
     const cfg = loadConfig(); cfg.prefix = newPrefix; saveConfig(cfg);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`prefix is \`${newPrefix}\` now`)] });
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`prefix is \`${newPrefix}\` now`)] });
   }
 
   if (command === 'status') {
@@ -3632,7 +3640,7 @@ client.on('messageCreate', async message => {
     const statusData = { type, text };
     applyStatus(statusData);
     const cfg = loadConfig(); cfg.status = statusData; saveConfig(cfg);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`status changed to **${type}** ${text}`)] });
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`status changed to **${type}** ${text}`)] });
   }
 
   if (command === 'afk') {
@@ -3640,7 +3648,7 @@ client.on('messageCreate', async message => {
     const afk = loadAfk();
     afk[message.author.id] = { reason, since: Date.now() };
     saveAfk(afk);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`You're now AFK${reason ? `: ${reason}` : '.'}`)], allowedMentions: { repliedUser: false } });
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`You're now AFK${reason ? `: ${reason}` : '.'}`)], allowedMentions: { repliedUser: false } });
   }
 
   if (command === 'restart') {
@@ -3670,7 +3678,7 @@ client.on('messageCreate', async message => {
       const content = full.slice(pipeIdx + 1).trim();
       if (!name || !content) return message.reply('do it like: tag [name] | [content]');
       const tags = loadTags(); const isNew = !tags[name]; tags[name] = content; saveTags(tags);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
     }
     const robloxUser = args[0];
     const tagName    = args.slice(1).join(' ').toLowerCase();
@@ -3679,10 +3687,10 @@ client.on('messageCreate', async message => {
     if (!tags[tagName]) return message.reply(`no tag called **${tagName}** exists`);
     const roleId = tags[tagName].trim();
     if (isNaN(Number(roleId))) return message.reply(`tag **${tagName}** doesn't have a valid role id`);
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`ranking **${robloxUser}**...`)] });
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ranking **${robloxUser}**...`)] });
     try {
       const result = await rankRobloxUser(robloxUser, roleId);
-      const embed  = baseEmbed().setTitle('got em ranked').setColor(0xFFFFFF)
+      const embed  = baseEmbed().setTitle('got em ranked').setColor(0x8B0000)
         .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true })
         .setFooter({ text: `ranked by ${message.author.tag}` }).setTimestamp();
       if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
@@ -3692,19 +3700,19 @@ client.on('messageCreate', async message => {
       if (!taggedMembers[tagName]) taggedMembers[tagName] = [];
       if (!taggedMembers[tagName].includes(result.displayName)) taggedMembers[tagName].push(result.displayName);
       saveTaggedMembers(taggedMembers);
-      const logEmbed = baseEmbed().setTitle('rank log').setColor(0xFFFFFF)
+      const logEmbed = baseEmbed().setTitle('rank log').setColor(0x8B0000)
         .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true },
           { name: 'ranked by', value: `<@${message.author.id}>`, inline: true }, { name: 'channel', value: `<#${message.channel.id}>`, inline: true })
         .setFooter({ text: `roblox id: ${result.userId}` }).setTimestamp();
       if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
       await sendLog(message.guild, logEmbed);
-    } catch (err) { await status.edit({ content: '', embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't rank them - ${err.message}`)] }); }
+    } catch (err) { await status.edit({ content: '', embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't rank them - ${err.message}`)] }); }
     return;
   }
 
   if (command === 'strip') {
     if (!message.guild) return;
-    if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription("you're not whitelisted to use `.strip`")] });
+    if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("you're not whitelisted to use `.strip`")] });
     const robloxUser = args[0];
     const reason = args.slice(1).join(' ');
     if (!robloxUser) return message.reply(`usage: \`${prefix}strip [robloxUsername] [reason]\``);
@@ -3718,7 +3726,7 @@ client.on('messageCreate', async message => {
       if (!rank2) return message.reply("couldn't find a rank 1 role in the group");
       rank2RoleId = String(rank2.id);
     } catch { return message.reply("couldn't fetch group roles, try again"); }
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`stripping **${robloxUser}**...`)] });
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`stripping **${robloxUser}**...`)] });
     try {
       let result;
       let skipReason = null;
@@ -3738,7 +3746,7 @@ client.on('messageCreate', async message => {
           throw rankErr;
         }
       }
-      const embed = baseEmbed().setTitle('strip').setColor(0xFFFFFF)
+      const embed = baseEmbed().setTitle('strip').setColor(0x8B0000)
         .addFields(
           { name: 'user', value: result.displayName, inline: true },
           { name: 'stripped by', value: message.author.tag, inline: true },
@@ -3748,7 +3756,7 @@ client.on('messageCreate', async message => {
       if (skipReason) embed.setFooter({ text: skipReason });
       if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
       await status.edit({ content: '', embeds: [embed] });
-      const logEmbed = baseEmbed().setTitle('strip log').setColor(0xFFFFFF)
+      const logEmbed = baseEmbed().setTitle('strip log').setColor(0x8B0000)
         .addFields(
           { name: 'user', value: result.displayName, inline: true },
           { name: 'stripped by', value: `<@${message.author.id}>`, inline: true },
@@ -3757,8 +3765,8 @@ client.on('messageCreate', async message => {
       if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
       await sendStripLog(message.guild, logEmbed);
     } catch (err) {
-      await status.edit({ content: '', embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't strip them — ${err.message}`)] });
-      const failEmbed = baseEmbed().setTitle('strip failed').setColor(0xFFFFFF)
+      await status.edit({ content: '', embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't strip them — ${err.message}`)] });
+      const failEmbed = baseEmbed().setTitle('strip failed').setColor(0x8B0000)
         .addFields(
           { name: 'user', value: robloxUser, inline: true },
           { name: 'attempted by', value: `<@${message.author.id}>`, inline: true },
@@ -3772,7 +3780,7 @@ client.on('messageCreate', async message => {
 
   if (command === 'striptag') {
     if (!message.guild) return;
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can run `.striptag`')] });
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can run `.striptag`')] });
     const tagName = args.join(' ').toLowerCase();
     if (!tagName) return message.reply(`usage: \`${prefix}striptag [tagname]\``);
     const tags = loadTags();
@@ -3796,7 +3804,7 @@ client.on('messageCreate', async message => {
       new ButtonBuilder().setCustomId('striptag_confirm').setLabel('Confirm').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('striptag_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger)
     );
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('confirm striptag')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('confirm striptag')
       .setDescription(`are you sure you want to strip **${members.length}** user${members.length !== 1 ? 's' : ''} from tag **${tagName}** and rank them all to rank 2?\n\n**Users:** ${members.join(', ')}`)
       .setFooter({ text: 'this confirmation expires in 60 seconds' })], components: [confirmRow] });
   }
@@ -3808,7 +3816,7 @@ client.on('messageCreate', async message => {
       const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
       if (!data.roles?.length) return message.reply('no roles found for this group');
       const lines = data.roles.sort((a, b) => a.rank - b.rank).map(r => `\`${String(r.rank).padStart(3, '0')}\`  **${r.name}**  —  ID: \`${r.id}\``);
-      return message.reply({ embeds: [baseEmbed().setTitle('group roles').setColor(0xFFFFFF).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setTitle('group roles').setColor(0x8B0000).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
     } catch { return message.reply("couldn't load group roles, try again"); }
   }
 
@@ -3816,14 +3824,14 @@ client.on('messageCreate', async message => {
     const ch = message.mentions.channels?.first();
     if (!ch?.isTextBased()) return message.reply('mention a text channel');
     const cfg2 = loadConfig(); cfg2.logChannelId = ch.id; saveConfig(cfg2);
-    return message.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0xFFFFFF).setDescription(`logs going to ${ch} now`).setTimestamp()] });
+    return message.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0x8B0000).setDescription(`logs going to ${ch} now`).setTimestamp()] });
   }
 
   if (command === 'tagstrip') {
     const ch = message.mentions.channels?.first();
     if (!ch?.isTextBased()) return message.reply('mention a text channel — e.g. `.tagstrip #strip-logs`');
     const cfg2 = loadConfig(); cfg2.stripLogChannelId = ch.id; saveConfig(cfg2);
-    return message.reply({ embeds: [baseEmbed().setTitle('strip log channel set').setColor(0xFFFFFF).setDescription(`.strip and .striptag logs will now go to ${ch}`).setTimestamp()] });
+    return message.reply({ embeds: [baseEmbed().setTitle('strip log channel set').setColor(0x8B0000).setDescription(`.strip and .striptag logs will now go to ${ch}`).setTimestamp()] });
   }
 
   if (command === 'jail') {
@@ -3844,7 +3852,7 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'dm') {
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.dm`')] });
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.dm`')] });
     // .dm @user/userId/roleId <message>
     const rawTarget = args[0];
     if (!rawTarget) return message.reply(`usage: \`${prefix}dm @user/roleId/userId message\``);
@@ -3862,16 +3870,16 @@ client.on('messageCreate', async message => {
       const members = roleMention.members;
       if (!members.size) return message.reply("no members have that role");
       let sent = 0, failed = 0;
-      const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`sending DMs to **${members.size}** members with ${roleMention}...`)] });
+      const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`sending DMs to **${members.size}** members with ${roleMention}...`)] });
       for (const [, member] of members) {
         if (member.user.bot) continue;
         try {
-          await member.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+          await member.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
           sent++;
         } catch { failed++; }
         await new Promise(r => setTimeout(r, 500)); // rate limit buffer
       }
-      return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`done — sent: **${sent}**, failed: **${failed}**`)] });
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`done — sent: **${sent}**, failed: **${failed}**`)] });
     }
 
     // Single user: @mention or raw ID
@@ -3883,8 +3891,8 @@ client.on('messageCreate', async message => {
     }
     if (targetUser.bot) return message.reply("can't DM a bot");
     try {
-      await targetUser.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`DM sent to **${targetUser.tag}**`)] });
+      await targetUser.send({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`DM sent to **${targetUser.tag}**`)] });
     } catch {
       return message.reply(`couldn't DM **${targetUser.tag}** — they might have DMs off`);
     }
@@ -3898,7 +3906,7 @@ client.on('messageCreate', async message => {
     const groupId = vc[message.guild.id]?.groupId;
     const wlRoles = (vwl[message.guild.id]?.roles || []).map(id => `<@&${id}>`).join(', ') || 'none';
     const wlUsers = (vwl[message.guild.id]?.users || []).map(id => `<@${id}>`).join(', ') || 'none';
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify System Status')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify System Status')
       .addFields(
         { name: 'verify role', value: roleId ? `<@&${roleId}>` : 'not set', inline: true },
         { name: 'group id', value: groupId || 'not set', inline: true },
@@ -3915,7 +3923,7 @@ client.on('messageCreate', async message => {
     if (!vc[message.guild.id]) vc[message.guild.id] = {};
     vc[message.guild.id].roleId = role.id;
     saveVerifyConfig(vc);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Role Set')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Role Set')
       .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
@@ -3933,7 +3941,7 @@ client.on('messageCreate', async message => {
       if (!target) return message.reply(`mention a user to verify — e.g. \`${prefix}verify @user\``);
       try {
         await target.roles.add(guildVc.roleId, `verified by ${message.author.tag}`);
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verified')
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verified')
           .setThumbnail(target.user.displayAvatarURL())
           .addFields(
             { name: 'user', value: `<@${target.id}>`, inline: true },
@@ -3948,8 +3956,8 @@ client.on('messageCreate', async message => {
 
     if (sub === 'status') {
       const linked = vData.verified?.[message.author.id];
-      if (!linked) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`you have no linked Roblox account\n\nRun \`${prefix}verify YourRobloxUsername\` to get started`)] });
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Linked Account')
+      if (!linked) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`you have no linked Roblox account\n\nRun \`${prefix}verify YourRobloxUsername\` to get started`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Linked Account')
         .addFields(
           { name: 'Discord', value: `${message.author}`, inline: true },
           { name: 'Roblox',  value: `[\`${linked.robloxName}\`](https://www.roblox.com/users/${linked.robloxId}/profile)`, inline: true }
@@ -3962,7 +3970,7 @@ client.on('messageCreate', async message => {
       delete vData.verified[message.author.id];
       if (vData.robloxToDiscord?.[String(linked.robloxId)]) delete vData.robloxToDiscord[String(linked.robloxId)];
       saveVerify(vData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`unlinked \`${linked.robloxName}\` from your account`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`unlinked \`${linked.robloxName}\` from your account`)] });
     }
 
     if (sub === 'confirm') {
@@ -3971,17 +3979,17 @@ client.on('messageCreate', async message => {
       const { robloxId, robloxName, code } = pending;
       if (Date.now() - pending.startedAt > 15 * 60 * 1000) {
         delete vData.pending[message.author.id]; saveVerify(vData);
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`code expired — run \`${prefix}verify ${robloxName}\` again for a new one`)] });
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`code expired — run \`${prefix}verify ${robloxName}\` again for a new one`)] });
       }
       let description = '';
       try {
         const profileRes = await (await fetch(`https://users.roblox.com/v1/users/${robloxId}`)).json();
         description = profileRes.description || '';
       } catch {
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('failed to reach Roblox — try again in a moment')] });
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('failed to reach Roblox — try again in a moment')] });
       }
       if (!description.includes(code)) {
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Code Not Found').setDescription([
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Code Not Found').setDescription([
           `The code wasn't found in **${robloxName}**'s bio yet.`,
           ``, `Your code: \`${code}\``, ``,
           `**Make sure you:**`,
@@ -3997,7 +4005,7 @@ client.on('messageCreate', async message => {
       vData.robloxToDiscord[String(robloxId)] = message.author.id;
       delete vData.pending[message.author.id];
       saveVerify(vData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verification Successful')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verification Successful')
         .setDescription(`your Discord account is now linked to **${robloxName}**`)
         .addFields(
           { name: 'Discord', value: `${message.author}`, inline: true },
@@ -4015,15 +4023,15 @@ client.on('messageCreate', async message => {
       })).json();
       robloxUser = res.data?.[0];
     } catch {}
-    if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't find a Roblox user named \`${inputName}\``)] });
+    if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find a Roblox user named \`${inputName}\``)] });
     const existingDiscordId = vData.robloxToDiscord?.[String(robloxUser.id)];
     if (existingDiscordId && existingDiscordId !== message.author.id)
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`\`${robloxUser.name}\` is already linked to another Discord account`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`\`${robloxUser.name}\` is already linked to another Discord account`)] });
     const code = `mtxx-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     if (!vData.pending) vData.pending = {};
     vData.pending[message.author.id] = { robloxId: robloxUser.id, robloxName: robloxUser.name, code, startedAt: Date.now() };
     saveVerify(vData);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Roblox Verification').setDescription([
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Roblox Verification').setDescription([
       `Verifying as **${robloxUser.name}** — follow these steps:`,
       ``,
       `**1.** Open your Roblox profile:`,
@@ -4046,7 +4054,7 @@ client.on('messageCreate', async message => {
     if (vwl[message.guild.id].roles.includes(role.id)) return message.reply(`<@&${role.id}> is already whitelisted`);
     vwl[message.guild.id].roles.push(role.id);
     saveVerifyWhitelist(vwl);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Whitelist — Role Added')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — Role Added')
       .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
@@ -4059,7 +4067,7 @@ client.on('messageCreate', async message => {
     if (vwl[message.guild.id].users.includes(target.id)) return message.reply(`**${target.tag}** is already whitelisted`);
     vwl[message.guild.id].users.push(target.id);
     saveVerifyWhitelist(vwl);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Whitelist — User Added')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — User Added')
       .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
@@ -4082,7 +4090,7 @@ client.on('messageCreate', async message => {
       lines.push(`user: ${target.tag}`);
     }
     saveVerifyWhitelist(vwl);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verify Whitelist — Removed')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — Removed')
       .setDescription(lines.join('\n'))
       .addFields({ name: 'removed by', value: message.author.tag, inline: true }).setTimestamp()] });
   }
@@ -4109,7 +4117,7 @@ client.on('messageCreate', async message => {
       if (action === 'rank') {
         if (!value) return message.reply('give a role id to rank them to');
         const result = await rankRobloxUser(username, value);
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Ranked')
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Ranked')
           .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'role id', value: value, inline: true }).setTimestamp()] });
       }
       if (action === 'exile') {
@@ -4121,7 +4129,7 @@ client.on('messageCreate', async message => {
           method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
         });
         if (!res.ok) return message.reply(`couldn't exile — HTTP ${res.status}`);
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Exiled')
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Exiled')
           .addFields({ name: 'user', value: userBasic.name, inline: true }, { name: 'exiled by', value: message.author.tag, inline: true }).setTimestamp()] });
       }
       return message.reply(`unknown action — use check, rank, or exile`);
@@ -4131,18 +4139,18 @@ client.on('messageCreate', async message => {
   if (command === 'wlmanager') {
     const sub = args[0]?.toLowerCase();
     const mgrs = loadWlManagers();
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use this')] });
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use this')] });
     if (sub === 'list') {
       const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)])];
-      if (!all.length) return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription('no managers set')] });
-      return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()}> (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
+      if (!all.length) return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x8B0000).setDescription('no managers set')] });
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x8B0000).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()}> (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
     }
     if (sub === 'add') {
       const target = message.mentions.users?.first();
       if (!target) return message.reply('mention a user to add');
       if (mgrs.includes(target.id)) return message.reply(`**${target.tag}** is already a whitelist manager`);
       mgrs.push(target.id); saveWlManagers(mgrs);
-      return message.reply({ embeds: [baseEmbed().setTitle('whitelist manager added').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist manager added').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'remove') {
@@ -4150,7 +4158,7 @@ client.on('messageCreate', async message => {
       if (!target) return message.reply('mention a user to remove');
       if (!mgrs.includes(target.id)) return message.reply(`**${target.tag}** isn't a whitelist manager`);
       saveWlManagers(mgrs.filter(id => id !== target.id));
-      return message.reply({ embeds: [baseEmbed().setTitle('whitelist manager removed').setColor(0xFFFFFF).setThumbnail(target.displayAvatarURL())
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist manager removed').setColor(0x8B0000).setThumbnail(target.displayAvatarURL())
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'removed by', value: message.author.tag, inline: true }).setTimestamp()] });
     }
     return message.reply(`usage: \`${prefix}wlmanager [add/remove/list] [@user]\``);
@@ -4170,17 +4178,17 @@ client.on('messageCreate', async message => {
       if (!autoroleData[message.guild.id]) autoroleData[message.guild.id] = {};
       autoroleData[message.guild.id].roleId = role.id;
       saveAutorole(autoroleData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Autorole Set')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Autorole Set')
         .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'disable') {
       if (autoroleData[message.guild.id]) delete autoroleData[message.guild.id].roleId;
       saveAutorole(autoroleData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Autorole Disabled').setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Autorole Disabled').setTimestamp()] });
     }
     if (sub === 'status') {
       const roleId = autoroleData[message.guild.id]?.roleId;
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Autorole Status')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Autorole Status')
         .addFields({ name: 'status', value: roleId ? 'enabled' : 'disabled', inline: true },
           roleId ? { name: 'role', value: `<@&${roleId}>`, inline: true } : { name: 'role', value: 'not set', inline: true }
         ).setTimestamp()] });
@@ -4198,7 +4206,7 @@ client.on('messageCreate', async message => {
       if (!ch?.isTextBased()) return message.reply('mention a text channel');
       welcomeData[message.guild.id].channelId = ch.id;
       saveWelcome(welcomeData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Channel Set')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Channel Set')
         .addFields({ name: 'channel', value: `${ch}`, inline: true }).setTimestamp()] });
     }
     if (sub === 'message' || sub === 'setmessage') {
@@ -4206,17 +4214,17 @@ client.on('messageCreate', async message => {
       if (!msg) return message.reply('give a message (use {user}, {guild}, {membercount})');
       welcomeData[message.guild.id].message = msg;
       saveWelcome(welcomeData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Message Set')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Message Set')
         .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}` `{membercount}`' }).setTimestamp()] });
     }
     if (sub === 'disable') {
       delete welcomeData[message.guild.id];
       saveWelcome(welcomeData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Messages Disabled').setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Messages Disabled').setTimestamp()] });
     }
     if (sub === 'status') {
       const gw = welcomeData[message.guild.id];
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Welcome Status')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Welcome Status')
         .addFields(
           { name: 'channel', value: gw?.channelId ? `<#${gw.channelId}>` : 'not set', inline: true },
           { name: 'message', value: gw?.message || 'not set' }
@@ -4233,13 +4241,13 @@ client.on('messageCreate', async message => {
       if (!aiData[message.guild.id]) aiData[message.guild.id] = {};
       aiData[message.guild.id].enabled = true;
       saveAntiinvite(aiData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Anti-Invite Enabled')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Anti-Invite Enabled')
         .setDescription('Discord invite links will now be auto-deleted').setTimestamp()] });
     }
     if (sub === 'disable' || sub === 'off') {
       if (aiData[message.guild.id]) aiData[message.guild.id].enabled = false;
       saveAntiinvite(aiData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Anti-Invite Disabled').setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Anti-Invite Disabled').setTimestamp()] });
     }
     const enabled = aiData[message.guild.id]?.enabled ?? false;
     return message.reply(`anti-invite is currently **${enabled ? 'enabled' : 'disabled'}** — use \`${prefix}antiinvite enable/disable\``);
@@ -4253,13 +4261,13 @@ client.on('messageCreate', async message => {
       if (!adData[message.guild.id]) adData[message.guild.id] = {};
       adData[message.guild.id].enabled = true;
       saveAltdentifier(adData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Altdentifier Enabled')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Altdentifier Enabled')
         .setDescription('Accounts younger than 14 days will be kicked on join').setTimestamp()] });
     }
     if (sub === 'disable' || sub === 'off') {
       if (adData[message.guild.id]) adData[message.guild.id].enabled = false;
       saveAltdentifier(adData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Altdentifier Disabled').setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Altdentifier Disabled').setTimestamp()] });
     }
     const enabled = adData[message.guild.id]?.enabled ?? false;
     return message.reply(`altdentifier is currently **${enabled ? 'enabled' : 'disabled'}** — use \`${prefix}altdentifier enable/disable\``);
@@ -4276,17 +4284,17 @@ client.on('messageCreate', async message => {
       jdData[message.guild.id].message = msg;
       jdData[message.guild.id].enabled = true;
       saveJoindm(jdData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Join DM Set')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Join DM Set')
         .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}`' }).setTimestamp()] });
     }
     if (sub === 'disable' || sub === 'off') {
       jdData[message.guild.id].enabled = false;
       saveJoindm(jdData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Join DM Disabled').setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Join DM Disabled').setTimestamp()] });
     }
     if (sub === 'status') {
       const gd = jdData[message.guild.id];
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Join DM Status')
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Join DM Status')
         .addFields(
           { name: 'status', value: gd?.enabled ? 'enabled' : 'disabled', inline: true },
           { name: 'message', value: gd?.message || 'not set' }
@@ -4303,7 +4311,7 @@ client.on('messageCreate', async message => {
     if (!logsData[message.guild.id]) logsData[message.guild.id] = {};
     logsData[message.guild.id].channelId = ch.id;
     saveLogs(logsData);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Logs Channel Set')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Logs Channel Set')
       .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
   }
 
@@ -4532,7 +4540,7 @@ client.on('messageCreate', async message => {
     if (isNaN(amount) || amount < 1 || amount > 100) return message.reply('give a number between 1 and 100');
     try {
       const deleted = await message.channel.bulkDelete(amount, true);
-      const confirm = await message.channel.send({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`deleted **${deleted.size}** messages`)] });
+      const confirm = await message.channel.send({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`deleted **${deleted.size}** messages`)] });
       setTimeout(() => confirm.delete().catch(() => {}), 4000);
     } catch (err) { return message.reply(`couldn't purge — ${err.message}`); }
     return;
@@ -4594,7 +4602,7 @@ client.on('messageCreate', async message => {
     if (!cfg.serverConfig[message.guild.id]) cfg.serverConfig[message.guild.id] = {};
     cfg.serverConfig[message.guild.id][setting] = value;
     saveConfig(cfg);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Config Updated')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Config Updated')
       .addFields({ name: setting, value: value, inline: true }).setTimestamp()] });
   }
 
@@ -4649,7 +4657,7 @@ client.on('messageCreate', async message => {
       const vanityTag = gv.vanityCode ? `/${gv.vanityCode}` : null;
       if (!picRId)    return message.reply('set a pic role first with `.vanityset set @role`');
       if (!vanityTag) return message.reply('set a vanity first with `.vanityset set`');
-      const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('syncing vanity roles...')] });
+      const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('syncing vanity roles...')] });
       let granted = 0, revoked = 0;
       for (const [, member] of message.guild.members.cache) {
         if (member.user.bot) continue;
@@ -4672,7 +4680,7 @@ client.on('messageCreate', async message => {
   if (command === 'role' || command === 'r') {
     if (!message.guild) return;
     if (!isWlManager(message.author.id))
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.role`')] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.role`')] });
 
     // support both @mention and raw user ID for the target member
     let targetMember = message.mentions.members?.first();
@@ -4727,7 +4735,7 @@ client.on('messageCreate', async message => {
     if (removed.length) lines.push(`➖ Removed ${removed.join(', ')} from ${targetMember}`);
     if (failed.length)  lines.push(`❌ Failed: ${failed.join(', ')} (missing perms?)`);
 
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(lines.join('\n') || 'nothing changed')] });
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(lines.join('\n') || 'nothing changed')] });
   }
 
   // ── .inrole ───────────────────────────────────────────────────────────────────
@@ -4747,7 +4755,7 @@ client.on('messageCreate', async message => {
     await message.guild.members.fetch();
     const members = message.guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(role.id));
 
-    if (!members.size) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
+    if (!members.size) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
 
     const lines = [...members.values()]
       .sort((a, b) => a.user.username.localeCompare(b.user.username))
@@ -4759,7 +4767,7 @@ client.on('messageCreate', async message => {
     for (let i = 0; i < lines.length; i += CHUNK) chunks.push(lines.slice(i, i + CHUNK));
 
     for (let i = 0; i < chunks.length; i++) {
-      const e = baseEmbed().setColor(0xFFFFFF)
+      const e = baseEmbed().setColor(0x8B0000)
         .setTitle(i === 0 ? `Members with ${role.name}` : `Members with ${role.name} (cont.)`)
         .setDescription(chunks[i])
         .setFooter({ text: `${members.size} total member${members.size !== 1 ? 's' : ''}`, iconURL: LOGO_URL });
@@ -4783,7 +4791,7 @@ client.on('messageCreate', async message => {
       const avatarUrl = avatarRes.data?.[0]?.imageUrl;
       const created = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const e = baseEmbed()
-        .setColor(0xFFFFFF)
+        .setColor(0x8B0000)
         .setTitle(`${user.displayName} (@${user.name})`)
         .setURL(profileUrl)
         .setThumbnail(avatarUrl)
@@ -4804,20 +4812,20 @@ client.on('messageCreate', async message => {
   // ── .leaveserver (WL managers only) ──────────────────────────────────────────
   if (command === 'leaveserver') {
     if (!isWlManager(message.author.id))
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.leaveserver`')] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.leaveserver`')] });
 
     const serverId = args[0];
 
     if (serverId) {
       const targetGuild = client.guilds.cache.get(serverId);
       if (!targetGuild) return message.reply(`i'm not in a server with id \`${serverId}\``);
-      const reply = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${targetGuild.name}**...`)] });
+      const reply = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`leaving **${targetGuild.name}**...`)] });
       try { await targetGuild.leave(); } catch (e) { return reply.edit(`couldn't leave — ${e.message}`); }
       return;
     }
 
     if (!message.guild) return message.reply('use this in a server or provide a server id as an argument');
-    await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${message.guild.name}**...`)] });
+    await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`leaving **${message.guild.name}**...`)] });
     try { await message.guild.leave(); } catch (e) { return message.reply(`couldn't leave — ${e.message}`); }
     return;
   }
@@ -4825,7 +4833,7 @@ client.on('messageCreate', async message => {
   // ── .servers (WL managers only) ──────────────────────────────────────────────
   if (command === 'servers') {
     if (!isWlManager(message.author.id))
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.servers`')] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.servers`')] });
 
     const guilds = [...client.guilds.cache.values()].sort((a, b) => a.name.localeCompare(b.name));
     if (!guilds.length) return message.reply('not in any servers');
@@ -4846,7 +4854,7 @@ client.on('messageCreate', async message => {
     if (current) chunks.push(current);
 
     for (let i = 0; i < chunks.length; i++) {
-      const e = baseEmbed().setColor(0xFFFFFF)
+      const e = baseEmbed().setColor(0x8B0000)
         .setTitle(i === 0 ? `Servers (${guilds.length})` : `Servers (cont.)`)
         .setDescription(chunks[i]);
       await message.reply({ embeds: [e] });
@@ -4900,7 +4908,7 @@ client.on('messageCreate', async message => {
 
     if (!allTargets.length) return message.reply("couldn't find any users to rank up");
 
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`ranking up **${allTargets.length}** user${allTargets.length !== 1 ? 's' : ''}...`)] });
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ranking up **${allTargets.length}** user${allTargets.length !== 1 ? 's' : ''}...`)] });
 
     let completed = 0, skipped = 0;
     const rolesAwarded = [];
@@ -4938,7 +4946,7 @@ client.on('messageCreate', async message => {
 
     const summaryEmbed = baseEmbed()
       .setTitle('Rankup Complete')
-      .setColor(0xFFFFFF)
+      .setColor(0x8B0000)
       .setDescription('```\n' + resultLines + '\n```')
       .setTimestamp();
 
@@ -4946,7 +4954,7 @@ client.on('messageCreate', async message => {
 
     if (rolesAwarded.length) {
       const awardLines = rolesAwarded.map(({ member, roleName }) => `${member} - @@ ${roleName}`).join('\n');
-      embeds.push(baseEmbed().setTitle('ROLES AWARDED').setColor(0xFFFFFF).setDescription(awardLines).setTimestamp());
+      embeds.push(baseEmbed().setTitle('ROLES AWARDED').setColor(0x8B0000).setDescription(awardLines).setTimestamp());
     }
 
     return status.edit({ content: '', embeds });
@@ -4956,7 +4964,7 @@ client.on('messageCreate', async message => {
   if (command === 'setrankroles') {
     if (!message.guild) return;
     if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('you need to be whitelisted to configure rank roles')] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('you need to be whitelisted to configure rank roles')] });
 
     const sub = args[0]?.toLowerCase();
 
@@ -4964,14 +4972,14 @@ client.on('messageCreate', async message => {
       const rankup = loadRankup();
       delete rankup[message.guild.id];
       saveRankup(rankup);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('rank roles cleared for this server')] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('rank roles cleared for this server')] });
     }
 
     if (sub === 'list') {
       const guildRanks = loadRankup()[message.guild.id]?.roles || [];
       if (!guildRanks.length) return message.reply(`no rank roles set — use \`${prefix}setrankroles @role1 @role2 ...\` to configure`);
       const lines = guildRanks.map((id, i) => `**${i + 1}.** <@&${id}>`).join('\n');
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Rank Ladder').setDescription(lines).setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Rank Ladder').setDescription(lines).setTimestamp()] });
     }
 
     const collectedIds = [];
@@ -4994,7 +5002,7 @@ client.on('messageCreate', async message => {
     saveRankup(rankup);
 
     const lines = collectedIds.map((id, i) => `**${i + 1}.** <@&${id}>`).join('\n');
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Rank Ladder Set')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Rank Ladder Set')
       .setDescription(lines)
       .setFooter({ text: `${collectedIds.length} rank${collectedIds.length !== 1 ? 's' : ''} configured • lowest → highest`, iconURL: LOGO_URL })
       .setTimestamp()] });
@@ -5004,17 +5012,66 @@ client.on('messageCreate', async message => {
 
 
 
-  // ── .whois ─────────────────────────────────────────────────────────────────────
-  // .whois @discorduser   → shows their linked Roblox account
-  // .whois robloxname     → shows the linked Discord account
+  // ── .verifylist ───────────────────────────────────────────────────────────────
+  if (command === 'verifylist' || command === 'vlist') {
+    const vData   = loadVerify();
+    const entries = Object.entries(vData.verified || {});
+
+    if (!entries.length) {
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
+        .setTitle('Verified Accounts')
+        .setDescription('no one has linked their Roblox account yet')] });
+    }
+
+    // Build one line per user: Discord mention → Roblox username (linked profile)
+    const lines = [];
+    for (const [discordId, { robloxName, robloxId }] of entries) {
+      lines.push(`<@${discordId}> → [\`${robloxName}\`](https://www.roblox.com/users/${robloxId}/profile)`);
+    }
+
+    // Split into pages of 20 so embeds don't hit the 4096-char description limit
+    const PAGE_SIZE = 20;
+    const pages     = [];
+    for (let i = 0; i < lines.length; i += PAGE_SIZE) {
+      pages.push(lines.slice(i, i + PAGE_SIZE));
+    }
+
+    const totalPages = pages.length;
+    const buildPage  = (idx) => baseEmbed().setColor(0x8B0000)
+      .setTitle(`Verified Accounts [${entries.length}]`)
+      .setDescription(pages[idx].join('\n'))
+      .setFooter({ text: `Page ${idx + 1} of ${totalPages} • ${getBotName()}`, iconURL: LOGO_URL });
+
+    if (totalPages === 1) {
+      return message.reply({ embeds: [buildPage(0)] });
+    }
+
+    // Multi-page with buttons
+    const buildRow = (idx) => new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`vlist_${idx - 1}`).setLabel('‹ Back').setStyle(ButtonStyle.Secondary).setDisabled(idx === 0),
+      new ButtonBuilder().setCustomId(`vlist_${idx + 1}`).setLabel('Next ›').setStyle(ButtonStyle.Secondary).setDisabled(idx === totalPages - 1)
+    );
+
+    const reply = await message.reply({ embeds: [buildPage(0)], components: [buildRow(0)] });
+
+    const collector = reply.createMessageComponentCollector({ time: 5 * 60 * 1000 });
+    collector.on('collect', async i => {
+      if (i.user.id !== message.author.id) return i.reply({ content: 'only the command user can navigate', ephemeral: true });
+      const page = parseInt(i.customId.split('_')[1]);
+      await i.update({ embeds: [buildPage(page)], components: [buildRow(page)] });
+    });
+    collector.on('end', () => reply.edit({ components: [] }).catch(() => {}));
+    return;
+  }
+
   if (command === 'linked') {
     const vData = loadVerify();
     const mention = message.mentions.users.first();
 
     if (mention) {
       const linked = vData.verified?.[mention.id];
-      if (!linked) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`${mention} has no linked Roblox account`)] });
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+      if (!linked) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`${mention} has no linked Roblox account`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle('Linked Account')
         .addFields(
           { name: 'Discord', value: `${mention}`, inline: true },
@@ -5037,12 +5094,12 @@ client.on('messageCreate', async message => {
       robloxUser = res.data?.[0];
     } catch {}
 
-    if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't find Roblox user \`${inputName}\``)] });
+    if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find Roblox user \`${inputName}\``)] });
 
     const discordId = vData.robloxToDiscord?.[String(robloxUser.id)];
-    if (!discordId) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`\`${robloxUser.name}\` has no linked Discord account`)] });
+    if (!discordId) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`\`${robloxUser.name}\` has no linked Discord account`)] });
 
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
       .setTitle('Linked Account')
       .addFields(
         { name: 'Roblox',  value: `[\`${robloxUser.name}\`](https://www.roblox.com/users/${robloxUser.id}/profile)`, inline: true },
@@ -5070,7 +5127,7 @@ client.on('messageCreate', async message => {
       : message.channel;
 
     const status = await message.reply({
-      embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('scanning for raid members...')]
+      embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning for raid members...')]
     });
 
     try {
@@ -5134,11 +5191,51 @@ client.on('messageCreate', async message => {
           if (!isNaN(parsed) && parsed > 0) duration = parsed;
         } catch {}
 
-        // One frame every 0.5 s, capped at 30 frames so long videos stay fast
-        const step     = 0.5;
-        const maxFrames = 30;
-        const times    = [];
+        // One frame every 0.5 s, capped at 60 frames
+        const step      = 0.5;
+        const maxFrames = 60;
+        const times     = [];
         for (let t = 0; t < duration && times.length < maxFrames; t += step) times.push(+t.toFixed(2));
+
+        // Perceptual hash (dHash 8×8 = 56-bit) — skip frames visually identical
+        // to ones already processed so scroll-backs don't re-OCR the same content
+        const { createCanvas: _cc, loadImage: _li } = await import('canvas');
+        const seenHashes = [];
+        const HASH_SIZE  = 8;   // 8×8 dHash
+        const HASH_BITS  = HASH_SIZE * (HASH_SIZE - 1); // 56 bits per axis = 56
+        const SIM_THRESH = Math.floor(HASH_BITS * 0.12); // ~12 % different = new content
+
+        const dHash = async (imgPath) => {
+          try {
+            const img = await _li(imgPath);
+            const c   = _cc(HASH_SIZE + 1, HASH_SIZE);
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0, HASH_SIZE + 1, HASH_SIZE);
+            const px  = ctx.getImageData(0, 0, HASH_SIZE + 1, HASH_SIZE).data;
+            let hash  = 0n;
+            for (let row = 0; row < HASH_SIZE; row++) {
+              for (let col = 0; col < HASH_SIZE; col++) {
+                const i   = (row * (HASH_SIZE + 1) + col) * 4;
+                const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+                const j   = (row * (HASH_SIZE + 1) + col + 1) * 4;
+                const lum2= 0.299 * px[j] + 0.587 * px[j + 1] + 0.114 * px[j + 2];
+                hash = (hash << 1n) | (lum < lum2 ? 1n : 0n);
+              }
+            }
+            return hash;
+          } catch { return null; }
+        };
+
+        const hammingDist = (a, b) => {
+          let diff = a ^ b, dist = 0;
+          while (diff) { dist += Number(diff & 1n); diff >>= 1n; }
+          return dist;
+        };
+
+        const isTooSimilar = (hash) => {
+          if (hash === null) return false;
+          return seenHashes.some(h => hammingDist(h, hash) <= SIM_THRESH);
+        };
 
         for (const ts of times) {
           const raw  = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
@@ -5147,6 +5244,12 @@ client.on('messageCreate', async message => {
             spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
             if (!fs.existsSync(raw)) continue;
             tmpFrames.push(raw);
+
+            // Skip this frame if it looks identical to one we've already scanned
+            const hash = await dHash(raw);
+            if (isTooSimilar(hash)) continue;
+            if (hash !== null) seenHashes.push(hash);
+
             // Add preprocessed version (better OCR) AND raw (backup)
             const ok = await preprocessFrame(raw, proc);
             if (ok) { imagePaths.push(proc); tmpFrames.push(proc); }
@@ -5200,10 +5303,10 @@ client.on('messageCreate', async message => {
       )];
 
       if (!candidates.length) {
-        return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
+        return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
       }
 
-      await status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
+      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
 
       // Verify names against Roblox API (batch of 100)
       const verified = [];
@@ -5219,10 +5322,10 @@ client.on('messageCreate', async message => {
       }
 
       if (!verified.length) {
-        return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription("none of the detected names matched real Roblox users — try a clearer screenshot")] });
+        return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("none of the detected names matched real Roblox users — try a clearer screenshot")] });
       }
 
-      await status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`verified **${verified.length}** Roblox user${verified.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
+      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verified.length}** Roblox user${verified.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
 
       // For each Roblox user, check local verify data first, then fall back to RoVer
       const localVerify = loadVerify();
@@ -5244,7 +5347,7 @@ client.on('messageCreate', async message => {
         }
 
         const attendEmbed = new EmbedBuilder()
-          .setColor(0xFFFFFF)
+          .setColor(0x8B0000)
           .setTitle('USER ATTENDED THIS RAID')
           .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
           .addFields(
@@ -5261,10 +5364,10 @@ client.on('messageCreate', async message => {
         await new Promise(r => setTimeout(r, 300));
       }
 
-      return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`scan complete — logged **${posted}** raid member${posted !== 1 ? 's' : ''} to ${qCh}`)] });
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** raid member${posted !== 1 ? 's' : ''} to ${qCh}`)] });
 
     } catch (err) {
-      return status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`scan failed — ${err.message}\n\nmake sure \`tesseract.js\` is installed (\`npm install tesseract.js\`)`)] });
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}\n\nmake sure \`tesseract.js\` is installed (\`npm install tesseract.js\`)`)] });
     }
   }
 
@@ -5334,7 +5437,7 @@ client.on('messageCreate', async message => {
 
     for (const { member, roblox } of pairs) {
       const attendEmbed = new EmbedBuilder()
-        .setColor(0xFFFFFF)
+        .setColor(0x8B0000)
         .setTitle('USER ATTENDED THIS RAID')
         .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
         .addFields(
@@ -5347,23 +5450,23 @@ client.on('messageCreate', async message => {
     }
 
     if (queueChannel.id !== message.channel.id) {
-      await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`logged **${pairs.length}** attendee${pairs.length !== 1 ? 's' : ''} to ${queueChannel}`)] });
+      await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`logged **${pairs.length}** attendee${pairs.length !== 1 ? 's' : ''} to ${queueChannel}`)] });
     }
     return;
   }
 
-  // ── .setqueue ─────────────────────────────────────────────────────────────────
-  if (command === 'setqueue') {
+  // ── .setattendance ─────────────────────────────────────────────────────────────────
+  if (command === 'setattendance') {
     if (!message.guild) return;
     if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('you need to be whitelisted to set the queue channel')] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('you need to be whitelisted to set the queue channel')] });
     const ch = message.mentions.channels?.first();
-    if (!ch?.isTextBased()) return message.reply(`usage: \`${prefix}setqueue #channel\``);
+    if (!ch?.isTextBased()) return message.reply(`usage: \`${prefix}setattendance #channel\``);
     const queueData = loadQueue();
     if (!queueData[message.guild.id]) queueData[message.guild.id] = {};
     queueData[message.guild.id].channelId = ch.id;
     saveQueue(queueData);
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Queue Channel Set')
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Queue Channel Set')
       .setDescription(`raid attendance logs will now post to ${ch}`)
       .setTimestamp()] });
   }
@@ -5381,7 +5484,7 @@ client.on('messageCreate', async message => {
 
     if (attachment.contentType?.includes('gif')) return message.reply('that\'s already a GIF');
 
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('converting to GIF...')] });
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('converting to GIF...')] });
 
     try {
       const { createCanvas, loadImage } = await import('canvas');
@@ -5421,7 +5524,7 @@ client.on('messageCreate', async message => {
       await status.edit({ content: '', embeds: [], files: [gifAttachment] });
       try { unlinkSync(tmpPath); } catch {}
     } catch (err) {
-      await status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't convert — \`${err.message}\``)] });
+      await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't convert — \`${err.message}\``)] });
     }
     return;
   }
@@ -5468,7 +5571,7 @@ http.createServer(async (req, res) => {
 
       const queueData = loadQueue();
       const queueChannelId = queueData[String(guildId)]?.channelId;
-      if (!queueChannelId) { res.writeHead(404); res.end('no queue channel set — run .setqueue in Discord first'); return; }
+      if (!queueChannelId) { res.writeHead(404); res.end('no queue channel set — run .setattendance in Discord first'); return; }
 
       const queueChannel = guild.channels.cache.get(queueChannelId);
       if (!queueChannel) { res.writeHead(404); res.end('queue channel not found'); return; }
@@ -5480,7 +5583,7 @@ http.createServer(async (req, res) => {
       }
 
       const attendEmbed = new EmbedBuilder()
-        .setColor(0xFFFFFF)
+        .setColor(0x8B0000)
         .setTitle('USER ATTENDED THIS RAID')
         .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
         .addFields(
