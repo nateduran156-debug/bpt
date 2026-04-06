@@ -459,26 +459,56 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
 // currently in that game, then posts attendance embeds — no image needed.
 const GSCAN_GROUP_ID = 206868002
 
-async function runGroupScanCommand(robloxUsername, guild, qCh, ulCh, editFn) {
-  // Step 1: resolve username → user ID
-  await editFn(`looking up **${robloxUsername}** on Roblox...`)
-  const userLookup = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false })
-  })).json()
-  const targetUser = userLookup.data?.[0]
-  if (!targetUser) throw new Error(`couldn't find Roblox user **${robloxUsername}**`)
+async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
+  let placeId = null
+  let serverInstanceId = null
+  let displayLabel = input
 
-  // Step 2: get their current presence to find which server they're in
-  await editFn(`found **${targetUser.name}**, checking their presence...`)
-  const presenceRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userIds: [targetUser.id] })
-  })).json()
-  const presence = presenceRes.userPresences?.[0]
-  if (!presence?.placeId || !presence?.gameId) throw new Error(`**${targetUser.name}** is not currently in a Roblox game`)
+  // Check if input is a server invite link containing gameInstanceId
+  // Format: roblox.com/games/start?placeId=X&gameInstanceId=Y
+  const instanceMatch = input.match(/gameInstanceId=([a-f0-9-]+)/i)
+  const placeFromLink = input.match(/[?&]placeId=(\d+)/i) || input.match(/roblox\.com\/games\/(\d+)/i)
 
-  const { placeId, gameId: serverInstanceId } = presence
+  if (instanceMatch) {
+    // Direct server link — skip presence API entirely
+    serverInstanceId = instanceMatch[1]
+    placeId = placeFromLink?.[1]
+    if (!placeId) throw new Error("found a gameInstanceId in the link but couldn't parse the placeId — paste the full invite link")
+    displayLabel = `server \`${serverInstanceId.slice(0, 8)}...\``
+    await editFn(`server link detected, resolving game...`)
+  } else {
+    // Treat input as a Roblox username and use the presence API
+    const robloxUsername = input.trim()
+    await editFn(`looking up **${robloxUsername}** on Roblox...`)
+    const userLookup = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false })
+    })).json()
+    const targetUser = userLookup.data?.[0]
+    if (!targetUser) throw new Error(`couldn't find Roblox user **${robloxUsername}**`)
+
+    // The cookie is required for the API to return gameId reliably even on public profiles
+    await editFn(`found **${targetUser.name}**, checking their presence...`)
+    const cookie = process.env.ROBLOX_COOKIE
+    const presenceHeaders = { 'Content-Type': 'application/json' }
+    if (cookie) presenceHeaders['Cookie'] = `.ROBLOSECURITY=${cookie}`
+    const presenceRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
+      method: 'POST', headers: presenceHeaders,
+      body: JSON.stringify({ userIds: [targetUser.id] })
+    })).json()
+    const presence = presenceRes.userPresences?.[0]
+    // userPresenceType: 0=Offline, 1=Online, 2=InGame, 3=InStudio
+    if (!presence || presence.userPresenceType !== 2) {
+      const type = presence?.userPresenceType ?? 'unknown'
+      throw new Error(`**${targetUser.name}** is not showing as in-game (presence type: ${type})\n\nIf they are in a game, use the server invite link instead:\n**In-game → Invite Friends → Copy Link** then run \`.gscan <paste link>\``)
+    }
+    if (!presence.placeId) throw new Error(`**${targetUser.name}** is in a game but the place ID is unavailable`)
+    if (!presence.gameId) throw new Error(`**${targetUser.name}** is in a game but the server ID is hidden\n\nUse the server invite link instead: **In-game → Invite Friends → Copy Link** then run \`.gscan <paste link>\``)
+
+    placeId = presence.placeId
+    serverInstanceId = presence.gameId
+    displayLabel = `**${targetUser.name}**'s server`
+  }
 
   // Step 3: resolve place ID → universe ID + game name
   const placeDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`)).json()
@@ -544,9 +574,9 @@ async function runGroupScanCommand(robloxUsername, guild, qCh, ulCh, editFn) {
   if (!memberIds.size) throw new Error('could not load group members — Roblox API may be unavailable')
 
   const inServer = [...resolvedIds].filter(id => memberIds.has(id))
-  if (!inServer.length) throw new Error(`no group members found in **${targetUser.name}**'s server in **${gameName}** (${resolvedIds.size} total players checked)`)
+  if (!inServer.length) throw new Error(`no group members found in ${displayLabel} in **${gameName}** (${resolvedIds.size} total players checked)`)
 
-  await editFn(`found **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in the server, looking up Discord accounts...`)
+  await editFn(`found **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in ${displayLabel}, looking up Discord accounts...`)
 
   // Post attendance embeds for each group member found
   const localVerify = loadVerify()
@@ -580,7 +610,7 @@ async function runGroupScanCommand(robloxUsername, guild, qCh, ulCh, editFn) {
   }
 
   const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : ''
-  return `gscan complete — **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in **${targetUser.name}**'s server in **${gameName}**, logged **${posted}** linked${ulNote}`
+  return `gscan complete — **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in ${displayLabel} in **${gameName}**, logged **${posted}** linked${ulNote}`
 }
 
 // sends a log embed to the log channel if one is set
@@ -1304,9 +1334,9 @@ const slashCommands = [
   new SlashCommandBuilder().setName('whoisin').setDescription('see which MTXX group members are currently in a Roblox game')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('game').setDescription('Roblox game URL or place ID').setRequired(true)),
-  new SlashCommandBuilder().setName('gscan').setDescription('find all group members in the same Roblox server as a user and log attendance')
+  new SlashCommandBuilder().setName('gscan').setDescription('find all group members in a Roblox server and log attendance — username or invite link')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('username').setDescription('Roblox username of someone currently in the server').setRequired(true)),
+    .addStringOption(o => o.setName('username').setDescription('Roblox username OR server invite link (roblox.com/games/start?placeId=...&gameInstanceId=...)').setRequired(true)),
   new SlashCommandBuilder().setName('attend').setDescription('manually log a Discord user as attending a raid')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('Discord member').setRequired(true))
@@ -5925,13 +5955,13 @@ client.on('messageCreate', async message => {
 
 
   // ── .gscan ────────────────────────────────────────────────────────────────────
-  // Usage: .gscan <robloxUsername>
-  // Finds the server that user is in, then logs attendance for all group members in it.
+  // Usage: .gscan <robloxUsername>  OR  .gscan <server invite link>
+  // Finds the server via presence API (username) or directly (invite link), then logs group attendance.
   if (command === 'gscan') {
     if (!message.guild) return;
-    const gameInput = args[0]?.trim();
+    const gameInput = args.join(' ').trim();
     if (!gameInput)
-      return message.reply(`usage: \`${prefix}gscan <Roblox username>\``);
+      return message.reply(`usage: \`${prefix}gscan <Roblox username>\` or \`${prefix}gscan <server invite link>\``);
 
     const queueData = loadQueue();
     const queueChannelId = queueData[message.guild.id]?.channelId;
