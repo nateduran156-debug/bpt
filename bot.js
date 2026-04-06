@@ -279,41 +279,8 @@ async function extractUsernamesVision(imagePath) {
   const meta = await sharp(imagePath).metadata()
   const { width = 1920, height = 1080 } = meta
 
-  // Crop regions: union results from all of them for full coverage.
-  // The Roblox player list can appear right-side, center-right, or anywhere.
-  const cropRegions = [
-    { left: Math.floor(width * 0.55), top: 0, width: Math.floor(width * 0.45), height }, // right 45%
-    { left: Math.floor(width * 0.35), top: 0, width: Math.floor(width * 0.65), height }, // right 65%
-    { left: 0,                         top: 0, width,                            height }, // full image
-  ]
-
-  // For each crop we run 3 preprocessing variants to handle any lighting/contrast:
-  //   1. Inverted + threshold  — best for white-on-dark Roblox UI (most common)
-  //   2. High contrast normal  — for light-background sections
-  //   3. Inverted greyscale    — softer version of (1), catches partially-dark panels
-  async function buildVariants(cropBase, tag) {
-    const paths = []
-
-    // Variant 1: invert then threshold — white text on dark becomes pure black on white
-    const p1 = join(tmpdir(), `ocr_${tag}_inv.png`)
-    await cropBase.clone().greyscale().negate().normalise().threshold(160).png().toFile(p1)
-    paths.push(p1)
-
-    // Variant 2: high contrast without invert — handles any bright-background sections
-    const p2 = join(tmpdir(), `ocr_${tag}_hc.png`)
-    await cropBase.clone().greyscale().normalise().linear(2.0, -(128 * 1.0)).sharpen().png().toFile(p2)
-    paths.push(p2)
-
-    // Variant 3: inverted greyscale — softer, catches names the threshold might clip
-    const p3 = join(tmpdir(), `ocr_${tag}_invg.png`)
-    await cropBase.clone().greyscale().negate().normalise().sharpen().png().toFile(p3)
-    paths.push(p3)
-
-    return paths
-  }
-
-  // Valid Roblox username: letters, digits, underscores, 3–20 chars,
-  // starts and ends with a letter or digit.
+  // Valid Roblox username: 3–20 chars, letters/digits/underscores,
+  // must start and end with a letter or digit.
   function parseUsername(raw) {
     const cleaned = raw.replace(/[^a-zA-Z0-9_]/g, '').trim()
     if (
@@ -325,7 +292,6 @@ async function extractUsernamesVision(imagePath) {
     return null
   }
 
-  // Known Roblox UI labels that are not usernames
   const SKIP_WORDS = new Set([
     'CURRENT','LEAVE','LEADERBOARD','PLAYERS','SERVER','GAME','REPORT',
     'FRIEND','FOLLOW','BLOCK','MENU','TEAM','SPECTATE','SCORE','RANK',
@@ -337,22 +303,12 @@ async function extractUsernamesVision(imagePath) {
   const nameSet = new Set()
   const allTmpFiles = []
 
-  // Two Tesseract workers with different PSM modes:
-  //   PSM 6 = uniform block of text      — best for the full player list panel
-  //   PSM 4 = single column of text      — best when we've isolated just the name column
-  const workers = await Promise.all([
-    createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} }),
-    createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} }),
-  ])
-  await workers[0].setParameters({
+  // Single worker with PSM 6 (uniform block of text — ideal for player lists)
+  const worker = await createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} })
+  await worker.setParameters({
     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
     preserve_interword_spaces: '0',
     tessedit_pageseg_mode: '6',
-  })
-  await workers[1].setParameters({
-    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
-    preserve_interword_spaces: '0',
-    tessedit_pageseg_mode: '4',
   })
 
   function extractFromText(text) {
@@ -366,32 +322,43 @@ async function extractUsernamesVision(imagePath) {
     }
   }
 
+  // Crop regions covering the right portion of the screen where the Roblox
+  // player list appears, plus a full-image fallback.
+  const crops = [
+    { left: Math.floor(width * 0.55), cropW: Math.floor(width * 0.45) }, // right 45%
+    { left: Math.floor(width * 0.35), cropW: Math.floor(width * 0.65) }, // right 65%
+    { left: 0,                         cropW: width                     }, // full image
+  ]
+
   try {
-    for (let r = 0; r < cropRegions.length; r++) {
-      const region = cropRegions[r]
-      const cropBase = sharp(imagePath)
-        .extract({
-          left:   Math.max(0, Math.min(region.left, width - 1)),
-          top:    0,
-          width:  Math.min(region.width, width - Math.max(0, region.left)),
-          height,
-        })
-        // Scale 2x within sharp so Tesseract sees larger text (on top of the 3x ffmpeg upscale)
-        .resize({ width: Math.min(region.width, width - Math.max(0, region.left)) * 2, kernel: 'lanczos3' })
+    for (const { left, cropW } of crops) {
+      const safeLeft = Math.max(0, Math.min(left, width - 1))
+      const safeW    = Math.min(cropW, width - safeLeft)
 
-      const variantPaths = await buildVariants(cropBase, `r${r}_${Date.now()}`)
-      allTmpFiles.push(...variantPaths)
+      // Read this crop region once into a buffer so we can apply multiple
+      // preprocessing pipelines without re-reading the file each time.
+      const cropBuf = await sharp(imagePath)
+        .extract({ left: safeLeft, top: 0, width: safeW, height })
+        .toBuffer()
 
-      // Run all variants through both PSM workers in parallel
-      await Promise.all(variantPaths.flatMap(vp =>
-        workers.map(async w => {
-          const { data: { text } } = await w.recognize(vp)
-          extractFromText(text)
-        })
-      ))
+      // Preprocessing pipeline A:
+      //   Greyscale → negate (white-on-dark → dark-on-light) → normalize → sharpen
+      //   This is the most reliable for the standard Roblox dark-panel player list.
+      const pA = join(tmpdir(), `ocr_A_${safeLeft}_${Date.now()}.png`)
+      allTmpFiles.push(pA)
+      await sharp(cropBuf).greyscale().negate().normalise().sharpen().png().toFile(pA)
+      extractFromText((await worker.recognize(pA)).data.text)
+
+      // Preprocessing pipeline B:
+      //   Greyscale → normalize → contrast boost (no negate)
+      //   Catches any bright-background sections or light-panel variants.
+      const pB = join(tmpdir(), `ocr_B_${safeLeft}_${Date.now()}.png`)
+      allTmpFiles.push(pB)
+      await sharp(cropBuf).greyscale().normalise().linear(1.8, -50).sharpen().png().toFile(pB)
+      extractFromText((await worker.recognize(pB)).data.text)
     }
   } finally {
-    await Promise.all(workers.map(w => w.terminate()))
+    await worker.terminate()
     for (const f of allTmpFiles) { try { fs.unlinkSync(f) } catch {} }
   }
 
