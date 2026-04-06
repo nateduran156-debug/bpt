@@ -443,6 +443,7 @@ const HELP_SECTIONS = [
       '{p}verify status',
       '{p}verify remove',
       '{p}verifylist',
+      '{p}dfile',
       '{p}linked @user or RobloxUsername',
       '{p}scan (attach image/video)',
       '{p}attend @user robloxname',
@@ -5011,6 +5012,38 @@ client.on('messageCreate', async message => {
 
 
 
+
+  // ── .dfile ────────────────────────────────────────────────────────────────────
+  if (command === 'dfile') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can use `.dfile`')] });
+    const vData   = loadVerify();
+    const entries = Object.entries(vData.verified || {});
+
+    if (!entries.length) {
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('no verified accounts to export yet')] });
+    }
+
+    // Build CSV content
+    const rows = ['Discord ID,Discord Tag,Roblox Username,Roblox ID,Roblox Profile,Verified At'];
+    for (const [discordId, { robloxName, robloxId, verifiedAt }] of entries) {
+      let discordTag = discordId;
+      try { const u = await client.users.fetch(discordId); discordTag = u.tag ?? u.username; } catch {}
+      const date = verifiedAt ? new Date(verifiedAt).toISOString() : '';
+      rows.push(`${discordId},"${discordTag}","${robloxName}",${robloxId},https://www.roblox.com/users/${robloxId}/profile,${date}`);
+    }
+
+    const csv        = rows.join('\n');
+    const buf        = Buffer.from(csv, 'utf8');
+    const attachment = new AttachmentBuilder(buf, { name: `verified-accounts-${Date.now()}.csv` });
+
+    return message.reply({
+      embeds: [baseEmbed().setColor(0x8B0000)
+        .setTitle('Verified Accounts Export')
+        .setDescription(`**${entries.length}** linked account${entries.length !== 1 ? 's' : ''} exported`)
+        .setTimestamp()],
+      files: [attachment]
+    });
+  }
 
   // ── .verifylist ───────────────────────────────────────────────────────────────
   if (command === 'verifylist' || command === 'vlist') {
