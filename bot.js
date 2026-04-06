@@ -275,9 +275,9 @@ async function extractUsernamesVision(imagePath) {
   const base64 = fs.readFileSync(imagePath).toString('base64')
   const ext = path.extname(imagePath).toLowerCase().replace('.', '') || 'png'
   const mimeType = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png'
-  const baseUrl = (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || '').replace(/\/$/, '')
-  const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || ''
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  const apiKey = process.env.OPENAI_API_KEY || ''
+  if (!apiKey) throw new Error('OPENAI_API_KEY is not set — add it to your environment secrets')
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -287,16 +287,18 @@ async function extractUsernamesVision(imagePath) {
         content: [
           {
             type: 'text',
-            text: 'This is a Roblox game screenshot. Find the in-game player list panel (the popup that shows who is currently in the server). Extract ONLY the Roblox usernames from that panel. Return them one per line with nothing else — no numbers, no bullet points, no extra words. Only include actual Roblox usernames (letters, numbers, and underscores, 3–20 characters, must start and end with a letter or number). Do not include UI labels, button text, display names, or anything that is not a plain Roblox username.'
+            text: 'This is a Roblox game screenshot or video frame. Look for the in-game player list panel — the popup/overlay that lists who is currently in the server. It usually appears as a dark or semi-transparent box with player names (and sometimes avatars) listed vertically. Extract ONLY the Roblox usernames visible inside that player list. Return them one per line with absolutely nothing else — no numbers, no bullets, no labels, no extra words. Only valid Roblox usernames: letters, numbers, underscores, 3–20 characters, starting and ending with a letter or number. Do NOT include button labels like "CURRENT", "LEAVE", "LEADERBOARD", display names, group names, tab names, or any text that is not a Roblox username in the player list. If you cannot see a player list panel in this image, respond with only the word NONE.'
           },
           { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'high' } }
         ]
       }],
-      max_completion_tokens: 1000,
+      max_tokens: 1000,
     }),
   })
   const data = await res.json()
-  const text = data.choices?.[0]?.message?.content ?? ''
+  if (data.error) throw new Error(`OpenAI error: ${data.error.message}`)
+  const text = (data.choices?.[0]?.message?.content ?? '').trim()
+  if (text.toUpperCase() === 'NONE' || !text) return []
   return [...new Set(
     text.split('\n')
       .map(l => l.replace(/[^a-zA-Z0-9_]/g, '').trim())
