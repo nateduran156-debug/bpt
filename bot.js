@@ -435,7 +435,7 @@ const HELP_SECTIONS = [
       '{p}verify YourRobloxUsername',
       '{p}verify confirm',
       '{p}verify status',
-      '{p}whois @user',
+      '{p}linked @user or RobloxUsername',
       '{p}scan (attach image/video)',
       '{p}attend @user robloxname',
       '{p}setqueue #channel',
@@ -3337,13 +3337,19 @@ client.on('messageCreate', async message => {
 
   // ── Whitelist-required prefix commands ───────────────────────────────────────
   if (!loadWhitelist().includes(message.author.id)) {
-    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid']);
+    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked']);
     if (command === 'verify' && message.guild) {
-      const vwl = loadVerifyWhitelist();
-      const guildVwl = vwl[message.guild.id] || { roles: [], users: [] };
-      const isVwlAllowed = guildVwl.users.includes(message.author.id) ||
-        message.member?.roles?.cache?.some(r => guildVwl.roles.includes(r.id));
-      if (!isVwlAllowed) return;
+      const sub0 = args[0]?.toLowerCase();
+      // Roblox linking subcommands are open to everyone; role-give verify requires VWL
+      const isRobloxSub = ['confirm','status','remove','unlink'].includes(sub0)
+        || (sub0 && !sub0.startsWith('<@') && !/^\d{17,19}$/.test(sub0) && !message.mentions.users.size);
+      if (!isRobloxSub) {
+        const vwl = loadVerifyWhitelist();
+        const guildVwl = vwl[message.guild.id] || { roles: [], users: [] };
+        const isVwlAllowed = guildVwl.users.includes(message.author.id) ||
+          message.member?.roles?.cache?.some(r => guildVwl.roles.includes(r.id));
+        if (!isVwlAllowed) return;
+      }
     } else if (!openPrefixCommands.has(command)) {
       return;
     }
@@ -3915,21 +3921,120 @@ client.on('messageCreate', async message => {
 
   if (command === 'verify') {
     if (!message.guild) return;
-    const vc = loadVerifyConfig();
-    const guildVc = vc[message.guild.id];
-    if (!guildVc?.roleId) return message.reply(`verify role isn't set — use \`${prefix}setverifyrole @role\` first`);
-    const target = message.mentions.members?.first();
-    if (!target) return message.reply(`mention a user to verify — e.g. \`${prefix}verify @user\``);
-    try {
-      await target.roles.add(guildVc.roleId, `verified by ${message.author.tag}`);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verified')
-        .setThumbnail(target.user.displayAvatarURL())
+    const sub      = args[0]?.toLowerCase();
+    const isRoleGive = !sub || message.mentions.users.size > 0 || /^\d{17,19}$/.test(args[0]);
+
+    // ── Role-give verify (whitelist managers, requires @mention) ──────────────
+    if (isRoleGive) {
+      const vc = loadVerifyConfig();
+      const guildVc = vc[message.guild.id];
+      if (!guildVc?.roleId) return message.reply(`verify role isn't set — use \`${prefix}setverifyrole @role\` first`);
+      const target = message.mentions.members?.first();
+      if (!target) return message.reply(`mention a user to verify — e.g. \`${prefix}verify @user\``);
+      try {
+        await target.roles.add(guildVc.roleId, `verified by ${message.author.tag}`);
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verified')
+          .setThumbnail(target.user.displayAvatarURL())
+          .addFields(
+            { name: 'user', value: `<@${target.id}>`, inline: true },
+            { name: 'verified by', value: `<@${message.author.id}>`, inline: true },
+            { name: 'role given', value: `<@&${guildVc.roleId}>`, inline: true }
+          ).setTimestamp()] });
+      } catch (err) { return message.reply(`couldn't verify — ${err.message}`); }
+    }
+
+    // ── Roblox account linking (open to everyone) ─────────────────────────────
+    const vData = loadVerify();
+
+    if (sub === 'status') {
+      const linked = vData.verified?.[message.author.id];
+      if (!linked) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`you have no linked Roblox account\n\nRun \`${prefix}verify YourRobloxUsername\` to get started`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Linked Account')
         .addFields(
-          { name: 'user', value: `<@${target.id}>`, inline: true },
-          { name: 'verified by', value: `<@${message.author.id}>`, inline: true },
-          { name: 'role given', value: `<@&${guildVc.roleId}>`, inline: true }
-        ).setTimestamp()] });
-    } catch (err) { return message.reply(`couldn't verify — ${err.message}`); }
+          { name: 'Discord', value: `${message.author}`, inline: true },
+          { name: 'Roblox',  value: `[\`${linked.robloxName}\`](https://www.roblox.com/users/${linked.robloxId}/profile)`, inline: true }
+        ).setTimestamp(new Date(linked.verifiedAt))] });
+    }
+
+    if (sub === 'remove' || sub === 'unlink') {
+      const linked = vData.verified?.[message.author.id];
+      if (!linked) return message.reply('you have no linked Roblox account');
+      delete vData.verified[message.author.id];
+      if (vData.robloxToDiscord?.[String(linked.robloxId)]) delete vData.robloxToDiscord[String(linked.robloxId)];
+      saveVerify(vData);
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`unlinked \`${linked.robloxName}\` from your account`)] });
+    }
+
+    if (sub === 'confirm') {
+      const pending = vData.pending?.[message.author.id];
+      if (!pending) return message.reply(`no pending verification — start one with \`${prefix}verify YourRobloxUsername\``);
+      const { robloxId, robloxName, code } = pending;
+      if (Date.now() - pending.startedAt > 15 * 60 * 1000) {
+        delete vData.pending[message.author.id]; saveVerify(vData);
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`code expired — run \`${prefix}verify ${robloxName}\` again for a new one`)] });
+      }
+      let description = '';
+      try {
+        const profileRes = await (await fetch(`https://users.roblox.com/v1/users/${robloxId}`)).json();
+        description = profileRes.description || '';
+      } catch {
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('failed to reach Roblox — try again in a moment')] });
+      }
+      if (!description.includes(code)) {
+        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Code Not Found').setDescription([
+          `The code wasn't found in **${robloxName}**'s bio yet.`,
+          ``, `Your code: \`${code}\``, ``,
+          `**Make sure you:**`,
+          `• Opened https://www.roblox.com/users/${robloxId}/profile`,
+          `• Clicked **Edit Profile** → pasted the code into the **About/Description** box`,
+          `• **Saved** your profile`, ``,
+          `Then run \`${prefix}verify confirm\` again.`
+        ].join('\n'))] });
+      }
+      if (!vData.verified) vData.verified = {};
+      if (!vData.robloxToDiscord) vData.robloxToDiscord = {};
+      vData.verified[message.author.id]       = { robloxId, robloxName, verifiedAt: Date.now() };
+      vData.robloxToDiscord[String(robloxId)] = message.author.id;
+      delete vData.pending[message.author.id];
+      saveVerify(vData);
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verification Successful')
+        .setDescription(`your Discord account is now linked to **${robloxName}**`)
+        .addFields(
+          { name: 'Discord', value: `${message.author}`, inline: true },
+          { name: 'Roblox',  value: `[\`${robloxName}\`](https://www.roblox.com/users/${robloxId}/profile)`, inline: true }
+        ).setFooter({ text: 'you can remove the code from your bio now', iconURL: LOGO_URL }).setTimestamp()] });
+    }
+
+    // .verify RobloxUsername — start linking
+    const inputName = args[0];
+    let robloxUser;
+    try {
+      const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [inputName], excludeBannedUsers: false })
+      })).json();
+      robloxUser = res.data?.[0];
+    } catch {}
+    if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't find a Roblox user named \`${inputName}\``)] });
+    const existingDiscordId = vData.robloxToDiscord?.[String(robloxUser.id)];
+    if (existingDiscordId && existingDiscordId !== message.author.id)
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`\`${robloxUser.name}\` is already linked to another Discord account`)] });
+    const code = `mtxx-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    if (!vData.pending) vData.pending = {};
+    vData.pending[message.author.id] = { robloxId: robloxUser.id, robloxName: robloxUser.name, code, startedAt: Date.now() };
+    saveVerify(vData);
+    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Roblox Verification').setDescription([
+      `Verifying as **${robloxUser.name}** — follow these steps:`,
+      ``,
+      `**1.** Open your Roblox profile:`,
+      `https://www.roblox.com/users/${robloxUser.id}/profile`,
+      ``,
+      `**2.** Click **Edit Profile** and paste this code into your **About** / description:`,
+      `\`\`\`${code}\`\`\``,
+      `**3.** Save your profile, then run: \`${prefix}verify confirm\``,
+      ``,
+      `*Code expires in 15 minutes. You can remove it from your bio after.*`
+    ].join('\n')).setTimestamp()] });
   }
 
   if (command === 'vwl') {
@@ -4898,166 +5003,11 @@ client.on('messageCreate', async message => {
 
 
 
-  // ── .verify ───────────────────────────────────────────────────────────────────
-  // .verify RobloxUsername  → generates a code, tells user to paste it in their bio
-  // .verify confirm         → bot checks the bio, confirms and saves the link
-  // .verify status          → shows your currently linked account
-  // .verify remove          → unlinks your account
-  if (command === 'verify') {
-    if (!message.guild && !message.channel) return;
-
-    const sub      = args[0]?.toLowerCase();
-    const vData    = loadVerify();
-
-    // ── status ──
-    if (sub === 'status') {
-      const linked = vData.verified?.[message.author.id];
-      if (!linked) {
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
-          .setDescription(`you have no linked Roblox account\n\nRun \`${prefix}verify YourRobloxUsername\` to get started`)] });
-      }
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
-        .setTitle('Linked Account')
-        .addFields(
-          { name: 'Discord', value: `${message.author}`, inline: true },
-          { name: 'Roblox',  value: `[\`${linked.robloxName}\`](https://www.roblox.com/users/${linked.robloxId}/profile)`, inline: true }
-        )
-        .setTimestamp(new Date(linked.verifiedAt))] });
-    }
-
-    // ── remove / unlink ──
-    if (sub === 'remove' || sub === 'unlink') {
-      const linked = vData.verified?.[message.author.id];
-      if (!linked) return message.reply('you have no linked Roblox account');
-      delete vData.verified[message.author.id];
-      if (vData.robloxToDiscord?.[String(linked.robloxId)]) delete vData.robloxToDiscord[String(linked.robloxId)];
-      saveVerify(vData);
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`unlinked \`${linked.robloxName}\` from your account`)] });
-    }
-
-    // ── confirm ──
-    if (sub === 'confirm') {
-      const pending = vData.pending?.[message.author.id];
-      if (!pending) {
-        return message.reply(`no pending verification — start one with \`${prefix}verify YourRobloxUsername\``);
-      }
-      const { robloxId, robloxName, code } = pending;
-
-      // Check if code is expired (15 minutes)
-      if (Date.now() - pending.startedAt > 15 * 60 * 1000) {
-        delete vData.pending[message.author.id];
-        saveVerify(vData);
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`your verification code expired — run \`${prefix}verify ${robloxName}\` again to get a new one`)] });
-      }
-
-      // Fetch the Roblox profile description
-      let description = '';
-      try {
-        const profileRes = await (await fetch(`https://users.roblox.com/v1/users/${robloxId}`)).json();
-        description = profileRes.description || '';
-      } catch {
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('failed to reach Roblox — try again in a moment')] });
-      }
-
-      if (!description.includes(code)) {
-        return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
-          .setTitle('Code Not Found')
-          .setDescription([
-            `The code wasn't found in **${robloxName}**'s bio yet.`,
-            ``,
-            `Your code: \`${code}\``,
-            ``,
-            `**Make sure you:**`,
-            `• Opened https://www.roblox.com/users/${robloxId}/profile`,
-            `• Clicked **Edit Profile** → pasted the code into the **About** / description box`,
-            `• **Saved** your profile`,
-            ``,
-            `Then run \`${prefix}verify confirm\` again.`
-          ].join('\n'))] });
-      }
-
-      // ✅ Verified — save the link
-      if (!vData.verified) vData.verified = {};
-      if (!vData.robloxToDiscord) vData.robloxToDiscord = {};
-
-      vData.verified[message.author.id]        = { robloxId, robloxName, verifiedAt: Date.now() };
-      vData.robloxToDiscord[String(robloxId)]  = message.author.id;
-      delete vData.pending[message.author.id];
-      saveVerify(vData);
-
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
-        .setTitle('Verification Successful')
-        .setDescription(`your Discord account is now linked to Roblox account **${robloxName}**`)
-        .addFields(
-          { name: 'Discord', value: `${message.author}`, inline: true },
-          { name: 'Roblox',  value: `[\`${robloxName}\`](https://www.roblox.com/users/${robloxId}/profile)`, inline: true }
-        )
-        .setFooter({ text: 'you can remove the code from your bio now', iconURL: LOGO_URL })
-        .setTimestamp()] });
-    }
-
-    // ── .verify RobloxUsername → start verification ──
-    const inputName = args[0];
-    if (!inputName || inputName.startsWith('<')) {
-      return message.reply(`usage: \`${prefix}verify YourRobloxUsername\``);
-    }
-
-    // Look up the Roblox user
-    let robloxUser;
-    try {
-      const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ usernames: [inputName], excludeBannedUsers: false })
-      })).json();
-      robloxUser = res.data?.[0];
-    } catch {}
-
-    if (!robloxUser) {
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't find a Roblox user named \`${inputName}\``)] });
-    }
-
-    // Check if this Roblox account is already linked to someone else
-    const existingDiscordId = vData.robloxToDiscord?.[String(robloxUser.id)];
-    if (existingDiscordId && existingDiscordId !== message.author.id) {
-      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`\`${robloxUser.name}\` is already linked to another Discord account`)] });
-    }
-
-    // Generate a unique code
-    const code = `mtxx-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-
-    // Store pending verification (expires in 15 minutes)
-    if (!vData.pending) vData.pending = {};
-    vData.pending[message.author.id] = {
-      robloxId:   robloxUser.id,
-      robloxName: robloxUser.name,
-      code,
-      startedAt:  Date.now()
-    };
-    saveVerify(vData);
-
-    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF)
-      .setTitle('Roblox Verification')
-      .setDescription([
-        `Verifying as **${robloxUser.name}** — follow the steps below:`,
-        ``,
-        `**Step 1 —** Open your Roblox profile:`,
-        `https://www.roblox.com/users/${robloxUser.id}/profile`,
-        ``,
-        `**Step 2 —** Click **Edit Profile** and paste this code into your **About / Description** box:`,
-        `\`\`\`${code}\`\`\``,
-        `**Step 3 —** Save your profile, then run:`,
-        `\`${prefix}verify confirm\``,
-        ``,
-        `*Code expires in 15 minutes. You can remove it from your bio after verification.*`
-      ].join('\n'))
-      .setTimestamp()] });
-  }
 
   // ── .whois ─────────────────────────────────────────────────────────────────────
   // .whois @discorduser   → shows their linked Roblox account
   // .whois robloxname     → shows the linked Discord account
-  if (command === 'whois') {
+  if (command === 'linked') {
     const vData = loadVerify();
     const mention = message.mentions.users.first();
 
@@ -5137,30 +5087,116 @@ client.on('messageCreate', async message => {
       const dlRes = await fetch(attachment.url);
       fs.writeFileSync(tmpInput, Buffer.from(await dlRes.arrayBuffer()));
 
-      let imagePath = tmpInput;
+      // Build list of image paths to OCR — for video, extract several frames spread
+      // across the whole clip so no name gets missed due to frame timing
+      const imagePaths = [];
+      const tmpFrames  = [];
 
-      // Extract a frame from video using ffmpeg if available
-      if (isVideo) {
+      // Helper: preprocess a frame with canvas for better OCR accuracy
+      // — upscales 2×, converts to grayscale, boosts contrast
+      const preprocessFrame = async (srcPath, destPath) => {
         try {
-          spawnSync('ffmpeg', ['-i', tmpInput, '-ss', '00:00:01', '-frames:v', '1', tmpFrame, '-y'], { stdio: 'ignore' });
-          if (fs.existsSync(tmpFrame)) imagePath = tmpFrame;
+          const { createCanvas, loadImage } = await import('canvas');
+          const img    = await loadImage(srcPath);
+          const scale  = 2;
+          const canvas = createCanvas(img.width * scale, img.height * scale);
+          const ctx    = canvas.getContext('2d');
+          // White background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          // Draw upscaled
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          // Grayscale + high contrast via pixel manipulation
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const d = imgData.data;
+          for (let p = 0; p < d.length; p += 4) {
+            const lum = 0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2];
+            // Stretch contrast: push dark pixels darker, light pixels lighter
+            const enhanced = lum < 128 ? Math.max(0, lum - 40) : Math.min(255, lum + 40);
+            d[p] = d[p + 1] = d[p + 2] = enhanced;
+          }
+          ctx.putImageData(imgData, 0, 0);
+          const buf = canvas.toBuffer('image/png');
+          fs.writeFileSync(destPath, buf);
+          return true;
+        } catch { return false; }
+      };
+
+      if (isVideo) {
+        // Get exact video duration via ffprobe
+        let duration = 10;
+        try {
+          const probe = spawnSync('ffprobe', [
+            '-v', 'error', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1', tmpInput
+          ], { encoding: 'utf8' });
+          const parsed = parseFloat(probe.stdout?.trim());
+          if (!isNaN(parsed) && parsed > 0) duration = parsed;
         } catch {}
+
+        // One frame every 0.5 s, capped at 30 frames so long videos stay fast
+        const step     = 0.5;
+        const maxFrames = 30;
+        const times    = [];
+        for (let t = 0; t < duration && times.length < maxFrames; t += step) times.push(+t.toFixed(2));
+
+        for (const ts of times) {
+          const raw  = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
+          const proc = join(tmpdir(), `scan_proc_${Date.now()}_${ts}.png`);
+          try {
+            spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
+            if (!fs.existsSync(raw)) continue;
+            tmpFrames.push(raw);
+            // Add preprocessed version (better OCR) AND raw (backup)
+            const ok = await preprocessFrame(raw, proc);
+            if (ok) { imagePaths.push(proc); tmpFrames.push(proc); }
+            else     { imagePaths.push(raw); }
+          } catch {}
+        }
+        if (!imagePaths.length) imagePaths.push(tmpInput);
+      } else {
+        // For a still image, run on both raw and preprocessed
+        const proc = join(tmpdir(), `scan_proc_${Date.now()}.png`);
+        const ok   = await preprocessFrame(tmpInput, proc);
+        imagePaths.push(tmpInput);
+        if (ok) { imagePaths.push(proc); tmpFrames.push(proc); }
       }
 
       // OCR via tesseract.js
+      // PSM 11 = "sparse text" — finds text anywhere on screen with no assumed layout,
+      // perfect for game UI player lists
       const { createWorker } = await import('tesseract.js');
       const worker = await createWorker('eng');
-      const { data: { text } } = await worker.recognize(imagePath);
+      await worker.setParameters({
+        tessedit_char_whitelist: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ',
+        tessedit_pageseg_mode:   '11'   // sparse text
+      });
+
+      const allText = [];
+      for (const imgPath of imagePaths) {
+        try {
+          const { data: { text } } = await worker.recognize(imgPath);
+          if (text?.trim()) allText.push(text);
+        } catch {}
+      }
       await worker.terminate();
 
-      // Cleanup temp files
+      // Cleanup every temp file
       try { fs.unlinkSync(tmpInput); } catch {}
-      try { if (fs.existsSync(tmpFrame)) fs.unlinkSync(tmpFrame); } catch {}
+      for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
 
-      // Extract candidate Roblox usernames: 3-20 chars, alphanumeric + underscore
-      const tokens = text.split(/[\s\n\r,;:|@()\[\]{}'"<>!?\/\\=+\-]+/);
+      // Extract candidate Roblox usernames from every OCR pass combined.
+      // Strip stray non-username chars OCR may have injected, then filter
+      // to valid username shape: 3–20 chars, alphanumeric + underscore,
+      // must start and end with alphanumeric.
+      const combinedText = allText.join('\n');
+      const tokens = combinedText.split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
       const candidates = [...new Set(
-        tokens.filter(w => /^[a-zA-Z0-9][a-zA-Z0-9_]{1,18}[a-zA-Z0-9]$|^[a-zA-Z0-9]{3}$/.test(w))
+        tokens
+          .map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim())
+          .filter(w => w.length >= 3 && w.length <= 20
+                    && /^[a-zA-Z0-9]/.test(w)
+                    && /[a-zA-Z0-9]$/.test(w))
       )];
 
       if (!candidates.length) {
