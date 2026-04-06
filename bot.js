@@ -321,6 +321,14 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
     if (sysCheck.error) ffmpegBin = ffmpegStatic
   } catch {}
 
+  // Upscale an image 3x using Lanczos so small player-list text is clearly legible for the vision model.
+  // Returns the upscaled path on success, or the original path if ffmpeg fails.
+  function upscaleImage(srcPath) {
+    const dest = srcPath.replace(/\.[^.]+$/, '_up.png')
+    spawnSync(ffmpegBin, ['-i', srcPath, '-vf', 'scale=iw*3:ih*3:flags=lanczos', dest, '-y'], { stdio: 'ignore' })
+    return fs.existsSync(dest) ? dest : srcPath
+  }
+
   const ext = _ext(attachment.name || '').toLowerCase() || '.png'
   const isVideo = ['.mp4', '.mov', '.webm', '.avi', '.mkv'].includes(ext)
   const tmpInput = join(tmpdir(), `scan_${Date.now()}${ext}`)
@@ -349,12 +357,17 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
     const times = []
     for (let i = 0; i < maxFrames; i++) times.push(+(i * step).toFixed(2))
 
-    // Extract each frame via ffmpeg
+    // Extract each frame via ffmpeg, then upscale it 3x for the vision model
     const frameFiles = []
     for (const ts of times) {
       const fp = join(tmpdir(), `scan_f_${Date.now()}_${ts}.png`)
       spawnSync(ffmpegBin, ['-ss', String(ts), '-i', tmpInput, '-frames:v', '1', fp, '-y'], { stdio: 'ignore' })
-      if (fs.existsSync(fp)) { frameFiles.push(fp); tmpFiles.push(fp) }
+      if (fs.existsSync(fp)) {
+        tmpFiles.push(fp)
+        const upscaled = upscaleImage(fp)
+        if (upscaled !== fp) tmpFiles.push(upscaled)
+        frameFiles.push(upscaled)
+      }
     }
 
     if (!frameFiles.length) throw new Error('could not extract frames from the video — make sure it is a valid mp4/mov file')
@@ -378,11 +391,13 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
     allNames = [...nameSet]
 
   } else {
-    // For images, run 3 passes and union — catches names the AI misses in a single pass
+    // Upscale the image 3x before scanning so small player-list text is readable without manual zoom
     await editFn('reading image...')
+    const upscaled = upscaleImage(tmpInput)
+    if (upscaled !== tmpInput) tmpFiles.push(upscaled)
     const nameSet = new Set()
     for (let pass = 0; pass < 3; pass++) {
-      const names = await extractUsernamesVision(tmpInput)
+      const names = await extractUsernamesVision(upscaled)
       for (const n of names) nameSet.add(n)
     }
     allNames = [...nameSet]
