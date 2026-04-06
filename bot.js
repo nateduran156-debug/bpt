@@ -189,7 +189,7 @@ function isWlManager(userId) {
   const mgrs = loadWlManagers()
   if (mgrs.includes(userId)) return true
   // also check the env var ones
-  const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean)
+  const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)
   return envMgrs.includes(userId)
 }
 
@@ -216,7 +216,7 @@ function isWlManager(userId) {
   if (!fs.existsSync(WHITELIST_FILE)) saveWhitelist([])
   if (!fs.existsSync(TAGS_FILE)) saveJSON(TAGS_FILE, {})
   if (!fs.existsSync(WL_MANAGERS_FILE)) {
-    const fromEnv = (process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean)
+    const fromEnv = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)
     saveWlManagers(fromEnv)
   }
   if (!fs.existsSync(FLAGGED_GROUPS_FILE)) saveFlaggedGroups([])
@@ -416,6 +416,9 @@ const HELP_SECTIONS = [
       '{p}cs',
       '{p}say [text]',
       '{p}dm @user/roleId/userId [msg]',
+      '{p}role @member @role1 @role2...',
+      '{p}inrole @role/roleId',
+      '{p}img2gif',
     ]
   },
   {
@@ -445,6 +448,8 @@ const HELP_SECTIONS = [
       '{p}whitelist add @user',
       '{p}whitelist remove @user',
       '{p}whitelist list',
+      '{p}leaveserver [serverid]',
+      '{p}servers',
     ]
   },
   {
@@ -915,6 +920,43 @@ const slashCommands = [
     .addUserOption(o => o.setName('user').setDescription('user to allow/deny').setRequired(false))
     .addIntegerOption(o => o.setName('limit').setDescription('user limit (0 = no limit) for limit action').setRequired(false).setMinValue(0).setMaxValue(99))
     .addStringOption(o => o.setName('name').setDescription('new channel name for rename action').setRequired(false)),
+
+  new SlashCommandBuilder().setName('generate').setDescription('generate usernames')
+    .setIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
+    .setContexts(ALL_CONTEXTS)
+    .addStringOption(o => o.setName('option').setDescription('type of username to generate').setRequired(true)
+      .addChoices(
+        { name: 'discord - words',  value: 'discord-words'  },
+        { name: 'roblox - words',   value: 'roblox-words'   },
+        { name: 'roblox - barcode', value: 'roblox-barcode' }
+      ))
+    .addBooleanOption(o => o.setName('show').setDescription('show the result publicly (default: only you see it)').setRequired(false)),
+
+  new SlashCommandBuilder().setName('role').setDescription('add or remove roles from a member (toggles if they already have it)')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('member').setDescription('member to give/remove roles').setRequired(true))
+    .addRoleOption(o => o.setName('role1').setDescription('first role').setRequired(true))
+    .addRoleOption(o => o.setName('role2').setDescription('second role').setRequired(false))
+    .addRoleOption(o => o.setName('role3').setDescription('third role').setRequired(false))
+    .addRoleOption(o => o.setName('role4').setDescription('fourth role').setRequired(false))
+    .addRoleOption(o => o.setName('role5').setDescription('fifth role').setRequired(false)),
+
+  new SlashCommandBuilder().setName('r').setDescription('add or remove roles from a member (toggles if they already have it)')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('member').setDescription('member to give/remove roles').setRequired(true))
+    .addRoleOption(o => o.setName('role1').setDescription('first role').setRequired(true))
+    .addRoleOption(o => o.setName('role2').setDescription('second role').setRequired(false))
+    .addRoleOption(o => o.setName('role3').setDescription('third role').setRequired(false))
+    .addRoleOption(o => o.setName('role4').setDescription('fourth role').setRequired(false))
+    .addRoleOption(o => o.setName('role5').setDescription('fifth role').setRequired(false)),
+
+  new SlashCommandBuilder().setName('inrole').setDescription('list all members with a specific role')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addRoleOption(o => o.setName('role').setDescription('role to check').setRequired(true)),
+
+  new SlashCommandBuilder().setName('leaveserver').setDescription('force the bot to leave a server (WL managers only)')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addStringOption(o => o.setName('serverid').setDescription('server ID to leave (leave blank to leave current server)').setRequired(false)),
 ].map(c => c.toJSON());
 
 // ─── Status helper ────────────────────────────────────────────────────────────
@@ -1367,6 +1409,93 @@ client.on('interactionCreate', async interaction => {
   const channel = interaction.channel;
 
   // ── Open-to-everyone commands ────────────────────────────────────────────────
+  if (commandName === 'generate') {
+    const option  = interaction.options.getString('option')
+    const showPublic = interaction.options.getBoolean('show') ?? false
+    await interaction.deferReply({ ephemeral: !showPublic })
+
+    // first half of the mashup username
+    const partsA = [
+      'larp','grief','lung','ion','your','flex','cut','ghost','void','blur','drain','snap','melt','fade','numb','null','bleed','vibe','haze','glitch','flop','cope','soak','crave','drift','grind','lurk','burn','skim','zap','deflex','social','color','archive','scatter','hollow','shatter','fracture','spiral','unravel','detach','absorb','suppress','linger','exhaust','dissolve','consume','distort','collapse','isolate',
+      'lean','chug','chugging','blunt','smoke','cosplay','cosplaying','burnt','plug','rack','trap','phase','trace','swipe','scroll','sip','catch','chase','freeze','switch','pivot','loop','spin','twist','crack','pop','slide','coast','rush','peak','dip','fold','press','drag','grip','tap','slam','crash','smash','rip','slice','trim','clip','snip','roll','drop','flip','lurking','fading','bleeding','drifting','burning','grinding','coping','craving','soaking','melting','snapping','draining','blurring','zapping','vibing','hazing','glitching','flopping','snatching','trapping','chasing','catching','smoking','rolling','plugging'
+    ]
+    // second half of the mashup username
+    const partsB = [
+      'this','that','funds','off','lame','hurt','romance','ized','izing','wave','core','less','shift','drop','lock','mode','cast','link','fix','run','hit','zone','edge','cap','slip','miss','type','mark','form','load','flow','path','line','log','port','ed','ing','ness','ward','scape','fall','cycle','loop','gate','sink','crush','void','storm','drift',
+      'lean','sipper','blunt','catcher','playing','chugging','smoking','rolling','trapping','zoning','sliding','coasting','rushing','peaking','dipping','folding','pressing','dragging','gripping','tapping','slamming','crashing','smashing','grinding','lurking','fading','bleeding','drifting','burning','coping','craving','soaking','melting','snapping','draining','blurring','zapping','vibing','hazing','glitching','flopping','snatching','chasing','catching','plugging','flipping','racking','switching','pivoting','spinning','twisting','cracking','popping','griefs','blunts','smokes','rolls','flips','racks','traps','phases','traces','swipes','scrolls','sips'
+    ]
+
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)] }
+    function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1) }
+    function randNum(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min }
+
+    function genWords(platform) {
+      const a = pick(partsA)
+      const b = pick(partsB)
+      if (platform === 'discord') {
+        return `${a}${b}`.slice(0, 32)
+      } else {
+        return `${cap(a)}${cap(b)}`.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20)
+      }
+    }
+
+    function genBarcode() {
+      const chars = ['l', 'I']
+      const len   = randNum(10, 16)
+      let result  = ''
+      while (result.length < len) result += pick(chars)
+      return result
+    }
+
+    async function isRobloxAvailable(username) {
+      try {
+        const res = await fetch(`https://auth.roblox.com/v1/usernames/validate?request.username=${encodeURIComponent(username)}&request.birthday=2000-01-01&request.context=Username`)
+        const data = await res.json()
+        return data.code === 0
+      } catch { return false }
+    }
+
+    const [platform, type] = option.split('-')
+    const count = 8
+    const maxAttempts = 80
+    const usernames = []
+    const seen = new Set()
+    let attempts = 0
+
+    if (platform === 'roblox') {
+      while (usernames.length < count && attempts < maxAttempts) {
+        attempts++
+        const candidate = type === 'words' ? genWords(platform) : genBarcode()
+        if (seen.has(candidate)) continue
+        seen.add(candidate)
+        const available = await isRobloxAvailable(candidate)
+        if (available) usernames.push(candidate)
+      }
+    } else {
+      while (usernames.length < count && attempts < maxAttempts) {
+        attempts++
+        const candidate = genWords(platform)
+        if (seen.has(candidate)) continue
+        seen.add(candidate)
+        usernames.push(candidate)
+      }
+    }
+
+    const platformLabel = platform === 'discord' ? 'Discord' : 'Roblox'
+    const typeLabel     = type === 'words' ? 'Words' : 'Barcode'
+    const footerText    = platform === 'roblox'
+      ? `${usernames.length} available usernames found (checked ${attempts} candidates)`
+      : `${count} usernames generated`
+
+    const e = baseEmbed()
+      .setColor(0xFFFFFF)
+      .setTitle(`${platformLabel} Usernames — ${typeLabel}`)
+      .setDescription(usernames.length > 0 ? usernames.map(u => `\`${u}\``).join('\n') : 'No available usernames found after checking — try again.')
+      .setFooter({ text: footerText, iconURL: LOGO_URL })
+
+    return interaction.editReply({ embeds: [e] })
+  }
+
   if (commandName === 'roblox') {
     await interaction.deferReply();
     const username = interaction.options.getString('username');
@@ -1496,7 +1625,7 @@ client.on('interactionCreate', async interaction => {
 
   // ── Whitelist-required slash commands ────────────────────────────────────────
   if (!loadWhitelist().includes(interaction.user.id)) {
-    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'purge', 'about', 'vstatus', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'convert']);
+    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'about', 'vstatus', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'convert', 'rid']);
     if (commandName === 'verify' && guild) {
       const vwl = loadVerifyWhitelist();
       const guildVwl = vwl[guild.id] || { roles: [], users: [] };
@@ -1844,9 +1973,9 @@ client.on('interactionCreate', async interaction => {
     const mgrs = loadWlManagers();
     if (sub === 'list') {
       if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "only whitelist managers can view the manager list", ephemeral: true });
-      const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean)])];
+      const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)])];
       if (!all.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription('no managers set')] });
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription(all.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()}> (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
     }
     if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "ur not a whitelist manager", ephemeral: true });
     if (sub === 'add') {
@@ -2639,12 +2768,6 @@ client.on('interactionCreate', async interaction => {
     if (!loadWhitelist().includes(interaction.user.id)) return interaction.reply({ content: "you're not whitelisted to use `/strip`", ephemeral: true });
     const robloxUser = interaction.options.getString('username');
     const reason     = interaction.options.getString('reason');
-    const taggedMembers = loadTaggedMembers();
-    let foundTag = null;
-    for (const [tagName, members] of Object.entries(taggedMembers)) {
-      if (members.map(m => m.toLowerCase()).includes(robloxUser.toLowerCase())) { foundTag = tagName; break; }
-    }
-    if (!foundTag) return interaction.reply({ content: `**${robloxUser}** doesn't have any tracked tag`, ephemeral: true });
     const groupId = process.env.ROBLOX_GROUP_ID;
     if (!groupId) return interaction.reply({ content: '`ROBLOX_GROUP_ID` isn\'t set', ephemeral: true });
     let rank2RoleId;
@@ -2661,30 +2784,25 @@ client.on('interactionCreate', async interaction => {
         result = await rankRobloxUser(robloxUser, rank2RoleId);
       } catch (rankErr) {
         const msg = rankErr.message?.toLowerCase() ?? '';
-        if (msg.includes('same role'))         skipReason = 'already at rank 1 (balls)';
-        else if (msg.includes("isn't in the group")) skipReason = 'not in group — tag removed only';
+        if (msg.includes('same role'))               skipReason = 'already at rank 1 (balls)';
+        else if (msg.includes("isn't in the group")) skipReason = 'not in group';
         if (skipReason) {
           const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUser], excludeBannedUsers: false }) })).json()).data?.[0];
-          result = { displayName: userBasic?.displayName || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
+          result = { displayName: userBasic?.name || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
         } else { throw rankErr; }
       }
-      taggedMembers[foundTag] = taggedMembers[foundTag].filter(m => m.toLowerCase() !== robloxUser.toLowerCase());
-      if (!taggedMembers[foundTag].length) delete taggedMembers[foundTag];
-      saveTaggedMembers(taggedMembers);
       const embed = baseEmbed().setTitle('strip').setColor(0xFFFFFF)
         .addFields(
           { name: 'user',       value: result.displayName,           inline: true },
-          { name: 'tag removed', value: foundTag,                   inline: true },
           { name: 'stripped by', value: interaction.user.tag,        inline: true },
           { name: 'reason',     value: reason }
         ).setTimestamp();
-      if (skipReason)      embed.setFooter({ text: skipReason });
+      if (skipReason)       embed.setFooter({ text: skipReason });
       if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
       await interaction.editReply({ embeds: [embed] });
       const sLog = baseEmbed().setTitle('strip log').setColor(0xFFFFFF)
         .addFields(
           { name: 'user',       value: result.displayName,              inline: true },
-          { name: 'tag removed', value: foundTag,                      inline: true },
           { name: 'stripped by', value: `<@${interaction.user.id}>`,   inline: true },
           { name: 'reason',     value: reason }
         ).setFooter({ text: `roblox id: ${result.userId}${skipReason ? ` • ${skipReason}` : ''}` }).setTimestamp();
@@ -2695,7 +2813,6 @@ client.on('interactionCreate', async interaction => {
       await sendStripLog(guild, baseEmbed().setTitle('strip failed').setColor(0xFFFFFF)
         .addFields(
           { name: 'user', value: robloxUser, inline: true },
-          { name: 'tag',  value: foundTag,   inline: true },
           { name: 'attempted by', value: `<@${interaction.user.id}>`, inline: true },
           { name: 'reason', value: reason },
           { name: 'error',  value: err.message }
@@ -2814,6 +2931,93 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('channel reset to defaults')] });
     }
     return interaction.reply({ embeds: [buildVmHelpEmbed()] });
+  }
+
+  // ── /role and /r (WL managers only, toggles roles) ────────────────────────────
+  if (commandName === 'role' || commandName === 'r') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'only whitelist managers can use this command', ephemeral: true });
+
+    const targetMember = interaction.options.getMember('member');
+    if (!targetMember) return interaction.reply({ content: 'that user is not in this server', ephemeral: true });
+
+    const roleOptions = ['role1', 'role2', 'role3', 'role4', 'role5']
+      .map(k => interaction.options.getRole(k))
+      .filter(Boolean);
+
+    if (!roleOptions.length) return interaction.reply({ content: 'provide at least one role', ephemeral: true });
+
+    const added = [], removed = [], failed = [];
+    for (const role of roleOptions) {
+      try {
+        if (targetMember.roles.cache.has(role.id)) {
+          await targetMember.roles.remove(role);
+          removed.push(role.toString());
+        } else {
+          await targetMember.roles.add(role);
+          added.push(role.toString());
+        }
+      } catch { failed.push(role.name); }
+    }
+
+    const lines = [];
+    if (added.length)   lines.push(`➕ Added ${added.join(', ')} to ${targetMember}`);
+    if (removed.length) lines.push(`➖ Removed ${removed.join(', ')} from ${targetMember}`);
+    if (failed.length)  lines.push(`❌ Failed: ${failed.join(', ')} (missing perms?)`);
+
+    return interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(lines.join('\n') || 'nothing changed')] });
+  }
+
+  // ── /inrole ───────────────────────────────────────────────────────────────────
+  if (commandName === 'inrole') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    await interaction.deferReply();
+    const role = interaction.options.getRole('role');
+    await guild.members.fetch();
+    const members = guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(role.id));
+
+    if (!members.size) return interaction.editReply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
+
+    const lines = [...members.values()]
+      .sort((a, b) => a.user.username.localeCompare(b.user.username))
+      .map((m, i) => `${String(i + 1).padStart(2, '0')} ${m} (${m.user.username})`)
+      .join('\n');
+
+    const chunks = [];
+    const CHUNK = 4000;
+    for (let i = 0; i < lines.length; i += CHUNK) chunks.push(lines.slice(i, i + CHUNK));
+
+    for (let i = 0; i < chunks.length; i++) {
+      const e = baseEmbed().setColor(0xFFFFFF)
+        .setTitle(i === 0 ? `Members with ${role.name}` : `Members with ${role.name} (cont.)`)
+        .setDescription(chunks[i])
+        .setFooter({ text: `${members.size} total member${members.size !== 1 ? 's' : ''}`, iconURL: LOGO_URL });
+      if (i === 0) await interaction.editReply({ embeds: [e] });
+      else await interaction.followUp({ embeds: [e] });
+    }
+    return;
+  }
+
+  // ── /leaveserver (WL managers only) ──────────────────────────────────────────
+  if (commandName === 'leaveserver') {
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'only whitelist managers can use this command', ephemeral: true });
+
+    const serverId = interaction.options.getString('serverid');
+
+    if (serverId) {
+      const targetGuild = client.guilds.cache.get(serverId);
+      if (!targetGuild) return interaction.reply({ content: `i'm not in a server with id \`${serverId}\``, ephemeral: true });
+      await interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${targetGuild.name}**...`)], ephemeral: true });
+      try { await targetGuild.leave(); } catch (e) { return interaction.editReply({ content: `couldn't leave — ${e.message}` }); }
+      return;
+    }
+
+    if (!guild) return interaction.reply({ content: 'use this in a server or provide a server id', ephemeral: true });
+    await interaction.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${guild.name}**...`)], ephemeral: true });
+    try { await guild.leave(); } catch (e) { return interaction.editReply({ content: `couldn't leave — ${e.message}` }); }
+    return;
   }
 });
 
@@ -3111,7 +3315,7 @@ client.on('messageCreate', async message => {
 
   // ── Whitelist-required prefix commands ───────────────────────────────────────
   if (!loadWhitelist().includes(message.author.id)) {
-    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'purge', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles']);
+    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid']);
     if (command === 'verify' && message.guild) {
       const vwl = loadVerifyWhitelist();
       const guildVwl = vwl[message.guild.id] || { roles: [], users: [] };
@@ -3477,16 +3681,6 @@ client.on('messageCreate', async message => {
     const reason = args.slice(1).join(' ');
     if (!robloxUser) return message.reply(`usage: \`${prefix}strip [robloxUsername] [reason]\``);
     if (!reason) return message.reply('you need to provide a reason');
-    // find which tag this user has
-    const taggedMembers = loadTaggedMembers();
-    let foundTag = null;
-    for (const [tagName, members] of Object.entries(taggedMembers)) {
-      if (members.map(m => m.toLowerCase()).includes(robloxUser.toLowerCase())) {
-        foundTag = tagName;
-        break;
-      }
-    }
-    if (!foundTag) return message.reply(`**${robloxUser}** doesn't have any tracked tag`);
     const groupId = process.env.ROBLOX_GROUP_ID;
     if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
     let rank2RoleId;
@@ -3496,7 +3690,7 @@ client.on('messageCreate', async message => {
       if (!rank2) return message.reply("couldn't find a rank 1 role in the group");
       rank2RoleId = String(rank2.id);
     } catch { return message.reply("couldn't fetch group roles, try again"); }
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`stripping **${robloxUser}** (tag: **${foundTag}**)...`)] });
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`stripping **${robloxUser}**...`)] });
     try {
       let result;
       let skipReason = null;
@@ -3507,23 +3701,18 @@ client.on('messageCreate', async message => {
         if (msg.includes('same role')) {
           skipReason = 'already at rank 1 (balls)';
         } else if (msg.includes("isn't in the group")) {
-          skipReason = 'not in group — tag removed only';
+          skipReason = 'not in group';
         }
         if (skipReason) {
           const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUser], excludeBannedUsers: false }) })).json()).data?.[0];
-          result = { displayName: userBasic?.displayName || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
+          result = { displayName: userBasic?.name || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
         } else {
           throw rankErr;
         }
       }
-      // remove from tagged members
-      taggedMembers[foundTag] = taggedMembers[foundTag].filter(m => m.toLowerCase() !== robloxUser.toLowerCase());
-      if (!taggedMembers[foundTag].length) delete taggedMembers[foundTag];
-      saveTaggedMembers(taggedMembers);
       const embed = baseEmbed().setTitle('strip').setColor(0xFFFFFF)
         .addFields(
           { name: 'user', value: result.displayName, inline: true },
-          { name: 'tag removed', value: foundTag, inline: true },
           { name: 'stripped by', value: message.author.tag, inline: true },
           { name: 'reason', value: reason }
         )
@@ -3534,7 +3723,6 @@ client.on('messageCreate', async message => {
       const logEmbed = baseEmbed().setTitle('strip log').setColor(0xFFFFFF)
         .addFields(
           { name: 'user', value: result.displayName, inline: true },
-          { name: 'tag removed', value: foundTag, inline: true },
           { name: 'stripped by', value: `<@${message.author.id}>`, inline: true },
           { name: 'reason', value: reason }
         ).setFooter({ text: `roblox id: ${result.userId}${skipReason ? ` • ${skipReason}` : ''}` }).setTimestamp();
@@ -3545,7 +3733,6 @@ client.on('messageCreate', async message => {
       const failEmbed = baseEmbed().setTitle('strip failed').setColor(0xFFFFFF)
         .addFields(
           { name: 'user', value: robloxUser, inline: true },
-          { name: 'tag', value: foundTag, inline: true },
           { name: 'attempted by', value: `<@${message.author.id}>`, inline: true },
           { name: 'reason', value: reason },
           { name: 'error', value: err.message }
@@ -3707,23 +3894,17 @@ client.on('messageCreate', async message => {
   if (command === 'verify') {
     if (!message.guild) return;
     const vc = loadVerifyConfig();
-    const vwl = loadVerifyWhitelist();
     const guildVc = vc[message.guild.id];
-    if (!guildVc?.roleId) return message.reply(`verify role isn't set — use \`${prefix}setverifyrole\` first`);
-    const guildVwl = vwl[message.guild.id] || { roles: [], users: [] };
-    const isAllowed = guildVwl.users.includes(message.author.id) ||
-      message.member.roles.cache.some(r => guildVwl.roles.includes(r.id)) ||
-      message.member.permissions.has(PermissionsBitField.Flags.ManageGuild);
-    if (!isAllowed) return message.reply("you're not allowed to verify users");
+    if (!guildVc?.roleId) return message.reply(`verify role isn't set — use \`${prefix}setverifyrole @role\` first`);
     const target = message.mentions.members?.first();
-    if (!target) return message.reply('mention a user to verify');
+    if (!target) return message.reply(`mention a user to verify — e.g. \`${prefix}verify @user\``);
     try {
       await target.roles.add(guildVc.roleId, `verified by ${message.author.tag}`);
       return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle('Verified')
         .setThumbnail(target.user.displayAvatarURL())
         .addFields(
-          { name: 'user', value: target.user.tag, inline: true },
-          { name: 'verified by', value: message.author.tag, inline: true },
+          { name: 'user', value: `<@${target.id}>`, inline: true },
+          { name: 'verified by', value: `<@${message.author.id}>`, inline: true },
           { name: 'role given', value: `<@&${guildVc.roleId}>`, inline: true }
         ).setTimestamp()] });
     } catch (err) { return message.reply(`couldn't verify — ${err.message}`); }
@@ -3825,9 +4006,9 @@ client.on('messageCreate', async message => {
     const mgrs = loadWlManagers();
     if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use this')] });
     if (sub === 'list') {
-      const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').filter(Boolean)])];
+      const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)])];
       if (!all.length) return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription('no managers set')] });
-      return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription(all.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0xFFFFFF).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()}> (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
     }
     if (sub === 'add') {
       const target = message.mentions.users?.first();
@@ -4358,6 +4539,250 @@ client.on('messageCreate', async message => {
         )] });
     }
     return message.reply(`usage: \`${prefix}vanityset <set|disable|status|syncfraud> [@picrole]\``);
+  }
+
+  // ── .role / .r (WL managers only) ────────────────────────────────────────────
+  if (command === 'role' || command === 'r') {
+    if (!message.guild) return;
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.role`')] });
+
+    // support both @mention and raw user ID for the target member
+    let targetMember = message.mentions.members?.first();
+    if (!targetMember && args[0] && /^\d+$/.test(args[0])) {
+      try { targetMember = await message.guild.members.fetch(args[0]); } catch {}
+    }
+    if (!targetMember) return message.reply(`usage: \`${prefix}role @member @role1 @role2...\`\nexample: \`${prefix}role @user @Members\` or \`${prefix}role @user 1234567890\``);
+
+    // collect roles from @mentions AND any raw role IDs in args (skip the first arg if it was a user ID)
+    const collectedRoles = new Map();
+    // add all @mentioned roles
+    for (const [id, role] of (message.mentions.roles ?? [])) collectedRoles.set(id, role);
+    // scan all args for numeric IDs that aren't the user's ID
+    const userArgId = targetMember.id;
+    for (const arg of args) {
+      if (!/^\d+$/.test(arg)) continue;
+      if (arg === userArgId) continue;
+      if (collectedRoles.has(arg)) continue;
+      const found = message.guild.roles.cache.get(arg);
+      if (found) collectedRoles.set(arg, found);
+      else {
+        // try fetching it
+        try {
+          const fetched = await message.guild.roles.fetch(arg);
+          if (fetched) collectedRoles.set(fetched.id, fetched);
+        } catch {}
+      }
+    }
+
+    if (collectedRoles.size === 0) return message.reply('mention at least one role or provide a role ID to add or remove');
+
+    const added = [];
+    const removed = [];
+    const failed = [];
+
+    for (const [, role] of collectedRoles) {
+      try {
+        if (targetMember.roles.cache.has(role.id)) {
+          await targetMember.roles.remove(role);
+          removed.push(`<@&${role.id}>`);
+        } else {
+          await targetMember.roles.add(role);
+          added.push(`<@&${role.id}>`);
+        }
+      } catch {
+        failed.push(role.name);
+      }
+    }
+
+    const lines = [];
+    if (added.length)   lines.push(`➕ Added ${added.join(', ')} to ${targetMember}`);
+    if (removed.length) lines.push(`➖ Removed ${removed.join(', ')} from ${targetMember}`);
+    if (failed.length)  lines.push(`❌ Failed: ${failed.join(', ')} (missing perms?)`);
+
+    return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(lines.join('\n') || 'nothing changed')] });
+  }
+
+  // ── .inrole ───────────────────────────────────────────────────────────────────
+  if (command === 'inrole') {
+    if (!message.guild) return;
+
+    // support both @role mention and raw role ID
+    let role = message.mentions.roles?.first();
+    if (!role && args[0] && /^\d+$/.test(args[0])) {
+      role = message.guild.roles.cache.get(args[0]);
+      if (!role) {
+        try { role = await message.guild.roles.fetch(args[0]); } catch {}
+      }
+    }
+    if (!role) return message.reply(`usage: \`${prefix}inrole @role\` or \`${prefix}inrole roleId\`\nexample: \`${prefix}inrole @Members\` or \`${prefix}inrole 1479630117428003164\``);
+
+    await message.guild.members.fetch();
+    const members = message.guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(role.id));
+
+    if (!members.size) return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
+
+    const lines = [...members.values()]
+      .sort((a, b) => a.user.username.localeCompare(b.user.username))
+      .map((m, i) => `${String(i + 1).padStart(2, '0')} ${m} (${m.user.username})`)
+      .join('\n');
+
+    const chunks = [];
+    const CHUNK = 4000;
+    for (let i = 0; i < lines.length; i += CHUNK) chunks.push(lines.slice(i, i + CHUNK));
+
+    for (let i = 0; i < chunks.length; i++) {
+      const e = baseEmbed().setColor(0xFFFFFF)
+        .setTitle(i === 0 ? `Members with ${role.name}` : `Members with ${role.name} (cont.)`)
+        .setDescription(chunks[i])
+        .setFooter({ text: `${members.size} total member${members.size !== 1 ? 's' : ''}`, iconURL: LOGO_URL });
+      await message.reply({ embeds: [e] });
+    }
+    return;
+  }
+
+  // ── .rid ─────────────────────────────────────────────────────────────────────
+  if (command === 'rid') {
+    const input = args[0];
+    if (!input) return message.reply(`usage: \`${getPrefix()}rid <roblox id>\``);
+    if (!/^\d+$/.test(input)) return message.reply('give a numeric Roblox ID — e.g. `.rid 1`');
+    try {
+      const [user, avatarRes] = await Promise.all([
+        fetch(`https://users.roblox.com/v1/users/${input}`).then(r => r.json()),
+        fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${input}&size=420x420&format=Png&isCircular=false`).then(r => r.json()).catch(() => ({ data: [] })),
+      ]);
+      if (user.errors || !user.name) return message.reply("couldn't find a Roblox user with that ID");
+      const profileUrl = `https://www.roblox.com/users/${input}/profile`;
+      const avatarUrl = avatarRes.data?.[0]?.imageUrl;
+      const created = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const e = baseEmbed()
+        .setColor(0xFFFFFF)
+        .setTitle(`${user.displayName} (@${user.name})`)
+        .setURL(profileUrl)
+        .setThumbnail(avatarUrl)
+        .setDescription(`[View Profile](${profileUrl})`)
+        .addFields(
+          { name: '🆔 User ID',   value: `\`${input}\``, inline: true },
+          { name: '👤 Username',  value: user.name,       inline: true },
+          { name: '📅 Created',   value: created,         inline: true },
+        )
+        .setTimestamp();
+      return message.reply({
+        embeds: [e],
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Open Profile').setStyle(ButtonStyle.Link).setURL(profileUrl))]
+      });
+    } catch { return message.reply("something went wrong fetching that user, try again"); }
+  }
+
+  // ── .leaveserver (WL managers only) ──────────────────────────────────────────
+  if (command === 'leaveserver') {
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.leaveserver`')] });
+
+    const serverId = args[0];
+
+    if (serverId) {
+      const targetGuild = client.guilds.cache.get(serverId);
+      if (!targetGuild) return message.reply(`i'm not in a server with id \`${serverId}\``);
+      const reply = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${targetGuild.name}**...`)] });
+      try { await targetGuild.leave(); } catch (e) { return reply.edit(`couldn't leave — ${e.message}`); }
+      return;
+    }
+
+    if (!message.guild) return message.reply('use this in a server or provide a server id as an argument');
+    await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`leaving **${message.guild.name}**...`)] });
+    try { await message.guild.leave(); } catch (e) { return message.reply(`couldn't leave — ${e.message}`); }
+    return;
+  }
+
+  // ── .servers (WL managers only) ──────────────────────────────────────────────
+  if (command === 'servers') {
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('only whitelist managers can use `.servers`')] });
+
+    const guilds = [...client.guilds.cache.values()].sort((a, b) => a.name.localeCompare(b.name));
+    if (!guilds.length) return message.reply('not in any servers');
+
+    const lines = guilds.map((g, i) => `\`${String(i + 1).padStart(2, '0')}\` **${g.name}** — \`${g.id}\` (${g.memberCount} members)`);
+
+    const chunks = [];
+    const CHUNK = 4000;
+    let current = '';
+    for (const line of lines) {
+      if ((current + '\n' + line).length > CHUNK) {
+        chunks.push(current);
+        current = line;
+      } else {
+        current = current ? current + '\n' + line : line;
+      }
+    }
+    if (current) chunks.push(current);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const e = baseEmbed().setColor(0xFFFFFF)
+        .setTitle(i === 0 ? `Servers (${guilds.length})` : `Servers (cont.)`)
+        .setDescription(chunks[i]);
+      await message.reply({ embeds: [e] });
+    }
+    return;
+  }
+
+  // ── .img2gif ──────────────────────────────────────────────────────────────────
+  if (command === 'img2gif') {
+    if (!message.guild) return;
+
+    const attachment = message.attachments.first();
+    if (!attachment) return message.reply('attach an image to convert — e.g. paste an image then type `.img2gif` in the same message');
+
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+    if (attachment.contentType && !validTypes.some(t => attachment.contentType.startsWith(t.split('/')[0] + '/')))
+      return message.reply('that file type isn\'t supported — send a PNG, JPG, WEBP, or GIF');
+
+    if (attachment.contentType?.includes('gif')) return message.reply('that\'s already a GIF');
+
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription('converting to GIF...')] });
+
+    try {
+      const { createCanvas, loadImage } = await import('canvas');
+      const { createWriteStream, unlinkSync } = await import('fs');
+      const { default: GIFEncoder } = await import('gifencoder');
+      const { tmpdir } = await import('os');
+      const { join } = await import('path');
+
+      const imgRes = await fetch(attachment.url);
+      const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+      const img = await loadImage(imgBuffer);
+      const encoder = new GIFEncoder(img.width, img.height);
+      const tmpPath = join(tmpdir(), `img2gif_${Date.now()}.gif`);
+      const stream = createWriteStream(tmpPath);
+
+      encoder.createReadStream().pipe(stream);
+      encoder.start();
+      encoder.setRepeat(0);
+      encoder.setDelay(100);
+      encoder.setQuality(10);
+
+      const canvas = createCanvas(img.width, img.height);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      encoder.addFrame(ctx);
+      encoder.finish();
+
+      await new Promise((resolve, reject) => {
+        stream.on('finish', resolve);
+        stream.on('error', reject);
+      });
+
+      const gifBuffer = fs.readFileSync(tmpPath);
+      const gifAttachment = new AttachmentBuilder(gifBuffer, { name: 'image.gif' });
+
+      await status.edit({ content: '', embeds: [], files: [gifAttachment] });
+      try { unlinkSync(tmpPath); } catch {}
+    } catch (err) {
+      await status.edit({ embeds: [baseEmbed().setColor(0xFFFFFF).setDescription(`couldn't convert — \`${err.message}\``)] });
+    }
+    return;
   }
 });
 
