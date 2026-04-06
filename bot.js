@@ -111,6 +111,8 @@ const RANKUP_FILE         = path.join(__dirname, 'rankup.json')
 const QUEUE_FILE          = path.join(__dirname, 'queue.json')
 const VERIFY_FILE         = path.join(__dirname, 'verify.json')
 const LINKED_VERIFIED_FILE = path.join(__dirname, 'linked_verified.json')
+const RAID_STATS_FILE     = path.join(__dirname, 'raid_stats.json')
+const QUEUE_MSGS_FILE     = path.join(__dirname, 'queue_msgs.json')
 
 // ── feature files ─────────────────────────────────────────────────────────────
 const VANITY_FILE        = path.join(__dirname, 'vanity.json')
@@ -172,6 +174,10 @@ const loadQueue         = () => loadJSON(QUEUE_FILE)
 const saveQueue         = q  => saveJSON(QUEUE_FILE, q)
 const loadVerify        = () => loadJSON(VERIFY_FILE)
 const saveVerify        = v  => saveJSON(VERIFY_FILE, v)
+const loadRaidStats     = () => loadJSON(RAID_STATS_FILE)
+const saveRaidStats     = s  => saveJSON(RAID_STATS_FILE, s)
+const loadQueueMsgs     = () => loadJSON(QUEUE_MSGS_FILE)
+const saveQueueMsgs     = m  => saveJSON(QUEUE_MSGS_FILE, m)
 
 // writes a clean snapshot of all verified users to linked_verified.json
 function saveLinkedVerified(vData) {
@@ -436,6 +442,47 @@ async function extractUsernamesVision(imagePath) {
   return [...nameSet]
 }
 
+// ─── Raid stats helpers ───────────────────────────────────────────────────────
+// EST timestamp formatter: "04/06/2026 at 05:23 PM (EST)"
+function formatEstTime(ts) {
+  const d = new Date(ts)
+  const opts = { timeZone: 'America/New_York', month: '2-digit', day: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true }
+  const parts = new Intl.DateTimeFormat('en-US', opts).formatToParts(d)
+  const get = t => parts.find(p => p.type === t)?.value ?? ''
+  return `${get('month')}/${get('day')}/${get('year')} at ${get('hour')}:${get('minute')} ${get('dayPeriod')} (EST)`
+}
+
+// Returns "X days ago" / "today" based on timestamp vs now
+function daysAgoStr(ts) {
+  const diff = Math.floor((Date.now() - ts) / 86400000)
+  return diff === 0 ? '0 days ago' : diff === 1 ? '1 day ago' : `${diff} days ago`
+}
+
+// Increments a Discord user's raid stats (points +1, totalRaids +1, lastRaid = now)
+function addRaidStat(guildId, discordId) {
+  if (!guildId || !discordId) return
+  const stats = loadRaidStats()
+  if (!stats[guildId]) stats[guildId] = {}
+  const user = stats[guildId][discordId] || { raidPoints: 0, totalRaids: 0, lastRaid: null }
+  user.raidPoints  += 1
+  user.totalRaids  += 1
+  user.lastRaid     = Date.now()
+  stats[guildId][discordId] = user
+  saveRaidStats(stats)
+}
+
+// Adds just raid points (for reaction-based queue points) without incrementing totalRaids
+function addRaidPoints(guildId, discordId, amount = 1) {
+  if (!guildId || !discordId) return
+  const stats = loadRaidStats()
+  if (!stats[guildId]) stats[guildId] = {}
+  const user = stats[guildId][discordId] || { raidPoints: 0, totalRaids: 0, lastRaid: null }
+  user.raidPoints += amount
+  stats[guildId][discordId] = user
+  saveRaidStats(stats)
+}
+
 // Shared scan runner used by both slash and prefix scan commands.
 // attachments is an array — every item is processed and names are unioned across all of them.
 // editFn(descriptionText) updates the status message shown to the user.
@@ -576,7 +623,17 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
   for (const robloxUser of registeredMembers) {
     const discordId = vData.robloxToDiscord?.[String(robloxUser.id)]
     if (!discordId) continue
-    await qCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid').setAuthor({ name: getBotName(), iconURL: LOGO_URL }).addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false }).setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] })
+    let avatarUrl = null
+    try {
+      const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUser.id}&size=420x420&format=Png&isCircular=false`)).json()
+      avatarUrl = avatarData.data?.[0]?.imageUrl ?? null
+    } catch {}
+    const attendEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid').setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+      .addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxUser.name}\``, inline: false })
+      .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })
+    if (avatarUrl) attendEmbed.setThumbnail(avatarUrl)
+    await qCh.send({ embeds: [attendEmbed] })
+    addRaidStat(guild.id, discordId)
     posted++
     await new Promise(r => setTimeout(r, 300))
   }
@@ -630,10 +687,10 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
     // userPresenceType: 0=Offline, 1=Online, 2=InGame, 3=InStudio
     if (!presence || presence.userPresenceType !== 2) {
       const type = presence?.userPresenceType ?? 'unknown'
-      throw new Error(`**${targetUser.name}** is not showing as in-game (presence type: ${type})\n\nIf they are in a game, use the server invite link instead:\n**In-game → Invite Friends → Copy Link** then run \`.gscan <paste link>\``)
+      throw new Error(`**${targetUser.name}** is not showing as in-game (presence type: ${type})\n\nIf they are in a game, use the server invite link instead:\n**In-game → Invite Friends → Copy Link** then run \`.ingame <paste link>\``)
     }
     if (!presence.placeId) throw new Error(`**${targetUser.name}** is in a game but the place ID is unavailable`)
-    if (!presence.gameId) throw new Error(`**${targetUser.name}** is in a game but the server ID is hidden\n\nUse the server invite link instead: **In-game → Invite Friends → Copy Link** then run \`.gscan <paste link>\``)
+    if (!presence.gameId) throw new Error(`**${targetUser.name}** is in a game but the server ID is hidden\n\nUse the server invite link instead: **In-game → Invite Friends → Copy Link** then run \`.ingame <paste link>\``)
 
     placeId = presence.placeId
     serverInstanceId = presence.gameId
@@ -708,33 +765,32 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
 
   await editFn(`found **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in ${displayLabel}, looking up Discord accounts...`)
 
-  // Post attendance embeds for each group member found
+  // Post attendance embeds — only registered (mverify'd) members
   const localVerify = loadVerify()
   let posted = 0
   for (const robloxId of inServer) {
     const robloxName = memberNames[robloxId] || String(robloxId)
-    let discordId = null
-    const localId = localVerify.robloxToDiscord?.[String(robloxId)]
-    if (localId) {
-      discordId = localId
-    } else {
-      try {
-        const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxId}`)).json()
-        if (rover.status === 'ok' && rover.discordId) discordId = rover.discordId
-      } catch {}
-    }
+    const discordId = localVerify.robloxToDiscord?.[String(robloxId)]
+    if (!discordId) continue
 
-    if (discordId) {
-      await qCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
-        .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
-        .addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
-        .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] })
-      posted++
-    }
+    let avatarUrl = null
+    try {
+      const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxId}&size=420x420&format=Png&isCircular=false`)).json()
+      avatarUrl = avatarData.data?.[0]?.imageUrl ?? null
+    } catch {}
+
+    const attendEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+      .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+      .addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
+      .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })
+    if (avatarUrl) attendEmbed.setThumbnail(avatarUrl)
+    await qCh.send({ embeds: [attendEmbed] })
+    addRaidStat(guild.id, discordId)
+    posted++
     await new Promise(r => setTimeout(r, 300))
   }
 
-  return `gscan complete — **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in ${displayLabel} in **${gameName}**, logged **${posted}** registered members`
+  return `scan complete — **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in ${displayLabel} in **${gameName}**, logged **${posted}** registered members`
 }
 
 // sends a log embed to the log channel if one is set
@@ -926,7 +982,8 @@ const HELP_SECTIONS = [
     title: 'Attendance / Verify',
 
     commands: [
-      '{p}verifylist',
+      '{p}register RobloxUsername',
+      '{p}registeredlist',
       '{p}mverify @user RobloxUsername',
       '{p}munverify @user',
       '{p}rfile',
@@ -934,7 +991,7 @@ const HELP_SECTIONS = [
       '{p}linked @user or RobloxUsername',
       '{p}scan (attach image/video)',
       '{p}attend @user robloxname',
-      '{p}setattendance #channel',
+      '/setattendance #channel',
       '{p}cleanup',
       '{p}ingame RobloxUsername',
     ]
@@ -1466,7 +1523,7 @@ const slashCommands = [
     .addStringOption(o => o.setName('username').setDescription('Roblox username to look up').setRequired(true)),
 
   // ── verify / link commands ────────────────────────────────────────────────
-  new SlashCommandBuilder().setName('verifylist').setDescription('list all verified Roblox-linked accounts')
+  new SlashCommandBuilder().setName('registeredlist').setDescription('list all registered (mverify\'d) Roblox-linked accounts')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
   new SlashCommandBuilder().setName('linked').setDescription('look up a linked Roblox/Discord account')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
@@ -3467,12 +3524,11 @@ client.on('interactionCreate', async interaction => {
     if (!attachmentList.length) return interaction.reply({ content: 'attach at least one screenshot or video of the player list', ephemeral: true });
     const queueData = loadQueue();
     const qCh = (queueData[guild.id]?.channelId ? guild.channels.cache.get(queueData[guild.id].channelId) : null) ?? channel;
-    const ulCh = queueData[guild.id]?.ulChannelId ? (guild.channels.cache.get(queueData[guild.id].ulChannelId) ?? null) : null;
     await interaction.deferReply();
     await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning for raid members...')] });
     const editFn = (desc) => interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(desc)] });
     try {
-      const result = await runScanCommand(attachmentList, guild, qCh, ulCh, editFn);
+      const result = await runScanCommand(attachmentList, guild, qCh, null, editFn);
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(result)] });
     } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}`)] }); }
   }
@@ -3569,10 +3625,27 @@ client.on('interactionCreate', async interaction => {
     const queueData = loadQueue();
     const queueChannelId = queueData[guild.id]?.channelId;
     const queueChannel = queueChannelId ? (guild.channels.cache.get(queueChannelId) ?? channel) : channel;
+
+    // Look up Roblox avatar for the embed thumbnail
+    let attendAvatarUrl = null;
+    try {
+      const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [roblox], excludeBannedUsers: false })
+      })).json();
+      const robloxUserId = robloxRes.data?.[0]?.id;
+      if (robloxUserId) {
+        const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUserId}&size=420x420&format=Png&isCircular=false`)).json();
+        attendAvatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+      }
+    } catch {}
+
     const attendEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid').setAuthor({ name: getBotName(), iconURL: LOGO_URL })
       .addFields({ name: 'Discord', value: `${targetMember}`, inline: false }, { name: 'Roblox', value: `\`${roblox}\``, inline: false })
       .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL });
+    if (attendAvatarUrl) attendEmbed.setThumbnail(attendAvatarUrl);
     await queueChannel.send({ embeds: [attendEmbed] });
+    addRaidStat(guild.id, targetMember.id);
     return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`logged **${targetMember.displayName}** to ${queueChannel}`)], ephemeral: true });
   }
 
@@ -3679,8 +3752,8 @@ client.on('interactionCreate', async interaction => {
       ).setTimestamp()] });
   }
 
-  // ── verifylist ───────────────────────────────────────────────────────────
-  if (commandName === 'verifylist') {
+  // ── registeredlist ──────────────────────────────────────────────────────
+  if (commandName === 'registeredlist') {
     await interaction.deferReply();
     const vData = loadVerify();
     const entries = Object.entries(vData.verified || {});
@@ -3690,8 +3763,8 @@ client.on('interactionCreate', async interaction => {
     const totalPages = pages.length;
     const buildPage = (idx) => baseEmbed().setColor(0x8B0000).setTitle(`Verified Accounts [${entries.length}]`).setDescription(pages[idx].join('\n')).setFooter({ text: `Page ${idx + 1} of ${totalPages} • ${getBotName()}`, iconURL: LOGO_URL });
     const buildRow = (idx) => new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`vlist_${idx - 1}`).setLabel('‹ Back').setStyle(ButtonStyle.Secondary).setDisabled(idx === 0),
-      new ButtonBuilder().setCustomId(`vlist_${idx + 1}`).setLabel('Next ›').setStyle(ButtonStyle.Secondary).setDisabled(idx === totalPages - 1)
+      new ButtonBuilder().setCustomId(`rlist_${idx - 1}`).setLabel('‹ Back').setStyle(ButtonStyle.Secondary).setDisabled(idx === 0),
+      new ButtonBuilder().setCustomId(`rlist_${idx + 1}`).setLabel('Next ›').setStyle(ButtonStyle.Secondary).setDisabled(idx === totalPages - 1)
     );
     return interaction.editReply({ embeds: [buildPage(0)], components: totalPages > 1 ? [buildRow(0)] : [] });
   }
@@ -3812,28 +3885,37 @@ client.on('interactionCreate', async interaction => {
             const discordId = vData.robloxToDiscord?.[String(p.userId)];
             const robloxName = allRegisteredInGroup.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
             if (p.gameId === gameId) {
-              inSameServer.push({ discordId, robloxName });
+              inSameServer.push({ discordId, robloxName, robloxId: p.userId });
             }
           }
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
-      // Post attendance embeds to the attendance channel for everyone in the same server
+      // Post attendance embeds to the attendance channel — registered members only
       const queueData = loadQueue();
       const queueChannelId = queueData[guild.id]?.channelId;
       const queueChannel = queueChannelId ? (guild.channels.cache.get(queueChannelId) ?? null) : null;
-      if (queueChannel && inSameServer.length) {
-        for (const { discordId, robloxName } of inSameServer) {
-          await queueChannel.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+      const registeredInSameServer = inSameServer.filter(m => m.discordId);
+      if (queueChannel && registeredInSameServer.length) {
+        for (const { discordId, robloxName, robloxId } of registeredInSameServer) {
+          let ingameAvatarUrl = null;
+          try {
+            const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+            ingameAvatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+          } catch {}
+          const ingameEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
             .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
-            .addFields({ name: 'Discord', value: discordId ? `<@${discordId}>` : '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
-            .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+            .addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
+            .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL });
+          if (ingameAvatarUrl) ingameEmbed.setThumbnail(ingameAvatarUrl);
+          await queueChannel.send({ embeds: [ingameEmbed] });
+          addRaidStat(guild.id, discordId);
           await new Promise(r => setTimeout(r, 300));
         }
       }
-      const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\``;
-      const ingameSection = inSameServer.length ? `**In same server (${inSameServer.length})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
-      const attendNote = queueChannel && inSameServer.length ? `\n\n*logged ${inSameServer.length} member${inSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
+      const formatLine = ({ discordId, robloxName }) => `<@${discordId}> — \`${robloxName}\``;
+      const ingameSection = registeredInSameServer.length ? `**In same server (${registeredInSameServer.length})**\n${registeredInSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
+      const attendNote = queueChannel && registeredInSameServer.length ? `\n\n*logged ${registeredInSameServer.length} member${registeredInSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
         .setDescription(`${ingameSection}${attendNote}`)
@@ -4288,7 +4370,7 @@ client.on('messageCreate', async message => {
 
   // ── Whitelist-required prefix commands ───────────────────────────────────────
   if (!loadWhitelist().includes(message.author.id)) {
-    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'verifylist', 'vlist']);
+    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'registeredlist', 'register']);
     if (!openPrefixCommands.has(command)) {
       return;
     }
@@ -5818,8 +5900,59 @@ client.on('messageCreate', async message => {
     });
   }
 
-  // ── .verifylist ───────────────────────────────────────────────────────────────
-  if (command === 'verifylist' || command === 'vlist') {
+  // ── .register ─────────────────────────────────────────────────────────────────
+  // Usage: .register RobloxUsername
+  // Self-service: links the calling Discord user to a Roblox account.
+  if (command === 'register') {
+    if (!message.guild) return;
+    const robloxInput = args[0]?.trim();
+    if (!robloxInput) return message.reply(`usage: \`${prefix}register YourRobloxUsername\``);
+
+    try {
+      const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
+      })).json();
+      const robloxUser = res.data?.[0];
+      if (!robloxUser)
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't find a Roblox user named \`${robloxInput}\``)] });
+
+      const vData = loadVerify();
+      if (!vData.verified) vData.verified = {};
+      if (!vData.robloxToDiscord) vData.robloxToDiscord = {};
+
+      const existingDiscordId = vData.robloxToDiscord[String(robloxUser.id)];
+      if (existingDiscordId && existingDiscordId !== message.author.id) {
+        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
+          .setDescription(`\`${robloxUser.name}\` is already registered to a different account — contact a staff member`)] });
+      }
+
+      const prevEntry = vData.verified[message.author.id];
+      if (prevEntry && String(prevEntry.robloxId) !== String(robloxUser.id)) {
+        delete vData.robloxToDiscord[String(prevEntry.robloxId)];
+      }
+
+      vData.verified[message.author.id]               = { robloxId: robloxUser.id, robloxName: robloxUser.name, verifiedAt: Date.now() };
+      vData.robloxToDiscord[String(robloxUser.id)]     = message.author.id;
+      saveVerify(vData);
+      saveLinkedVerified(vData);
+
+      const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUser.id}&size=420x420&format=Png&isCircular=false`)).json();
+      const avatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000)
+        .setTitle('Registration Successful')
+        .setThumbnail(avatarUrl ?? LOGO_URL)
+        .setDescription(`You are now registered as **${robloxUser.name}**`)
+        .addFields(
+          { name: 'Discord', value: `<@${message.author.id}>`, inline: true },
+          { name: 'Roblox',  value: `[\`${robloxUser.name}\`](https://www.roblox.com/users/${robloxUser.id}/profile)`, inline: true }
+        ).setTimestamp()] });
+    } catch (err) { return message.reply(`register failed — ${err.message}`); }
+  }
+
+  // ── .registeredlist ───────────────────────────────────────────────────────────
+  if (command === 'registeredlist') {
     const vData   = loadVerify();
     const entries = Object.entries(vData.verified || {});
 
@@ -5854,8 +5987,8 @@ client.on('messageCreate', async message => {
 
     // Multi-page with buttons
     const buildRow = (idx) => new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`vlist_${idx - 1}`).setLabel('‹ Back').setStyle(ButtonStyle.Secondary).setDisabled(idx === 0),
-      new ButtonBuilder().setCustomId(`vlist_${idx + 1}`).setLabel('Next ›').setStyle(ButtonStyle.Secondary).setDisabled(idx === totalPages - 1)
+      new ButtonBuilder().setCustomId(`rlist_${idx - 1}`).setLabel('‹ Back').setStyle(ButtonStyle.Secondary).setDisabled(idx === 0),
+      new ButtonBuilder().setCustomId(`rlist_${idx + 1}`).setLabel('Next ›').setStyle(ButtonStyle.Secondary).setDisabled(idx === totalPages - 1)
     );
 
     const reply = await message.reply({ embeds: [buildPage(0)], components: [buildRow(0)] });
@@ -6029,18 +6162,13 @@ client.on('messageCreate', async message => {
     const qCh = queueChannelId
       ? (message.guild.channels.cache.get(queueChannelId) ?? message.channel)
       : message.channel;
-    const ulChannelId = queueData[message.guild.id]?.ulChannelId;
-    const ulCh = ulChannelId
-      ? (message.guild.channels.cache.get(ulChannelId) ?? null)
-      : null;
-
     const status = await message.reply({
       embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning for raid members...')]
     });
     const editFn = (desc) => status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(desc)] });
 
     try {
-      const result = await runScanCommand(attachmentList, message.guild, qCh, ulCh, editFn);
+      const result = await runScanCommand(attachmentList, message.guild, qCh, null, editFn);
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(result)] });
     } catch (err) {
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}`)] });
@@ -6113,6 +6241,18 @@ client.on('messageCreate', async message => {
     if (!pairs.length) return message.reply("couldn't resolve any Discord users — try mentioning them");
 
     for (const { member, roblox } of pairs) {
+      let prefixAttendAvatarUrl = null;
+      try {
+        const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usernames: [roblox], excludeBannedUsers: false })
+        })).json();
+        const robloxUserId = robloxRes.data?.[0]?.id;
+        if (robloxUserId) {
+          const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUserId}&size=420x420&format=Png&isCircular=false`)).json();
+          prefixAttendAvatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+        }
+      } catch {}
       const attendEmbed = new EmbedBuilder()
         .setColor(0x8B0000)
         .setTitle('registered user joined this raid')
@@ -6123,6 +6263,7 @@ client.on('messageCreate', async message => {
         )
         .setTimestamp()
         .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+      if (prefixAttendAvatarUrl) attendEmbed.setThumbnail(prefixAttendAvatarUrl);
       await queueChannel.send({ embeds: [attendEmbed] });
     }
 
@@ -6217,21 +6358,6 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // ── .setattendance ─────────────────────────────────────────────────────────────────
-  if (command === 'setattendance') {
-    if (!message.guild) return;
-    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
-      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('you need to be whitelisted to set the queue channel')] });
-    const ch = message.mentions.channels?.first();
-    if (!ch?.isTextBased()) return message.reply(`usage: \`${prefix}setattendance #channel\``);
-    const queueData = loadQueue();
-    if (!queueData[message.guild.id]) queueData[message.guild.id] = {};
-    queueData[message.guild.id].channelId = ch.id;
-    saveQueue(queueData);
-    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Queue Channel Set')
-      .setDescription(`raid attendance logs will now post to ${ch}`)
-      .setTimestamp()] });
-  }
 
   // ── .ingame ───────────────────────────────────────────────────────────────────
   if (command === 'ingame') {
@@ -6286,28 +6412,36 @@ client.on('messageCreate', async message => {
             const discordId = vData.robloxToDiscord?.[String(p.userId)];
             const robloxName = allRegisteredInGroup.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
             if (p.gameId === gameId) {
-              inSameServer.push({ discordId, robloxName });
+              inSameServer.push({ discordId, robloxName, robloxId: p.userId });
             }
           }
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
-      // Post attendance embeds to the queue channel for everyone in the same server
+      // Post attendance embeds to the queue channel — registered members only
       const queueData = loadQueue();
       const queueChannelId = queueData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? (message.guild.channels.cache.get(queueChannelId) ?? null) : null;
-      if (queueChannel && inSameServer.length) {
-        for (const { discordId, robloxName } of inSameServer) {
-          await queueChannel.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+      const registeredInSameServer = inSameServer.filter(m => m.discordId);
+      if (queueChannel && registeredInSameServer.length) {
+        for (const { discordId, robloxName, robloxId } of registeredInSameServer) {
+          let ingameAvatarUrl = null;
+          try {
+            const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+            ingameAvatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+          } catch {}
+          const ingameEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
             .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
-            .addFields({ name: 'Discord', value: discordId ? `<@${discordId}>` : '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
-            .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] });
+            .addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
+            .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL });
+          if (ingameAvatarUrl) ingameEmbed.setThumbnail(ingameAvatarUrl);
+          await queueChannel.send({ embeds: [ingameEmbed] });
           await new Promise(r => setTimeout(r, 300));
         }
       }
-      const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\``;
-      const ingameSection = inSameServer.length ? `**In same server (${inSameServer.length})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
-      const attendNote = queueChannel && inSameServer.length ? `\n\n*logged ${inSameServer.length} member${inSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
+      const formatLine = ({ discordId, robloxName }) => `<@${discordId}> — \`${robloxName}\``;
+      const ingameSection = registeredInSameServer.length ? `**In same server (${registeredInSameServer.length})**\n${registeredInSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
+      const attendNote = queueChannel && registeredInSameServer.length ? `\n\n*logged ${registeredInSameServer.length} member${registeredInSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
         .setDescription(`${ingameSection}${attendNote}`)
@@ -6426,12 +6560,26 @@ http.createServer(async (req, res) => {
 
       const queueData = loadQueue();
       const queueChannelId = queueData[String(guildId)]?.channelId;
-      if (!queueChannelId) { res.writeHead(404); res.end('no queue channel set — run .setattendance in Discord first'); return; }
+      if (!queueChannelId) { res.writeHead(404); res.end('no queue channel set — use /setattendance in Discord first'); return; }
 
       const queueChannel = guild.channels.cache.get(queueChannelId);
       if (!queueChannel) { res.writeHead(404); res.end('queue channel not found'); return; }
 
       const discordDisplay = `<@${regDiscordId}>`;
+
+      // Fetch Roblox avatar for thumbnail
+      let httpAvatarUrl = null;
+      try {
+        const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false })
+        })).json();
+        const robloxUserId = robloxRes.data?.[0]?.id;
+        if (robloxUserId) {
+          const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUserId}&size=420x420&format=Png&isCircular=false`)).json();
+          httpAvatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+        }
+      } catch {}
 
       const attendEmbed = new EmbedBuilder()
         .setColor(0x8B0000)
@@ -6443,6 +6591,7 @@ http.createServer(async (req, res) => {
         )
         .setTimestamp()
         .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+      if (httpAvatarUrl) attendEmbed.setThumbnail(httpAvatarUrl);
 
       await queueChannel.send({ embeds: [attendEmbed] });
       res.writeHead(200, { 'Content-Type': 'application/json' });
