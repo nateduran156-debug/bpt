@@ -3204,26 +3204,30 @@ client.on('interactionCreate', async interaction => {
     if (!guildRanks.length) return interaction.editReply({ content: 'no rank roles set — use `/setrankroles set` to configure the rank ladder' });
     const levels = interaction.options.getInteger('levels') || 1;
     await guild.members.fetch();
+    await guild.roles.fetch();
     const targets = []; const seenIds = new Set();
     for (let i = 1; i <= 5; i++) { const m = interaction.options.getMember(`user${i}`); if (m && !seenIds.has(m.id)) { targets.push(m); seenIds.add(m.id); } }
     if (!targets.length) return interaction.editReply({ content: "couldn't find any users to rank up" });
-    let completed = 0, skipped = 0; const rolesAwarded = [];
+    let completed = 0, skipped = 0; const rolesAwarded = []; const skipReasons = [];
     for (const member of targets) {
       try {
+        await member.fetch();
         let currentIdx = -1;
         for (let i = guildRanks.length - 1; i >= 0; i--) { if (member.roles.cache.has(guildRanks[i])) { currentIdx = i; break; } }
         const nextIdx = currentIdx + levels;
-        if (nextIdx >= guildRanks.length) { skipped++; continue; }
-        const newRoleId = guildRanks[nextIdx]; const newRole = guild.roles.cache.get(newRoleId);
-        if (!newRole) { skipped++; continue; }
+        if (nextIdx >= guildRanks.length) { skipped++; skipReasons.push(`${member.displayName} — already at highest rank`); continue; }
+        const newRoleId = guildRanks[nextIdx];
+        const newRole = guild.roles.cache.get(newRoleId) ?? await guild.roles.fetch(newRoleId).catch(() => null);
+        if (!newRole) { skipped++; skipReasons.push(`${member.displayName} — target role not found`); continue; }
         for (const rId of guildRanks) { if (rId !== newRoleId && member.roles.cache.has(rId)) await member.roles.remove(rId).catch(() => {}); }
         await member.roles.add(newRoleId); rolesAwarded.push({ member, roleName: newRole.name }); completed++;
-      } catch { skipped++; }
+      } catch (err) { skipped++; skipReasons.push(`${member.displayName} — ${err.message}`); }
     }
     const total = completed + skipped;
     const resultLines = ['RESULT          COUNT', '--------------------', `COMPLETED       ${completed}`, `SKIPPED         ${skipped}`, `TOTAL           ${total}`].join('\n');
     const embeds = [baseEmbed().setTitle('Rankup Complete').setColor(0x8B0000).setDescription('```\n' + resultLines + '\n```').setTimestamp()];
-    if (rolesAwarded.length) embeds.push(baseEmbed().setTitle('ROLES AWARDED').setColor(0x8B0000).setDescription(rolesAwarded.map(({ member, roleName }) => `${member} - @@ ${roleName}`).join('\n')).setTimestamp());
+    if (rolesAwarded.length) embeds.push(baseEmbed().setTitle('ROLES AWARDED').setColor(0x8B0000).setDescription(rolesAwarded.map(({ member, roleName }) => `${member} — ${roleName}`).join('\n')).setTimestamp());
+    if (skipReasons.length) embeds.push(baseEmbed().setTitle('SKIPPED').setColor(0x555555).setDescription(skipReasons.join('\n')).setTimestamp());
     return interaction.editReply({ content: '', embeds });
   }
 
@@ -5000,22 +5004,26 @@ client.on('messageCreate', async message => {
 
     if (!allTargets.length) return message.reply("couldn't find any users to rank up");
 
+    await message.guild.roles.fetch();
+
     const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ranking up **${allTargets.length}** user${allTargets.length !== 1 ? 's' : ''}...`)] });
 
     let completed = 0, skipped = 0;
     const rolesAwarded = [];
+    const skipReasons = [];
 
     for (const member of allTargets) {
       try {
+        await member.fetch();
         let currentIdx = -1;
         for (let i = guildRanks.length - 1; i >= 0; i--) {
           if (member.roles.cache.has(guildRanks[i])) { currentIdx = i; break; }
         }
         const nextIdx = currentIdx + levels;
-        if (nextIdx >= guildRanks.length) { skipped++; continue; }
+        if (nextIdx >= guildRanks.length) { skipped++; skipReasons.push(`${member.displayName} — already at highest rank`); continue; }
         const newRoleId = guildRanks[nextIdx];
-        const newRole = message.guild.roles.cache.get(newRoleId);
-        if (!newRole) { skipped++; continue; }
+        const newRole = message.guild.roles.cache.get(newRoleId) ?? await message.guild.roles.fetch(newRoleId).catch(() => null);
+        if (!newRole) { skipped++; skipReasons.push(`${member.displayName} — target role not found`); continue; }
         // remove old rank roles, add new one
         for (const rId of guildRanks) {
           if (rId !== newRoleId && member.roles.cache.has(rId))
@@ -5024,7 +5032,7 @@ client.on('messageCreate', async message => {
         await member.roles.add(newRoleId);
         rolesAwarded.push({ member, roleName: newRole.name });
         completed++;
-      } catch { skipped++; }
+      } catch (err) { skipped++; skipReasons.push(`${member.displayName} — ${err.message}`); }
     }
 
     const total = completed + skipped;
@@ -5045,8 +5053,11 @@ client.on('messageCreate', async message => {
     const embeds = [summaryEmbed];
 
     if (rolesAwarded.length) {
-      const awardLines = rolesAwarded.map(({ member, roleName }) => `${member} - @@ ${roleName}`).join('\n');
+      const awardLines = rolesAwarded.map(({ member, roleName }) => `${member} — ${roleName}`).join('\n');
       embeds.push(baseEmbed().setTitle('ROLES AWARDED').setColor(0x8B0000).setDescription(awardLines).setTimestamp());
+    }
+    if (skipReasons.length) {
+      embeds.push(baseEmbed().setTitle('SKIPPED').setColor(0x555555).setDescription(skipReasons.join('\n')).setTimestamp());
     }
 
     return status.edit({ content: '', embeds });
