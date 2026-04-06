@@ -454,6 +454,135 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
   return `scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`
 }
 
+// ─── API-based group scan ─────────────────────────────────────────────────────
+// Takes a Roblox game URL / place ID, finds every member of group 206868002
+// currently in that game, then posts attendance embeds — no image needed.
+const GSCAN_GROUP_ID = 206868002
+
+async function runGroupScanCommand(robloxUsername, guild, qCh, ulCh, editFn) {
+  // Step 1: resolve username → user ID
+  await editFn(`looking up **${robloxUsername}** on Roblox...`)
+  const userLookup = await (await fetch('https://users.roblox.com/v1/usernames/users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false })
+  })).json()
+  const targetUser = userLookup.data?.[0]
+  if (!targetUser) throw new Error(`couldn't find Roblox user **${robloxUsername}**`)
+
+  // Step 2: get their current presence to find which server they're in
+  await editFn(`found **${targetUser.name}**, checking their presence...`)
+  const presenceRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userIds: [targetUser.id] })
+  })).json()
+  const presence = presenceRes.userPresences?.[0]
+  if (!presence?.placeId || !presence?.gameId) throw new Error(`**${targetUser.name}** is not currently in a Roblox game`)
+
+  const { placeId, gameId: serverInstanceId } = presence
+
+  // Step 3: resolve place ID → universe ID + game name
+  const placeDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`)).json()
+  const universeId = placeDetail?.data?.[0]?.universeId
+  if (!universeId) throw new Error(`couldn't resolve game for place ID \`${placeId}\``)
+
+  let gameName = `Place ${placeId}`
+  try {
+    const gr = await (await fetch(`https://games.roblox.com/v1/games?universeIds=${universeId}`)).json()
+    if (gr?.data?.[0]?.name) gameName = gr.data[0].name
+  } catch {}
+
+  await editFn(`**${targetUser.name}** is in **${gameName}** — finding their server...`)
+
+  // Step 4: page through public servers until we find the one matching the instance ID
+  let serverTokens = []
+  let sCur = ''; let found = false
+  do {
+    try {
+      const res = await (await fetch(`https://games.roblox.com/v1/games/${universeId}/servers/Public?limit=100${sCur ? `&cursor=${sCur}` : ''}`)).json()
+      for (const srv of (res.data || [])) {
+        if (srv.id === serverInstanceId) {
+          serverTokens = (srv.players || []).map(p => p.playerToken).filter(Boolean)
+          found = true
+          break
+        }
+      }
+      sCur = found ? '' : (res.nextPageCursor || '')
+    } catch { sCur = ''; break }
+  } while (sCur && !found)
+
+  if (!found || !serverTokens.length) throw new Error(`found the game but couldn't locate the specific server — it may be private or the server list may not have updated yet`)
+
+  // Step 5: resolve player tokens → Roblox user IDs
+  await editFn(`found the server (${serverTokens.length} player${serverTokens.length !== 1 ? 's' : ''}), loading group members...`)
+  const resolvedIds = new Set()
+  for (let i = 0; i < serverTokens.length; i += 100) {
+    try {
+      const batch = serverTokens.slice(i, i + 100).map((token, idx) => ({
+        requestId: `${i + idx}`, token, type: 'AvatarHeadShot', size: '150x150', format: 'png', isCircular: false
+      }))
+      const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch)
+      })).json()
+      for (const item of (res.data || [])) { if (item.targetId && item.targetId !== 0) resolvedIds.add(item.targetId) }
+    } catch {}
+  }
+
+  // Step 6: load group members and filter to those in the server
+  const memberIds = new Set()
+  const memberNames = {}
+  let cur = ''
+  do {
+    try {
+      const res = await (await fetch(`https://members.roblox.com/v1/groups/${GSCAN_GROUP_ID}/users?limit=100&sortOrder=Asc${cur ? `&cursor=${cur}` : ''}`)).json()
+      for (const m of (res.data || [])) {
+        memberIds.add(m.user.userId)
+        memberNames[m.user.userId] = m.user.username
+      }
+      cur = res.nextPageCursor || ''
+    } catch { cur = ''; break }
+  } while (cur)
+  if (!memberIds.size) throw new Error('could not load group members — Roblox API may be unavailable')
+
+  const inServer = [...resolvedIds].filter(id => memberIds.has(id))
+  if (!inServer.length) throw new Error(`no group members found in **${targetUser.name}**'s server in **${gameName}** (${resolvedIds.size} total players checked)`)
+
+  await editFn(`found **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in the server, looking up Discord accounts...`)
+
+  // Post attendance embeds for each group member found
+  const localVerify = loadVerify()
+  let posted = 0
+  for (const robloxId of inServer) {
+    const robloxName = memberNames[robloxId] || String(robloxId)
+    let discordId = null
+    const localId = localVerify.robloxToDiscord?.[String(robloxId)]
+    if (localId) {
+      discordId = localId
+    } else {
+      try {
+        const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxId}`)).json()
+        if (rover.status === 'ok' && rover.discordId) discordId = rover.discordId
+      } catch {}
+    }
+
+    if (discordId) {
+      await qCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('USER ATTENDED THIS RAID')
+        .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+        .addFields({ name: 'Discord', value: `<@${discordId}>`, inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
+        .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] })
+      posted++
+    } else if (ulCh) {
+      await ulCh.send({ embeds: [new EmbedBuilder().setColor(0x8B0000).setTitle('UNLINKED USER ATTENDED THIS RAID')
+        .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+        .addFields({ name: 'Discord', value: '*(not linked)*', inline: false }, { name: 'Roblox', value: `\`${robloxName}\``, inline: false })
+        .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })] })
+    }
+    await new Promise(r => setTimeout(r, 300))
+  }
+
+  const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : ''
+  return `gscan complete — **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in **${targetUser.name}**'s server in **${gameName}**, logged **${posted}** linked${ulNote}`
+}
+
 // sends a log embed to the log channel if one is set
 async function sendLog(guild, embed) {
   const cfg = loadConfig()
@@ -1175,6 +1304,9 @@ const slashCommands = [
   new SlashCommandBuilder().setName('whoisin').setDescription('see which MTXX group members are currently in a Roblox game')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('game').setDescription('Roblox game URL or place ID').setRequired(true)),
+  new SlashCommandBuilder().setName('gscan').setDescription('find all group members in the same Roblox server as a user and log attendance')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addStringOption(o => o.setName('username').setDescription('Roblox username of someone currently in the server').setRequired(true)),
   new SlashCommandBuilder().setName('attend').setDescription('manually log a Discord user as attending a raid')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('Discord member').setRequired(true))
@@ -3279,6 +3411,23 @@ client.on('interactionCreate', async interaction => {
         .setFooter({ text: `${serverCount} server${serverCount !== 1 ? 's' : ''} scanned • group ${WHOISIN_GROUP}` })
         .setTimestamp()] });
     } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`whoisin failed — ${err.message}`)] }); }
+  }
+
+  // ── gscan ─────────────────────────────────────────────────────────────────
+  if (commandName === 'gscan') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    const username = interaction.options.getString('username')?.trim();
+    if (!username) return interaction.reply({ content: 'provide a Roblox username', ephemeral: true });
+    const queueData = loadQueue();
+    const qCh = (queueData[guild.id]?.channelId ? guild.channels.cache.get(queueData[guild.id].channelId) : null) ?? channel;
+    const ulCh = queueData[guild.id]?.ulChannelId ? (guild.channels.cache.get(queueData[guild.id].ulChannelId) ?? null) : null;
+    await interaction.deferReply();
+    await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('starting group scan...')] });
+    const editFn = (desc) => interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(desc)] });
+    try {
+      const result = await runGroupScanCommand(username, guild, qCh, ulCh, editFn);
+      return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(result)] });
+    } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`gscan failed — ${err.message}`)] }); }
   }
 
   // ── attend ───────────────────────────────────────────────────────────────
@@ -5774,6 +5923,38 @@ client.on('messageCreate', async message => {
     }
   }
 
+
+  // ── .gscan ────────────────────────────────────────────────────────────────────
+  // Usage: .gscan <robloxUsername>
+  // Finds the server that user is in, then logs attendance for all group members in it.
+  if (command === 'gscan') {
+    if (!message.guild) return;
+    const gameInput = args[0]?.trim();
+    if (!gameInput)
+      return message.reply(`usage: \`${prefix}gscan <Roblox username>\``);
+
+    const queueData = loadQueue();
+    const queueChannelId = queueData[message.guild.id]?.channelId;
+    const qCh = queueChannelId
+      ? (message.guild.channels.cache.get(queueChannelId) ?? message.channel)
+      : message.channel;
+    const ulChannelId = queueData[message.guild.id]?.ulChannelId;
+    const ulCh = ulChannelId
+      ? (message.guild.channels.cache.get(ulChannelId) ?? null)
+      : null;
+
+    const status = await message.reply({
+      embeds: [baseEmbed().setColor(0x8B0000).setDescription('starting group scan...')]
+    });
+    const editFn = (desc) => status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(desc)] });
+
+    try {
+      const result = await runGroupScanCommand(gameInput, message.guild, qCh, ulCh, editFn);
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(result)] });
+    } catch (err) {
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`gscan failed — ${err.message}`)] });
+    }
+  }
 
   // ── .attend ───────────────────────────────────────────────────────────────────
   if (command === 'attend') {
