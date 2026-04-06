@@ -273,33 +273,49 @@ const getPrefix = () => loadConfig().prefix || '.'
 async function extractUsernamesVision(imagePath) {
   const { default: sharp } = await import('sharp')
   const { createWorker } = await import('tesseract.js')
-
-  // Get image dimensions to compute crop regions
-  const meta = await sharp(imagePath).metadata()
-  const { width = 1920, height = 1080 } = meta
-
-  // The Roblox player list typically appears in the top-right or center-right
-  // of the screen. We try several crop regions and union all results.
-  // Each region is defined as [left%, top%, widthFraction, heightFraction]
-  const cropRegions = [
-    // Full right third — catches most player list positions
-    { left: Math.floor(width * 0.62), top: 0, width: Math.floor(width * 0.38), height },
-    // Center-right — player list sometimes appears more centered
-    { left: Math.floor(width * 0.35), top: 0, width: Math.floor(width * 0.65), height },
-    // Full image as fallback — catches unusual layouts
-    { left: 0, top: 0, width, height },
-  ]
-
-  const nameSet = new Set()
-  const tmpFiles = []
   const { join } = await import('path')
   const { tmpdir } = await import('os')
 
-  // Filter a raw OCR line to a valid Roblox username, or null
+  const meta = await sharp(imagePath).metadata()
+  const { width = 1920, height = 1080 } = meta
+
+  // Crop regions: union results from all of them for full coverage.
+  // The Roblox player list can appear right-side, center-right, or anywhere.
+  const cropRegions = [
+    { left: Math.floor(width * 0.55), top: 0, width: Math.floor(width * 0.45), height }, // right 45%
+    { left: Math.floor(width * 0.35), top: 0, width: Math.floor(width * 0.65), height }, // right 65%
+    { left: 0,                         top: 0, width,                            height }, // full image
+  ]
+
+  // For each crop we run 3 preprocessing variants to handle any lighting/contrast:
+  //   1. Inverted + threshold  — best for white-on-dark Roblox UI (most common)
+  //   2. High contrast normal  — for light-background sections
+  //   3. Inverted greyscale    — softer version of (1), catches partially-dark panels
+  async function buildVariants(cropBase, tag) {
+    const paths = []
+
+    // Variant 1: invert then threshold — white text on dark becomes pure black on white
+    const p1 = join(tmpdir(), `ocr_${tag}_inv.png`)
+    await cropBase.clone().greyscale().negate().normalise().threshold(160).png().toFile(p1)
+    paths.push(p1)
+
+    // Variant 2: high contrast without invert — handles any bright-background sections
+    const p2 = join(tmpdir(), `ocr_${tag}_hc.png`)
+    await cropBase.clone().greyscale().normalise().linear(2.0, -(128 * 1.0)).sharpen().png().toFile(p2)
+    paths.push(p2)
+
+    // Variant 3: inverted greyscale — softer, catches names the threshold might clip
+    const p3 = join(tmpdir(), `ocr_${tag}_invg.png`)
+    await cropBase.clone().greyscale().negate().normalise().sharpen().png().toFile(p3)
+    paths.push(p3)
+
+    return paths
+  }
+
+  // Valid Roblox username: letters, digits, underscores, 3–20 chars,
+  // starts and ends with a letter or digit.
   function parseUsername(raw) {
-    // Strip everything except alphanumeric and underscore
     const cleaned = raw.replace(/[^a-zA-Z0-9_]/g, '').trim()
-    // Roblox usernames: 3–20 chars, start and end with letter or number
     if (
       cleaned.length >= 3 &&
       cleaned.length <= 20 &&
@@ -309,61 +325,74 @@ async function extractUsernamesVision(imagePath) {
     return null
   }
 
-  // Known Roblox UI labels to exclude
+  // Known Roblox UI labels that are not usernames
   const SKIP_WORDS = new Set([
     'CURRENT','LEAVE','LEADERBOARD','PLAYERS','SERVER','GAME','REPORT',
     'FRIEND','FOLLOW','BLOCK','MENU','TEAM','SPECTATE','SCORE','RANK',
     'PING','FPS','RESUME','RESET','SETTINGS','HELP','CHAT','INVENTORY',
     'SHOP','STORE','TRADES','PROFILE','HOME','BACK','CLOSE','EXIT',
+    'ONLINE','OFFLINE','INGAME','LEADER','BOARD',
   ])
 
-  // Create a single Tesseract worker (reuse across crops for speed)
-  const worker = await createWorker('eng', 1, {
-    logger: () => {},
-    errorHandler: () => {},
-  })
-  await worker.setParameters({
+  const nameSet = new Set()
+  const allTmpFiles = []
+
+  // Two Tesseract workers with different PSM modes:
+  //   PSM 6 = uniform block of text      — best for the full player list panel
+  //   PSM 4 = single column of text      — best when we've isolated just the name column
+  const workers = await Promise.all([
+    createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} }),
+    createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} }),
+  ])
+  await workers[0].setParameters({
     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
     preserve_interword_spaces: '0',
+    tessedit_pageseg_mode: '6',
+  })
+  await workers[1].setParameters({
+    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
+    preserve_interword_spaces: '0',
+    tessedit_pageseg_mode: '4',
   })
 
-  try {
-    for (const region of cropRegions) {
-      // Preprocess: crop, convert to grayscale, boost contrast and sharpness
-      const cropPath = join(tmpdir(), `ocr_crop_${Date.now()}_${region.left}.png`)
-      tmpFiles.push(cropPath)
-
-      await sharp(imagePath)
-        .extract({
-          left: Math.max(0, region.left),
-          top: Math.max(0, region.top),
-          width: Math.min(region.width, width - Math.max(0, region.left)),
-          height: Math.min(region.height, height - Math.max(0, region.top)),
-        })
-        .greyscale()
-        .normalise()
-        .linear(1.8, -(128 * 0.8))  // boost contrast
-        .sharpen()
-        .png()
-        .toFile(cropPath)
-
-      const { data: { text } } = await worker.recognize(cropPath)
-
-      for (const line of text.split('\n')) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-        // Try whole token and each whitespace-split word
-        for (const token of [trimmed, ...trimmed.split(/\s+/)]) {
-          const name = parseUsername(token)
-          if (name && !SKIP_WORDS.has(name.toUpperCase())) {
-            nameSet.add(name)
-          }
-        }
+  function extractFromText(text) {
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      for (const token of [trimmed, ...trimmed.split(/\s+/)]) {
+        const name = parseUsername(token)
+        if (name && !SKIP_WORDS.has(name.toUpperCase())) nameSet.add(name)
       }
     }
+  }
+
+  try {
+    for (let r = 0; r < cropRegions.length; r++) {
+      const region = cropRegions[r]
+      const cropBase = sharp(imagePath)
+        .extract({
+          left:   Math.max(0, Math.min(region.left, width - 1)),
+          top:    0,
+          width:  Math.min(region.width, width - Math.max(0, region.left)),
+          height,
+        })
+        // Scale 2x within sharp so Tesseract sees larger text (on top of the 3x ffmpeg upscale)
+        .resize({ width: Math.min(region.width, width - Math.max(0, region.left)) * 2, kernel: 'lanczos3' })
+
+      const variantPaths = await buildVariants(cropBase, `r${r}_${Date.now()}`)
+      allTmpFiles.push(...variantPaths)
+
+      // Run all variants through both PSM workers in parallel
+      await Promise.all(variantPaths.flatMap(vp =>
+        workers.map(async w => {
+          const { data: { text } } = await w.recognize(vp)
+          extractFromText(text)
+        })
+      ))
+    }
   } finally {
-    await worker.terminate()
-    for (const f of tmpFiles) { try { fs.unlinkSync(f) } catch {} }
+    await Promise.all(workers.map(w => w.terminate()))
+    for (const f of allTmpFiles) { try { fs.unlinkSync(f) } catch {} }
   }
 
   return [...nameSet]
