@@ -313,6 +313,14 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
   const { extname: _ext, join } = await import('path')
   const { spawnSync } = await import('child_process')
 
+  // Resolve ffmpeg binary: prefer system ffmpeg, fall back to bundled ffmpeg-static
+  let ffmpegBin = 'ffmpeg'
+  try {
+    const { default: ffmpegStatic } = await import('ffmpeg-static')
+    const sysCheck = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' })
+    if (sysCheck.error) ffmpegBin = ffmpegStatic
+  } catch {}
+
   const ext = _ext(attachment.name || '').toLowerCase() || '.png'
   const isVideo = ['.mp4', '.mov', '.webm', '.avi', '.mkv'].includes(ext)
   const tmpInput = join(tmpdir(), `scan_${Date.now()}${ext}`)
@@ -324,15 +332,18 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
   let allNames = []
 
   if (isVideo) {
-    let duration = 15
+    // Get duration using ffmpeg -i (parses Duration from stderr output)
+    let duration = 30
     try {
-      const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', tmpInput], { encoding: 'utf8' })
-      const parsed = parseFloat(probe.stdout?.trim())
-      if (!isNaN(parsed) && parsed > 0) duration = parsed
+      const probe = spawnSync(ffmpegBin, ['-i', tmpInput], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] })
+      const match = (probe.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
+      if (match) {
+        duration = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3])
+      }
     } catch {}
 
     // Sample up to 20 evenly-spaced frames across the entire video
-    const maxFrames = Math.min(20, Math.ceil(duration))
+    const maxFrames = Math.min(20, Math.max(1, Math.ceil(duration)))
     const step = duration / maxFrames
     const times = []
     for (let i = 0; i < maxFrames; i++) times.push(+(i * step).toFixed(2))
@@ -341,18 +352,26 @@ async function runScanCommand(attachment, guild, qCh, ulCh, editFn) {
     const frameFiles = []
     for (const ts of times) {
       const fp = join(tmpdir(), `scan_f_${Date.now()}_${ts}.png`)
-      try {
-        spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', fp, '-y'], { stdio: 'ignore' })
-        if (fs.existsSync(fp)) { frameFiles.push(fp); tmpFiles.push(fp) }
-      } catch {}
+      spawnSync(ffmpegBin, ['-ss', String(ts), '-i', tmpInput, '-frames:v', '1', fp, '-y'], { stdio: 'ignore' })
+      if (fs.existsSync(fp)) { frameFiles.push(fp); tmpFiles.push(fp) }
     }
 
-    // Send every unique frame to GPT-4o and union all results
+    if (!frameFiles.length) throw new Error('could not extract frames from the video — make sure it is a valid mp4/mov file')
+
+    // Send every extracted frame to GPT-4o and union all results
     const nameSet = new Set()
+    let lastErr = null
     for (let i = 0; i < frameFiles.length; i++) {
       await editFn(`scanning video — frame ${i + 1}/${frameFiles.length}...`)
-      try { const names = await extractUsernamesVision(frameFiles[i]); for (const n of names) nameSet.add(n) } catch {}
+      try {
+        const names = await extractUsernamesVision(frameFiles[i])
+        for (const n of names) nameSet.add(n)
+      } catch (e) {
+        lastErr = e
+      }
     }
+    // If every frame call failed (e.g. bad API key), surface the real error
+    if (nameSet.size === 0 && lastErr) throw lastErr
     allNames = [...nameSet]
 
   } else {
