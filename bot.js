@@ -56,7 +56,7 @@ const COLOR = {
   star    : 0x8B0000,
   lock    : 0x8B0000,
   voice   : 0x8B0000,
-  tag     : 0x8B0000,
+
   user    : 0x8B0000,
   log     : 0x8B0000,
   setup   : 0x8B0000,
@@ -87,7 +87,7 @@ const userEmbed    = t => embed('user',    t)
 const actionEmbed  = t => embed('action',  t)
 
 // json file paths for everything
-const TAGS_FILE = path.join(__dirname, 'tags.json')
+
 const HUSHED_FILE = path.join(__dirname, 'hushed.json')
 const CONFIG_FILE = path.join(__dirname, 'config.json')
 const AFK_FILE = path.join(__dirname, 'afk.json')
@@ -106,10 +106,11 @@ const SAVED_EMBEDS_FILE = path.join(__dirname, 'saved_embeds.json')
 const ANNOY_FILE = path.join(__dirname, 'annoy.json')
 const SKULL_FILE = path.join(__dirname, 'skull.json')
 const ACTIVITY_CHECK_FILE = path.join(__dirname, 'activity_check.json')
-const TAGGED_MEMBERS_FILE = path.join(__dirname, 'tagged_members.json')
+
 const RANKUP_FILE         = path.join(__dirname, 'rankup.json')
 const QUEUE_FILE          = path.join(__dirname, 'queue.json')
 const VERIFY_FILE         = path.join(__dirname, 'verify.json')
+const LINKED_VERIFIED_FILE = path.join(__dirname, 'linked_verified.json')
 
 // ── feature files ─────────────────────────────────────────────────────────────
 const VANITY_FILE        = path.join(__dirname, 'vanity.json')
@@ -130,8 +131,7 @@ function loadJSON(file) {
 function saveJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2)) }
 
 // shortcut load/save functions for each file
-const loadTags = () => loadJSON(TAGS_FILE)
-const saveTags = t => saveJSON(TAGS_FILE, t)
+
 const loadHushed = () => loadJSON(HUSHED_FILE)
 const saveHushed = h => saveJSON(HUSHED_FILE, h)
 const loadConfig = () => loadJSON(CONFIG_FILE)
@@ -165,14 +165,28 @@ const loadSkull = () => loadJSON(SKULL_FILE)
 const saveSkull = s => saveJSON(SKULL_FILE, s)
 const loadActivityCheck = () => loadJSON(ACTIVITY_CHECK_FILE)
 const saveActivityCheck = a => saveJSON(ACTIVITY_CHECK_FILE, a)
-const loadTaggedMembers = () => loadJSON(TAGGED_MEMBERS_FILE)
-const saveTaggedMembers = t => saveJSON(TAGGED_MEMBERS_FILE, t)
+
 const loadRankup        = () => loadJSON(RANKUP_FILE)
 const saveRankup        = r  => saveJSON(RANKUP_FILE, r)
 const loadQueue         = () => loadJSON(QUEUE_FILE)
 const saveQueue         = q  => saveJSON(QUEUE_FILE, q)
 const loadVerify        = () => loadJSON(VERIFY_FILE)
 const saveVerify        = v  => saveJSON(VERIFY_FILE, v)
+
+// writes a clean snapshot of all verified users to linked_verified.json
+function saveLinkedVerified(vData) {
+  const entries = Object.entries(vData.verified || {});
+  const out = {};
+  for (const [discordId, info] of entries) {
+    out[discordId] = {
+      discordId,
+      robloxId:   info.robloxId,
+      robloxName: info.robloxName,
+      verifiedAt: info.verifiedAt,
+    };
+  }
+  saveJSON(LINKED_VERIFIED_FILE, out);
+}
 
 // ── feature load/save helpers ─────────────────────────────────────────────────
 const loadVanity        = () => loadJSON(VANITY_FILE)
@@ -224,7 +238,6 @@ function isWlManager(userId) {
     if (changed) saveConfig(cfg)
   }
   if (!fs.existsSync(WHITELIST_FILE)) saveWhitelist([])
-  if (!fs.existsSync(TAGS_FILE)) saveJSON(TAGS_FILE, {})
   if (!fs.existsSync(WL_MANAGERS_FILE)) {
     const fromEnv = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)
     saveWlManagers(fromEnv)
@@ -237,10 +250,10 @@ function isWlManager(userId) {
   if (!fs.existsSync(SKULL_FILE)) saveSkull({})
   if (!fs.existsSync(HARDBANS_FILE)) saveHardbans({})
   if (!fs.existsSync(ACTIVITY_CHECK_FILE)) saveActivityCheck({})
-  if (!fs.existsSync(TAGGED_MEMBERS_FILE)) saveTaggedMembers({})
   if (!fs.existsSync(RANKUP_FILE)) saveRankup({})
   if (!fs.existsSync(QUEUE_FILE)) saveQueue({})
   if (!fs.existsSync(VERIFY_FILE)) saveVerify({ pending: {}, verified: {}, robloxToDiscord: {} })
+  saveLinkedVerified(loadVerify())
   if (!fs.existsSync(AUTOROLE_FILE)) saveAutorole({})
   if (!fs.existsSync(WELCOME_FILE)) saveWelcome({})
   if (!fs.existsSync(ANTIINVITE_FILE)) saveAntiinvite({})
@@ -432,10 +445,12 @@ const HELP_SECTIONS = [
       '{p}verify remove',
       '{p}verifylist',
       '{p}dfile',
+      '{p}lvfile',
       '{p}linked @user or RobloxUsername',
       '{p}scan (attach image/video)',
       '{p}attend @user robloxname',
       '{p}setattendance #channel',
+      '{p}ulattendance #channel',
     ]
   },
   {
@@ -446,10 +461,7 @@ const HELP_SECTIONS = [
       '{p}gc [username]',
       '{p}grouproles',
       '{p}group [username] [action]',
-      '{p}tag [name] | [roleId]',
-      '{p}tag [robloxUser] [tagname]',
       '{p}strip [robloxUser] [reason]',
-      '{p}striptag [tagname]',
       '{p}rankup [Nx] @users...',
       '{p}setrankroles @role1 @role2...',
     ]
@@ -461,8 +473,6 @@ const HELP_SECTIONS = [
       '{p}prefix [new prefix]',
       '{p}status [type] [text]',
       '{p}setlog #channel',
-      '{p}tagstrip #channel',
-      '{p}restart',
       '{p}config',
       '{p}whitelist add @user',
       '{p}whitelist remove @user',
@@ -624,7 +634,7 @@ const gcCache          = new Map();
 const snipeCache       = new Map();
 const editSnipeCache   = new Map(); // channelId -> { before, after, author, avatarUrl, editedAt }
 const reactSnipeCache  = new Map(); // channelId -> { emoji, author, content, avatarUrl, removedAt }
-const striptagPending  = new Map(); // userId -> { tagName, members, rank2RoleId }
+
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
 const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'snipe', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'setlog', 'nuke']);
@@ -707,13 +717,6 @@ const slashCommands = [
   new SlashCommandBuilder().setName('cs').setDescription('clear the snipe cache')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('grouproles').setDescription('list roblox group roles')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('tag').setDescription('create a tag or rank someone')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('name').setDescription('tag name').setRequired(true))
-    .addStringOption(o => o.setName('content').setDescription('role id for new tag').setRequired(false))
-    .addStringOption(o => o.setName('robloxuser').setDescription('roblox username to rank').setRequired(false)),
-  new SlashCommandBuilder().setName('restart').setDescription('restart the bot')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('wlmanager').setDescription('manage whitelist managers')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
@@ -824,10 +827,6 @@ const slashCommands = [
   new SlashCommandBuilder().setName('setlogs').setDescription('set the server event logs channel')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addChannelOption(o => o.setName('channel').setDescription('channel for join/leave/delete logs').setRequired(true)),
-  new SlashCommandBuilder().setName('tagstrip').setDescription('set the strip log channel')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addChannelOption(o => o.setName('channel').setDescription('channel for strip logs').setRequired(true)),
-
   // ── bleed.bot inspired commands ───────────────────────────────────────────
   new SlashCommandBuilder().setName('warn').setDescription('warn a member')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
@@ -901,9 +900,6 @@ const slashCommands = [
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason for strip').setRequired(true)),
-  new SlashCommandBuilder().setName('striptag').setDescription('strip all users tracked under a tag')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('tagname').setDescription('name of the tag').setRequired(true)),
   new SlashCommandBuilder().setName('vm').setDescription('voicemaster controls')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('action to perform').setRequired(true)
@@ -1041,7 +1037,7 @@ client.on('guildCreate', async guild => {
         .setDescription(`Hey! Thanks for adding **${client.user.username}** to your server!\n\nUse \`/help\` or prefix commands to get started. Set your prefix with \`/prefix\`.`)
         .addFields(
           { name: 'Moderation', value: 'ban, kick, timeout, mute, jail, hush, nuke', inline: true },
-          { name: 'Roblox', value: 'roblox, gc, tag, grouproles, group', inline: true },
+          { name: 'Roblox', value: 'roblox, gc, grouproles, group', inline: true },
           { name: 'Utilities', value: 'autorole, welcome, antiinvite, altdentifier, joindm, setlogs', inline: true }
         ).setTimestamp()] });
     }
@@ -1266,44 +1262,6 @@ client.on('interactionCreate', async interaction => {
     if (interaction.customId.startsWith('help_')) {
       const page = parseInt(interaction.customId.split('_')[1]);
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
-    }
-    if (interaction.customId === 'striptag_confirm' || interaction.customId === 'striptag_cancel') {
-      const pending = striptagPending.get(interaction.user.id);
-      if (!pending) return interaction.update({ content: 'this has expired, run the command again', embeds: [], components: [] });
-      striptagPending.delete(interaction.user.id);
-      if (interaction.customId === 'striptag_cancel') {
-        return interaction.update({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('striptag cancelled').setDescription(`cancelled stripping tag **${pending.tagName}**`)], components: [] });
-      }
-      // confirmed — execute the strip
-      await interaction.update({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`stripping **${pending.members.length}** user${pending.members.length !== 1 ? 's' : ''} from tag **${pending.tagName}**...`)], components: [] });
-      const succeeded = [];
-      const failed = [];
-      for (const robloxUsername of pending.members) {
-        try {
-          const result = await rankRobloxUser(robloxUsername, pending.rank2RoleId);
-          succeeded.push(result.displayName);
-        } catch (err) {
-          failed.push(`${robloxUsername} — ${err.message}`);
-        }
-      }
-      const taggedMembers = loadTaggedMembers();
-      delete taggedMembers[pending.tagName];
-      saveTaggedMembers(taggedMembers);
-      const desc = [];
-      if (succeeded.length) desc.push(`**stripped (${succeeded.length}):** ${succeeded.join(', ')}`);
-      if (failed.length) desc.push(`**failed (${failed.length}):**\n${failed.join('\n')}`);
-      const resultEmbed = baseEmbed().setColor(succeeded.length ? 0x23D160 : 0xFF3860).setTitle(`striptag — ${pending.tagName}`)
-        .setDescription(desc.join('\n\n') || 'done').setTimestamp();
-      await interaction.editReply({ embeds: [resultEmbed], components: [] });
-      const logEmbed = baseEmbed().setTitle('striptag log').setColor(0x8B0000)
-        .addFields(
-          { name: 'tag', value: pending.tagName, inline: true },
-          { name: 'stripped by', value: `<@${interaction.user.id}>`, inline: true },
-          { name: `stripped (${succeeded.length})`, value: succeeded.join(', ') || 'none' },
-          ...(failed.length ? [{ name: `failed (${failed.length})`, value: failed.join('\n') }] : [])
-        ).setTimestamp();
-      if (interaction.guild) await sendStripLog(interaction.guild, logEmbed);
-      return;
     }
 
     if (interaction.customId === 'ac_checkin') {
@@ -1870,40 +1828,6 @@ client.on('interactionCreate', async interaction => {
     } catch { return interaction.editReply("couldn't load group roles, try again"); }
   }
 
-  if (commandName === 'tag') {
-    const name = interaction.options.getString('name');
-    const content = interaction.options.getString('content');
-    const robloxUser = interaction.options.getString('robloxuser');
-    if (content) {
-      const tags = loadTags(); const isNew = !tags[name]; tags[name] = content; saveTags(tags);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
-    }
-    if (robloxUser) {
-      const tags = loadTags();
-      if (!tags[name]) return interaction.reply({ content: `no tag called **${name}** exists`, ephemeral: true });
-      const roleId = tags[name].trim();
-      if (isNaN(Number(roleId))) return interaction.reply({ content: `tag **${name}** doesn't have a valid role id`, ephemeral: true });
-      await interaction.deferReply();
-      try {
-        const result = await rankRobloxUser(robloxUser, roleId);
-        const embed = baseEmbed().setTitle('got em ranked').setColor(0x8B0000)
-          .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: name, inline: true }, { name: 'role id', value: roleId, inline: true })
-          .setFooter({ text: `ranked by ${interaction.user.tag}` }).setTimestamp();
-        if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
-        return interaction.editReply({ embeds: [embed] });
-      } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't rank them — ${err.message}`)] }); }
-    }
-    const tags = loadTags();
-    if (!tags[name]) return interaction.reply({ content: `no tag called **${name}** exists`, ephemeral: true });
-    return interaction.reply({ content: tags[name] });
-  }
-
-  if (commandName === 'restart') {
-    const sent = await interaction.reply({ content: 'Restarting...', fetchReply: true });
-    saveJSON(REBOOT_FILE, { channelId: sent.channelId, messageId: sent.id });
-    setTimeout(() => process.exit(0), 500);
-  }
-
   if (commandName === 'jail') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
@@ -2328,17 +2252,6 @@ client.on('interactionCreate', async interaction => {
     saveLogs(logsData);
     return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Logs Channel Set')
       .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
-  }
-
-  if (commandName === 'tagstrip') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const ch = interaction.options.getChannel('channel');
-    if (!ch?.isTextBased()) return interaction.reply({ content: "that needs to be a text channel", ephemeral: true });
-    const cfg = loadConfig();
-    cfg.stripLogChannelId = ch.id;
-    saveConfig(cfg);
-    return interaction.reply({ embeds: [setupEmbed('Strip Log Channel Set')
-      .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true })] });
   }
 
   // ── /warn ─────────────────────────────────────────────────────────────────────
@@ -2796,48 +2709,6 @@ client.on('interactionCreate', async interaction => {
           { name: 'error',  value: err.message }
         ).setTimestamp());
     }
-  }
-
-  // ── /striptag ─────────────────────────────────────────────────────────────────
-  if (commandName === 'striptag') {
-    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
-    if (!isWlManager(interaction.user.id)) return interaction.reply({ content: 'only whitelist managers can use `/striptag`', ephemeral: true });
-    const tagName = interaction.options.getString('tagname').toLowerCase();
-    const tags = loadTags();
-    if (!tags[tagName]) return interaction.reply({ content: `no tag called **${tagName}** exists`, ephemeral: true });
-    const taggedMembers = loadTaggedMembers();
-    const members = taggedMembers[tagName] || [];
-    if (!members.length) return interaction.reply({ content: `nobody is tracked under tag **${tagName}**`, ephemeral: true });
-    const groupId = process.env.ROBLOX_GROUP_ID;
-    if (!groupId) return interaction.reply({ content: '`ROBLOX_GROUP_ID` isn\'t set', ephemeral: true });
-    let rank2RoleId;
-    try {
-      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 1);
-      if (!rank2) return interaction.reply({ content: "couldn't find a rank 1 role in the group", ephemeral: true });
-      rank2RoleId = String(rank2.id);
-    } catch { return interaction.reply({ content: "couldn't fetch group roles, try again", ephemeral: true }); }
-    await interaction.deferReply();
-    let stripped = 0, skipped = 0, failed = 0;
-    for (const robloxUser of [...members]) {
-      try {
-        await rankRobloxUser(robloxUser, rank2RoleId);
-        stripped++;
-      } catch (e) {
-        const em = e.message?.toLowerCase() ?? '';
-        if (em.includes('same role') || em.includes("isn't in the group")) skipped++;
-        else failed++;
-      }
-    }
-    delete taggedMembers[tagName];
-    saveTaggedMembers(taggedMembers);
-    return interaction.editReply({ embeds: [baseEmbed().setTitle('striptag complete').setColor(0x8B0000)
-      .addFields(
-        { name: 'tag',      value: tagName,        inline: true },
-        { name: 'stripped', value: `${stripped}`,  inline: true },
-        { name: 'skipped',  value: `${skipped}`,   inline: true },
-        { name: 'failed',   value: `${failed}`,    inline: true }
-      ).setTimestamp()] });
   }
 
   // ── /vm ───────────────────────────────────────────────────────────────────────
@@ -3587,12 +3458,6 @@ client.on('messageCreate', async message => {
     return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`You're now AFK${reason ? `: ${reason}` : '.'}`)], allowedMentions: { repliedUser: false } });
   }
 
-  if (command === 'restart') {
-    const sent = await message.reply('Restarting...');
-    saveJSON(REBOOT_FILE, { channelId: sent.channelId, messageId: sent.id });
-    setTimeout(() => process.exit(0), 500);
-  }
-
   if (command === 'say') {
     const text = args.join(' ');
     if (!text) return message.reply('say what?');
@@ -3604,46 +3469,6 @@ client.on('messageCreate', async message => {
     const had = snipeCache.has(message.channel.id);
     snipeCache.delete(message.channel.id);
     return message.reply(had ? 'snipe cleared' : 'nothing to clear');
-  }
-
-  if (command === 'tag') {
-    const full = args.join(' ');
-    if (full.includes('|')) {
-      const pipeIdx = full.indexOf('|');
-      const name    = full.slice(0, pipeIdx).trim().toLowerCase();
-      const content = full.slice(pipeIdx + 1).trim();
-      if (!name || !content) return message.reply('do it like: tag [name] | [content]');
-      const tags = loadTags(); const isNew = !tags[name]; tags[name] = content; saveTags(tags);
-      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
-    }
-    const robloxUser = args[0];
-    const tagName    = args.slice(1).join(' ').toLowerCase();
-    if (!robloxUser || !tagName) return message.reply(`idk what u want, try:\n\`${prefix}tag [name] | [roleId]\` — make a tag\n\`${prefix}tag [robloxUsername] [tagname]\` — rank someone`);
-    const tags = loadTags();
-    if (!tags[tagName]) return message.reply(`no tag called **${tagName}** exists`);
-    const roleId = tags[tagName].trim();
-    if (isNaN(Number(roleId))) return message.reply(`tag **${tagName}** doesn't have a valid role id`);
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ranking **${robloxUser}**...`)] });
-    try {
-      const result = await rankRobloxUser(robloxUser, roleId);
-      const embed  = baseEmbed().setTitle('got em ranked').setColor(0x8B0000)
-        .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true })
-        .setFooter({ text: `ranked by ${message.author.tag}` }).setTimestamp();
-      if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
-      await status.edit({ content: '', embeds: [embed] });
-      // track who got this tag so striptag can find them later
-      const taggedMembers = loadTaggedMembers();
-      if (!taggedMembers[tagName]) taggedMembers[tagName] = [];
-      if (!taggedMembers[tagName].includes(result.displayName)) taggedMembers[tagName].push(result.displayName);
-      saveTaggedMembers(taggedMembers);
-      const logEmbed = baseEmbed().setTitle('rank log').setColor(0x8B0000)
-        .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true },
-          { name: 'ranked by', value: `<@${message.author.id}>`, inline: true }, { name: 'channel', value: `<#${message.channel.id}>`, inline: true })
-        .setFooter({ text: `roblox id: ${result.userId}` }).setTimestamp();
-      if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
-      await sendLog(message.guild, logEmbed);
-    } catch (err) { await status.edit({ content: '', embeds: [baseEmbed().setColor(0x8B0000).setDescription(`couldn't rank them - ${err.message}`)] }); }
-    return;
   }
 
   if (command === 'strip') {
@@ -3714,37 +3539,6 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  if (command === 'striptag') {
-    if (!message.guild) return;
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('only whitelist managers can run `.striptag`')] });
-    const tagName = args.join(' ').toLowerCase();
-    if (!tagName) return message.reply(`usage: \`${prefix}striptag [tagname]\``);
-    const tags = loadTags();
-    if (!tags[tagName]) return message.reply(`no tag called **${tagName}** exists`);
-    const taggedMembers = loadTaggedMembers();
-    const members = taggedMembers[tagName] || [];
-    if (!members.length) return message.reply(`nobody is tracked under tag **${tagName}**`);
-    const groupId = process.env.ROBLOX_GROUP_ID;
-    if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
-    let rank2RoleId;
-    try {
-      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 1);
-      if (!rank2) return message.reply("couldn't find a rank 1 role in the group");
-      rank2RoleId = String(rank2.id);
-    } catch { return message.reply("couldn't fetch group roles, try again"); }
-    // store pending and ask for confirmation
-    striptagPending.set(message.author.id, { tagName, members, rank2RoleId });
-    setTimeout(() => striptagPending.delete(message.author.id), 60 * 1000); // expire after 60s
-    const confirmRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('striptag_confirm').setLabel('Confirm').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('striptag_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger)
-    );
-    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('confirm striptag')
-      .setDescription(`are you sure you want to strip **${members.length}** user${members.length !== 1 ? 's' : ''} from tag **${tagName}** and rank them all to rank 2?\n\n**Users:** ${members.join(', ')}`)
-      .setFooter({ text: 'this confirmation expires in 60 seconds' })], components: [confirmRow] });
-  }
-
   if (command === 'grouproles') {
     const groupId = process.env.ROBLOX_GROUP_ID;
     if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
@@ -3761,13 +3555,6 @@ client.on('messageCreate', async message => {
     if (!ch?.isTextBased()) return message.reply('mention a text channel');
     const cfg2 = loadConfig(); cfg2.logChannelId = ch.id; saveConfig(cfg2);
     return message.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0x8B0000).setDescription(`logs going to ${ch} now`).setTimestamp()] });
-  }
-
-  if (command === 'tagstrip') {
-    const ch = message.mentions.channels?.first();
-    if (!ch?.isTextBased()) return message.reply('mention a text channel — e.g. `.tagstrip #strip-logs`');
-    const cfg2 = loadConfig(); cfg2.stripLogChannelId = ch.id; saveConfig(cfg2);
-    return message.reply({ embeds: [baseEmbed().setTitle('strip log channel set').setColor(0x8B0000).setDescription(`.strip and .striptag logs will now go to ${ch}`).setTimestamp()] });
   }
 
   if (command === 'jail') {
@@ -3859,6 +3646,7 @@ client.on('messageCreate', async message => {
       delete vData.verified[message.author.id];
       if (vData.robloxToDiscord?.[String(linked.robloxId)]) delete vData.robloxToDiscord[String(linked.robloxId)];
       saveVerify(vData);
+      saveLinkedVerified(vData);
       return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`unlinked \`${linked.robloxName}\` from your account`)] });
     }
 
@@ -3894,6 +3682,7 @@ client.on('messageCreate', async message => {
       vData.robloxToDiscord[String(robloxId)] = message.author.id;
       delete vData.pending[message.author.id];
       saveVerify(vData);
+      saveLinkedVerified(vData);
       return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verification Successful')
         .setDescription(`your Discord account is now linked to **${robloxName}**`)
         .addFields(
@@ -4153,17 +3942,6 @@ client.on('messageCreate', async message => {
     saveLogs(logsData);
     return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Logs Channel Set')
       .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
-
-  if (command === 'tagstrip') {
-    if (!message.guild) return;
-    const ch = message.mentions.channels.first();
-    if (!ch?.isTextBased()) return message.reply('mention a text channel for strip logs');
-    const cfg = loadConfig();
-    cfg.stripLogChannelId = ch.id;
-    saveConfig(cfg);
-    return message.reply({ embeds: [setupEmbed('Strip Log Channel Set')
-      .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true })] });
   }
 
   // ── warn system ───────────────────────────────────────────────────────────────
@@ -4884,6 +4662,23 @@ client.on('messageCreate', async message => {
     });
   }
 
+  // ── .lvfile ───────────────────────────────────────────────────────────────────
+  if (command === 'lvfile') {
+    if (!isWlManager(message.author.id)) return message.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `.lvfile`')] });
+    if (!fs.existsSync(LINKED_VERIFIED_FILE)) {
+      return message.reply({ embeds: [errorEmbed('file not found').setDescription('`linked_verified.json` does not exist yet — no one has verified')] });
+    }
+    const data = fs.readFileSync(LINKED_VERIFIED_FILE);
+    const count = Object.keys(JSON.parse(data)).length;
+    const attachment = new AttachmentBuilder(data, { name: 'linked_verified.json' });
+    return message.reply({
+      embeds: [successEmbed('Linked & Verified Export')
+        .setDescription(`**${count}** linked account${count !== 1 ? 's' : ''} in file`)
+        .setTimestamp()],
+      files: [attachment]
+    });
+  }
+
   // ── .verifylist ───────────────────────────────────────────────────────────────
   if (command === 'verifylist' || command === 'vlist') {
     const vData   = loadVerify();
@@ -4997,6 +4792,10 @@ client.on('messageCreate', async message => {
     const qCh = queueChannelId
       ? (message.guild.channels.cache.get(queueChannelId) ?? message.channel)
       : message.channel;
+    const ulChannelId = queueData[message.guild.id]?.ulChannelId;
+    const ulCh = ulChannelId
+      ? (message.guild.channels.cache.get(ulChannelId) ?? null)
+      : null;
 
     const status = await message.reply({
       embeds: [baseEmbed().setColor(0x8B0000).setDescription('scanning for raid members...')]
@@ -5199,44 +4998,64 @@ client.on('messageCreate', async message => {
 
       await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`verified **${verified.length}** Roblox user${verified.length !== 1 ? 's' : ''}, looking up Discord accounts...`)] });
 
-      // For each Roblox user, check local verify data first, then fall back to RoVer
+      // For each Roblox user, check local verify data first, then fall back to RoVer.
+      // Only post users who have a linked Discord account (in linked_verified.json or RoVer).
       const localVerify = loadVerify();
       let posted = 0;
       for (const robloxUser of verified) {
-        let discordDisplay = '*(not linked)*';
+        let discordId = null;
+
         // Check local link first
         const localDiscordId = localVerify.robloxToDiscord?.[String(robloxUser.id)];
         if (localDiscordId) {
-          discordDisplay = `<@${localDiscordId}>`;
+          discordId = localDiscordId;
         } else {
           // Fall back to RoVer
           try {
             const rover = await (await fetch(`https://verify.eryn.io/api/roblox/${robloxUser.id}`)).json();
             if (rover.status === 'ok' && rover.discordId) {
-              discordDisplay = `<@${rover.discordId}>`;
+              discordId = rover.discordId;
             }
           } catch {}
         }
 
-        const attendEmbed = new EmbedBuilder()
-          .setColor(0x8B0000)
-          .setTitle('USER ATTENDED THIS RAID')
-          .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
-          .addFields(
-            { name: 'Discord', value: discordDisplay,                inline: false },
-            { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
-          )
-          .setTimestamp()
-          .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+        if (discordId) {
+          // Linked user → post to the main queue channel
+          const attendEmbed = new EmbedBuilder()
+            .setColor(0x8B0000)
+            .setTitle('USER ATTENDED THIS RAID')
+            .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+            .addFields(
+              { name: 'Discord', value: `<@${discordId}>`, inline: false },
+              { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
+            )
+            .setTimestamp()
+            .setFooter({ text: getBotName(), iconURL: LOGO_URL });
 
-        await qCh.send({ embeds: [attendEmbed] });
-        posted++;
+          await qCh.send({ embeds: [attendEmbed] });
+          posted++;
+        } else if (ulCh) {
+          // Unlinked user → post to the unlinked attendance channel
+          const ulEmbed = new EmbedBuilder()
+            .setColor(0x8B0000)
+            .setTitle('UNLINKED USER ATTENDED THIS RAID')
+            .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+            .addFields(
+              { name: 'Discord', value: '*(not linked)*', inline: false },
+              { name: 'Roblox',  value: `\`${robloxUser.name}\``, inline: false }
+            )
+            .setTimestamp()
+            .setFooter({ text: getBotName(), iconURL: LOGO_URL });
+
+          await ulCh.send({ embeds: [ulEmbed] });
+        }
 
         // small delay to avoid rate limits
         await new Promise(r => setTimeout(r, 300));
       }
 
-      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** raid member${posted !== 1 ? 's' : ''} to ${qCh}`)] });
+      const ulNote = ulCh ? ` • unlinked members logged to ${ulCh}` : '';
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan complete — logged **${posted}** linked member${posted !== 1 ? 's' : ''} to ${qCh}${ulNote}`)] });
 
     } catch (err) {
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`scan failed — ${err.message}\n\nmake sure \`tesseract.js\` is installed (\`npm install tesseract.js\`)`)] });
@@ -5340,6 +5159,22 @@ client.on('messageCreate', async message => {
     saveQueue(queueData);
     return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Queue Channel Set')
       .setDescription(`raid attendance logs will now post to ${ch}`)
+      .setTimestamp()] });
+  }
+
+  // ── .ulattendance ──────────────────────────────────────────────────────────────
+  if (command === 'ulattendance') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('you need to be whitelisted to set the unlinked attendance channel')] });
+    const ch = message.mentions.channels?.first();
+    if (!ch?.isTextBased()) return message.reply(`usage: \`${prefix}ulattendance #channel\``);
+    const queueData = loadQueue();
+    if (!queueData[message.guild.id]) queueData[message.guild.id] = {};
+    queueData[message.guild.id].ulChannelId = ch.id;
+    saveQueue(queueData);
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Unlinked Attendance Channel Set')
+      .setDescription(`unlinked raid members from \`.scan\` will now log to ${ch}`)
       .setTimestamp()] });
   }
 
