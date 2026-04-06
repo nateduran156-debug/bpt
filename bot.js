@@ -396,18 +396,6 @@ const HELP_SECTIONS = [
     ]
   },
   {
-    title: 'Verify System',
-
-    commands: [
-      '{p}verify @user',
-      '{p}vstatus',
-      '{p}setverifyrole [role]',
-      '{p}vwl [role]',
-      '{p}vwluser [user]',
-      '{p}vunwl [role/user]',
-    ]
-  },
-  {
     title: 'Special Actions',
 
     commands: [
@@ -798,24 +786,6 @@ const slashCommands = [
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('id').setDescription('user id to un-hardban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('setverifyrole').setDescription('set the role given on verification')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addRoleOption(o => o.setName('role').setDescription('role to give on verification').setRequired(true)),
-  new SlashCommandBuilder().setName('verify').setDescription('verify a user and give them the member role')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to verify').setRequired(true)),
-  new SlashCommandBuilder().setName('vstatus').setDescription('view the verify system status')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
-  new SlashCommandBuilder().setName('vunwl').setDescription('remove a role or user from the verify whitelist')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addRoleOption(o => o.setName('role').setDescription('role to remove').setRequired(false))
-    .addUserOption(o => o.setName('user').setDescription('user to remove').setRequired(false)),
-  new SlashCommandBuilder().setName('vwl').setDescription('whitelist a role to use /verify')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addRoleOption(o => o.setName('role').setDescription('role to whitelist').setRequired(true)),
-  new SlashCommandBuilder().setName('vwluser').setDescription('whitelist a user to use /verify')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to whitelist').setRequired(true)),
 
   // ── bleed-src features ────────────────────────────────────────────────────
   new SlashCommandBuilder().setName('autorole').setDescription('manage the autorole system')
@@ -1637,34 +1607,11 @@ client.on('interactionCreate', async interaction => {
       ).setThumbnail(client.user.displayAvatarURL()).setTimestamp()] });
   }
 
-  if (commandName === 'vstatus') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const vc = loadVerifyConfig();
-    const vwl = loadVerifyWhitelist();
-    const roleId = vc[guild.id]?.roleId;
-    const groupId = vc[guild.id]?.groupId;
-    const wlRoles = (vwl[guild.id]?.roles || []).map(id => `<@&${id}>`).join(', ') || 'none';
-    const wlUsers = (vwl[guild.id]?.users || []).map(id => `<@${id}>`).join(', ') || 'none';
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify System Status')
-      .addFields(
-        { name: 'verify role', value: roleId ? `<@&${roleId}>` : 'not set', inline: true },
-        { name: 'group id', value: groupId || 'not set', inline: true },
-        { name: 'whitelisted roles', value: wlRoles },
-        { name: 'whitelisted users', value: wlUsers }
-      ).setTimestamp()] });
-  }
 
   // ── Whitelist-required slash commands ────────────────────────────────────────
   if (!loadWhitelist().includes(interaction.user.id)) {
-    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'about', 'vstatus', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'convert', 'rid']);
-    if (commandName === 'verify' && guild) {
-      const vwl = loadVerifyWhitelist();
-      const guildVwl = vwl[guild.id] || { roles: [], users: [] };
-      const member = interaction.member;
-      const isVwlAllowed = guildVwl.users.includes(interaction.user.id) ||
-        member.roles.cache.some(r => guildVwl.roles.includes(r.id));
-      if (!isVwlAllowed) return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
-    } else if (!openCommands.has(commandName)) {
+    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'about', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'convert', 'rid']);
+    if (!openCommands.has(commandName)) {
       return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
     }
   }
@@ -3347,19 +3294,7 @@ client.on('messageCreate', async message => {
   // ── Whitelist-required prefix commands ───────────────────────────────────────
   if (!loadWhitelist().includes(message.author.id)) {
     const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'verifylist', 'vlist']);
-    if (command === 'verify' && message.guild) {
-      const sub0 = args[0]?.toLowerCase();
-      // Roblox linking subcommands are open to everyone; role-give verify requires VWL
-      const isRobloxSub = ['confirm','status','remove','unlink'].includes(sub0)
-        || (sub0 && !sub0.startsWith('<@') && !/^\d{17,19}$/.test(sub0) && !message.mentions.users.size);
-      if (!isRobloxSub) {
-        const vwl = loadVerifyWhitelist();
-        const guildVwl = vwl[message.guild.id] || { roles: [], users: [] };
-        const isVwlAllowed = guildVwl.users.includes(message.author.id) ||
-          message.member?.roles?.cache?.some(r => guildVwl.roles.includes(r.id));
-        if (!isVwlAllowed) return;
-      }
-    } else if (!openPrefixCommands.has(command)) {
+    if (!openPrefixCommands.has(command)) {
       return;
     }
   }
@@ -3899,60 +3834,13 @@ client.on('messageCreate', async message => {
     }
   }
 
-  if (command === 'vstatus') {
-    if (!message.guild) return;
-    const vc = loadVerifyConfig();
-    const vwl = loadVerifyWhitelist();
-    const roleId = vc[message.guild.id]?.roleId;
-    const groupId = vc[message.guild.id]?.groupId;
-    const wlRoles = (vwl[message.guild.id]?.roles || []).map(id => `<@&${id}>`).join(', ') || 'none';
-    const wlUsers = (vwl[message.guild.id]?.users || []).map(id => `<@${id}>`).join(', ') || 'none';
-    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify System Status')
-      .addFields(
-        { name: 'verify role', value: roleId ? `<@&${roleId}>` : 'not set', inline: true },
-        { name: 'group id', value: groupId || 'not set', inline: true },
-        { name: 'whitelisted roles', value: wlRoles },
-        { name: 'whitelisted users', value: wlUsers }
-      ).setTimestamp()] });
-  }
 
-  if (command === 'setverifyrole') {
-    if (!message.guild) return;
-    const role = message.mentions.roles?.first();
-    if (!role) return message.reply('mention a role — e.g. `.setverifyrole @Member`');
-    const vc = loadVerifyConfig();
-    if (!vc[message.guild.id]) vc[message.guild.id] = {};
-    vc[message.guild.id].roleId = role.id;
-    saveVerifyConfig(vc);
-    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Role Set')
-      .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
 
   if (command === 'verify') {
     if (!message.guild) return;
-    const sub      = args[0]?.toLowerCase();
-    const isRoleGive = !sub || message.mentions.users.size > 0 || /^\d{17,19}$/.test(args[0]);
+    const sub   = args[0]?.toLowerCase();
 
-    // ── Role-give verify (whitelist managers, requires @mention) ──────────────
-    if (isRoleGive) {
-      const vc = loadVerifyConfig();
-      const guildVc = vc[message.guild.id];
-      if (!guildVc?.roleId) return message.reply(`verify role isn't set — use \`${prefix}setverifyrole @role\` first`);
-      const target = message.mentions.members?.first();
-      if (!target) return message.reply(`mention a user to verify — e.g. \`${prefix}verify @user\``);
-      try {
-        await target.roles.add(guildVc.roleId, `verified by ${message.author.tag}`);
-        return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verified')
-          .setThumbnail(target.user.displayAvatarURL())
-          .addFields(
-            { name: 'user', value: `<@${target.id}>`, inline: true },
-            { name: 'verified by', value: `<@${message.author.id}>`, inline: true },
-            { name: 'role given', value: `<@&${guildVc.roleId}>`, inline: true }
-          ).setTimestamp()] });
-      } catch (err) { return message.reply(`couldn't verify — ${err.message}`); }
-    }
-
-    // ── Roblox account linking (open to everyone) ─────────────────────────────
+    // ── Roblox account linking ────────────────────────────────────────────────
     const vData = loadVerify();
 
     if (sub === 'status') {
@@ -4046,55 +3934,6 @@ client.on('messageCreate', async message => {
     ].join('\n')).setTimestamp()] });
   }
 
-  if (command === 'vwl') {
-    if (!message.guild) return;
-    const role = message.mentions.roles?.first();
-    if (!role) return message.reply('mention a role to whitelist');
-    const vwl = loadVerifyWhitelist();
-    if (!vwl[message.guild.id]) vwl[message.guild.id] = { roles: [], users: [] };
-    if (vwl[message.guild.id].roles.includes(role.id)) return message.reply(`<@&${role.id}> is already whitelisted`);
-    vwl[message.guild.id].roles.push(role.id);
-    saveVerifyWhitelist(vwl);
-    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — Role Added')
-      .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
-
-  if (command === 'vwluser') {
-    if (!message.guild) return;
-    const target = message.mentions.users?.first();
-    if (!target) return message.reply('mention a user to whitelist');
-    const vwl = loadVerifyWhitelist();
-    if (!vwl[message.guild.id]) vwl[message.guild.id] = { roles: [], users: [] };
-    if (vwl[message.guild.id].users.includes(target.id)) return message.reply(`**${target.tag}** is already whitelisted`);
-    vwl[message.guild.id].users.push(target.id);
-    saveVerifyWhitelist(vwl);
-    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — User Added')
-      .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
-
-  if (command === 'vunwl') {
-    if (!message.guild) return;
-    const role = message.mentions.roles?.first();
-    const target = message.mentions.users?.first();
-    if (!role && !target) return message.reply('mention a role or user to remove from the verify whitelist');
-    const vwl = loadVerifyWhitelist();
-    if (!vwl[message.guild.id]) return message.reply('nothing is whitelisted');
-    const lines = [];
-    if (role) {
-      if (!vwl[message.guild.id].roles.includes(role.id)) return message.reply(`<@&${role.id}> isn't whitelisted`);
-      vwl[message.guild.id].roles = vwl[message.guild.id].roles.filter(id => id !== role.id);
-      lines.push(`role: ${role}`);
-    }
-    if (target) {
-      if (!vwl[message.guild.id].users.includes(target.id)) return message.reply(`**${target.tag}** isn't whitelisted`);
-      vwl[message.guild.id].users = vwl[message.guild.id].users.filter(id => id !== target.id);
-      lines.push(`user: ${target.tag}`);
-    }
-    saveVerifyWhitelist(vwl);
-    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Verify Whitelist — Removed')
-      .setDescription(lines.join('\n'))
-      .addFields({ name: 'removed by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
 
   if (command === 'group') {
     const username = args[0];
