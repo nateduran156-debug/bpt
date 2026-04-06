@@ -348,37 +348,46 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
     fs.writeFileSync(tmpInput, Buffer.from(await dlRes.arrayBuffer()))
 
     if (isVideo) {
-      // Get duration using ffmpeg -i (parses Duration from stderr output)
-      let duration = 30
-      try {
-        const probe = spawnSync(ffmpegBin, ['-i', tmpInput], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] })
-        const match = (probe.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
-        if (match) {
-          duration = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3])
-        }
-      } catch {}
+      // Extract frames at 4fps (every 0.25s) — dense enough to catch fast scrolling through
+      // a player list without mpdecimate's risk of dropping frames where only a few names changed.
+      // Cap at 120 frames = covers 30 seconds of recording at full resolution.
+      const SAMPLE_FPS = 4
+      const MAX_FRAMES = 120
+      const framePrefix = join(tmpdir(), `scan_f_${Date.now()}_${aIdx}_`)
+      const framePat = `${framePrefix}%05d.png`
+      await editFn(`extracting frames from video${label}...`)
+      spawnSync(ffmpegBin, [
+        '-i', tmpInput,
+        '-vf', `fps=${SAMPLE_FPS}`,
+        framePat, '-y'
+      ], { stdio: 'ignore' })
 
-      // Sample a frame every 0.5 seconds so fast scrolling through the player list never skips anyone
-      const FRAME_INTERVAL = 0.5
-      const maxFrames = Math.min(60, Math.max(1, Math.ceil(duration / FRAME_INTERVAL)))
-      const step = duration / maxFrames
-      const times = []
-      for (let i = 0; i < maxFrames; i++) times.push(+(i * step).toFixed(2))
-
-      // Extract each frame via ffmpeg, then upscale it 3x for the vision model
-      const frameFiles = []
-      for (const ts of times) {
-        const fp = join(tmpdir(), `scan_f_${Date.now()}_${aIdx}_${ts}.png`)
-        spawnSync(ffmpegBin, ['-ss', String(ts), '-i', tmpInput, '-frames:v', '1', fp, '-y'], { stdio: 'ignore' })
-        if (fs.existsSync(fp)) {
-          allTmpFiles.push(fp)
-          const upscaled = upscaleImage(fp)
-          if (upscaled !== fp) allTmpFiles.push(upscaled)
-          frameFiles.push(upscaled)
-        }
+      // Collect all frames that ffmpeg produced
+      let rawFrames = []
+      for (let n = 1; ; n++) {
+        const fp = `${framePrefix}${String(n).padStart(5, '0')}.png`
+        if (!fs.existsSync(fp)) break
+        rawFrames.push(fp)
       }
 
-      if (!frameFiles.length) throw new Error(`could not extract frames from video ${aIdx + 1} — make sure it is a valid mp4/mov file`)
+      // If the video is very long, evenly subsample down to MAX_FRAMES
+      if (rawFrames.length > MAX_FRAMES) {
+        const step = rawFrames.length / MAX_FRAMES
+        rawFrames = Array.from({ length: MAX_FRAMES }, (_, i) => rawFrames[Math.round(i * step)])
+      }
+
+      if (!rawFrames.length) throw new Error(`could not extract frames from video ${aIdx + 1} — make sure it is a valid mp4/mov file`)
+
+      await editFn(`video${label}: scanning **${rawFrames.length}** frame${rawFrames.length !== 1 ? 's' : ''}...`)
+
+      // Upscale each frame 3x for the vision model, register every file for cleanup
+      const frameFiles = []
+      for (const fp of rawFrames) {
+        allTmpFiles.push(fp)
+        const upscaled = upscaleImage(fp)
+        if (upscaled !== fp) allTmpFiles.push(upscaled)
+        frameFiles.push(upscaled)
+      }
 
       // Run 3 vision passes per frame and union everything — catches names the AI misses in a single pass
       let lastErr = null
