@@ -3005,29 +3005,50 @@ client.on('interactionCreate', async interaction => {
       const dlRes = await fetch(attachment.url);
       fs.writeFileSync(tmpInput, Buffer.from(await dlRes.arrayBuffer()));
       const imagePaths = []; const tmpFrames = [];
-      const preprocessFrame = async (srcPath, destPath) => {
+      // buildVariants: crops to the player list popup area, upscales 3x, then generates
+      // four image variants so OCR sees the best possible version of every name:
+      //   v1 — contrast-stretched grayscale        (dark text on light bg)
+      //   v2 — inverted contrast-stretched          (white text on dark bg — Roblox style)
+      //   v3 — hard binary threshold at 128         (maximum contrast, no grey)
+      //   v4 — inverted hard binary threshold       (white-on-dark → black-on-white)
+      // All four are written to temp files and returned so OCR runs on every variant.
+      const buildVariants = async (srcPath, tag) => {
+        const results = [];
         try {
           const { createCanvas, loadImage } = await import('canvas');
-          const img = await loadImage(srcPath);
-          // Crop to the center region where the in-game player list popup appears.
-          // This excludes the game world background, side UI panels, and leaderboard
-          // so OCR only reads names from inside the player list box.
-          const cropX = Math.floor(img.width * 0.20);
+          const img  = await loadImage(srcPath);
+          const cropX = Math.floor(img.width  * 0.20);
           const cropY = Math.floor(img.height * 0.15);
-          const cropW = Math.floor(img.width * 0.55);
+          const cropW = Math.floor(img.width  * 0.55);
           const cropH = Math.floor(img.height * 0.65);
-          const scale = 2;
-          const canvas = createCanvas(cropW * scale, cropH * scale); const ctx = canvas.getContext('2d');
-          ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW * scale, cropH * scale);
-          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height); const d = imgData.data;
-          for (let p = 0; p < d.length; p += 4) {
-            const lum = 0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2];
-            const enhanced = lum < 128 ? Math.max(0, lum - 40) : Math.min(255, lum + 40);
-            d[p] = d[p + 1] = d[p + 2] = enhanced;
+          const scale = 3;
+          const W = cropW * scale, H = cropH * scale;
+          const base = createCanvas(W, H); const bctx = base.getContext('2d');
+          bctx.fillStyle = '#ffffff'; bctx.fillRect(0, 0, W, H);
+          bctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, W, H);
+          const raw = bctx.getImageData(0, 0, W, H).data;
+          const gray = new Uint8Array(W * H);
+          for (let i = 0; i < W * H; i++) gray[i] = Math.round(0.299 * raw[i*4] + 0.587 * raw[i*4+1] + 0.114 * raw[i*4+2]);
+          const stretch = v => v < 128 ? Math.max(0, v - 60) : Math.min(255, v + 60);
+          const variants = [
+            Array.from(gray).map(stretch),
+            Array.from(gray).map(v => 255 - stretch(v)),
+            Array.from(gray).map(v => v < 128 ? 0 : 255),
+            Array.from(gray).map(v => v < 128 ? 255 : 0),
+          ];
+          for (let vi = 0; vi < variants.length; vi++) {
+            try {
+              const oc = createCanvas(W, H); const octx = oc.getContext('2d');
+              const id = octx.createImageData(W, H); const px = variants[vi];
+              for (let i = 0; i < px.length; i++) { id.data[i*4] = id.data[i*4+1] = id.data[i*4+2] = px[i]; id.data[i*4+3] = 255; }
+              octx.putImageData(id, 0, 0);
+              const p = join(tmpdir(), `${tag}_v${vi+1}.png`);
+              fs.writeFileSync(p, oc.toBuffer('image/png'));
+              results.push(p); tmpFrames.push(p);
+            } catch {}
           }
-          ctx.putImageData(imgData, 0, 0); fs.writeFileSync(destPath, canvas.toBuffer('image/png')); return true;
-        } catch { return false; }
+        } catch {}
+        return results;
       };
       if (isVideo) {
         let duration = 10;
@@ -3040,25 +3061,46 @@ client.on('interactionCreate', async interaction => {
         const hammingDist = (a, b) => { let diff = a ^ b, dist = 0; while (diff) { dist += Number(diff & 1n); diff >>= 1n; } return dist; };
         const isTooSimilar = (hash) => { if (hash === null) return false; return seenHashes.some(h => hammingDist(h, hash) <= SIM_THRESH); };
         for (const ts of times) {
-          const raw = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`); const proc = join(tmpdir(), `scan_proc_${Date.now()}_${ts}.png`);
-          try { spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' }); if (!fs.existsSync(raw)) continue; tmpFrames.push(raw); const hash = await dHash(raw); if (isTooSimilar(hash)) continue; if (hash !== null) seenHashes.push(hash); const ok = await preprocessFrame(raw, proc); if (ok) { imagePaths.push(proc); tmpFrames.push(proc); } else { imagePaths.push(raw); } } catch {}
+          const raw = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
+          try {
+            spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
+            if (!fs.existsSync(raw)) continue; tmpFrames.push(raw);
+            const hash = await dHash(raw); if (isTooSimilar(hash)) continue; if (hash !== null) seenHashes.push(hash);
+            const vars = await buildVariants(raw, `scan_${Date.now()}_${ts}`);
+            if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(raw); }
+          } catch {}
         }
         if (!imagePaths.length) imagePaths.push(tmpInput);
       } else {
-        const proc = join(tmpdir(), `scan_proc_${Date.now()}.png`); const ok = await preprocessFrame(tmpInput, proc);
-        imagePaths.push(tmpInput); if (ok) { imagePaths.push(proc); tmpFrames.push(proc); }
+        const vars = await buildVariants(tmpInput, `scan_proc_${Date.now()}`);
+        if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(tmpInput); }
       }
       const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
-      await worker.setParameters({ tessedit_char_whitelist: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ', tessedit_pageseg_mode: '11' });
+      const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
+      // Three OCR workers with different page-segmentation modes run on every variant:
+      //   PSM 4  — single column of text (perfect for vertical player lists)
+      //   PSM 6  — single uniform text block
+      //   PSM 11 — sparse text (catches names scattered across the region)
+      // 4 variants × 3 PSM modes = up to 12 OCR passes per unique frame.
+      const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => {
+        const w = await createWorker('eng');
+        await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm });
+        return w;
+      }));
       const allText = [];
-      for (const imgPath of imagePaths) { try { const { data: { text } } = await worker.recognize(imgPath); if (text?.trim()) allText.push(text); } catch {} }
-      await worker.terminate();
+      for (const imgPath of imagePaths) {
+        for (const w of [wPSM4, wPSM6, wPSM11]) {
+          try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) allText.push(text); } catch {}
+        }
+      }
+      await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
       try { fs.unlinkSync(tmpInput); } catch {}
       for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
       const combinedText = allText.join('\n');
       const tokens = combinedText.split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
-      const candidates = [...new Set(tokens.map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim()).filter(w => w.length >= 5 && w.length <= 20 && /^[a-zA-Z0-9]/.test(w) && /[a-zA-Z0-9]$/.test(w)))];
+      // Min 3 chars — Roblox allows usernames as short as 3 characters.
+      // The Roblox API batch-lookup acts as the real filter; noise gets dropped there.
+      const candidates = [...new Set(tokens.map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim()).filter(w => w.length >= 3 && w.length <= 20 && /^[a-zA-Z0-9]/.test(w) && /[a-zA-Z0-9]$/.test(w)))];
       if (!candidates.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't detect any usernames — try a clearer screenshot with the player list visible")] });
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`found **${candidates.length}** possible names, verifying on Roblox...`)] });
       const verifiedUsers = [];
@@ -5537,41 +5579,50 @@ client.on('messageCreate', async message => {
       const imagePaths = [];
       const tmpFrames  = [];
 
-      // Helper: preprocess a frame with canvas for better OCR accuracy.
-      // Crops to the center region where the in-game player list popup appears,
-      // then upscales 2×, converts to grayscale, and boosts contrast.
-      // This prevents OCR from picking up names from the game world background,
-      // side panels, leaderboard, or any other on-screen UI outside the popup.
-      const preprocessFrame = async (srcPath, destPath) => {
+      // buildVariants: crops to the player list popup area, upscales 3x, then generates
+      // four image variants so OCR sees the best possible version of every name:
+      //   v1 — contrast-stretched grayscale        (dark text on light bg)
+      //   v2 — inverted contrast-stretched          (white text on dark bg — Roblox style)
+      //   v3 — hard binary threshold at 128         (maximum contrast, no grey)
+      //   v4 — inverted hard binary threshold       (white-on-dark → black-on-white)
+      // All four are written to temp files and returned so OCR runs on every variant.
+      const buildVariants = async (srcPath, tag) => {
+        const results = [];
         try {
           const { createCanvas, loadImage } = await import('canvas');
-          const img    = await loadImage(srcPath);
-          // Crop to center region where the player list popup appears
-          const cropX = Math.floor(img.width * 0.20);
+          const img   = await loadImage(srcPath);
+          const cropX = Math.floor(img.width  * 0.20);
           const cropY = Math.floor(img.height * 0.15);
-          const cropW = Math.floor(img.width * 0.55);
+          const cropW = Math.floor(img.width  * 0.55);
           const cropH = Math.floor(img.height * 0.65);
-          const scale  = 2;
-          const canvas = createCanvas(cropW * scale, cropH * scale);
-          const ctx    = canvas.getContext('2d');
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          // Draw only the cropped center region, upscaled
-          ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW * scale, cropH * scale);
-          // Grayscale + high contrast via pixel manipulation
-          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const d = imgData.data;
-          for (let p = 0; p < d.length; p += 4) {
-            const lum = 0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2];
-            // Stretch contrast: push dark pixels darker, light pixels lighter
-            const enhanced = lum < 128 ? Math.max(0, lum - 40) : Math.min(255, lum + 40);
-            d[p] = d[p + 1] = d[p + 2] = enhanced;
+          const scale = 3;
+          const W = cropW * scale, H = cropH * scale;
+          const base = createCanvas(W, H); const bctx = base.getContext('2d');
+          bctx.fillStyle = '#ffffff'; bctx.fillRect(0, 0, W, H);
+          bctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, W, H);
+          const raw = bctx.getImageData(0, 0, W, H).data;
+          const gray = new Uint8Array(W * H);
+          for (let i = 0; i < W * H; i++) gray[i] = Math.round(0.299 * raw[i*4] + 0.587 * raw[i*4+1] + 0.114 * raw[i*4+2]);
+          const stretch = v => v < 128 ? Math.max(0, v - 60) : Math.min(255, v + 60);
+          const variants = [
+            Array.from(gray).map(stretch),
+            Array.from(gray).map(v => 255 - stretch(v)),
+            Array.from(gray).map(v => v < 128 ? 0 : 255),
+            Array.from(gray).map(v => v < 128 ? 255 : 0),
+          ];
+          for (let vi = 0; vi < variants.length; vi++) {
+            try {
+              const oc = createCanvas(W, H); const octx = oc.getContext('2d');
+              const id = octx.createImageData(W, H); const px = variants[vi];
+              for (let i = 0; i < px.length; i++) { id.data[i*4] = id.data[i*4+1] = id.data[i*4+2] = px[i]; id.data[i*4+3] = 255; }
+              octx.putImageData(id, 0, 0);
+              const p = join(tmpdir(), `${tag}_v${vi+1}.png`);
+              fs.writeFileSync(p, oc.toBuffer('image/png'));
+              results.push(p); tmpFrames.push(p);
+            } catch {}
           }
-          ctx.putImageData(imgData, 0, 0);
-          const buf = canvas.toBuffer('image/png');
-          fs.writeFileSync(destPath, buf);
-          return true;
-        } catch { return false; }
+        } catch {}
+        return results;
       };
 
       if (isVideo) {
@@ -5596,9 +5647,9 @@ client.on('messageCreate', async message => {
         // to ones already processed so scroll-backs don't re-OCR the same content
         const { createCanvas: _cc, loadImage: _li } = await import('canvas');
         const seenHashes = [];
-        const HASH_SIZE  = 8;   // 8×8 dHash
-        const HASH_BITS  = HASH_SIZE * (HASH_SIZE - 1); // 56 bits per axis = 56
-        const SIM_THRESH = Math.floor(HASH_BITS * 0.12); // ~12 % different = new content
+        const HASH_SIZE  = 8;
+        const HASH_BITS  = HASH_SIZE * (HASH_SIZE - 1);
+        const SIM_THRESH = Math.floor(HASH_BITS * 0.12);
 
         const dHash = async (imgPath) => {
           try {
@@ -5633,68 +5684,58 @@ client.on('messageCreate', async message => {
         };
 
         for (const ts of times) {
-          const raw  = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
-          const proc = join(tmpdir(), `scan_proc_${Date.now()}_${ts}.png`);
+          const raw = join(tmpdir(), `scan_raw_${Date.now()}_${ts}.png`);
           try {
             spawnSync('ffmpeg', ['-i', tmpInput, '-ss', String(ts), '-frames:v', '1', raw, '-y'], { stdio: 'ignore' });
             if (!fs.existsSync(raw)) continue;
             tmpFrames.push(raw);
-
-            // Skip this frame if it looks identical to one we've already scanned
             const hash = await dHash(raw);
             if (isTooSimilar(hash)) continue;
             if (hash !== null) seenHashes.push(hash);
-
-            // Add preprocessed version (better OCR) AND raw (backup)
-            const ok = await preprocessFrame(raw, proc);
-            if (ok) { imagePaths.push(proc); tmpFrames.push(proc); }
-            else     { imagePaths.push(raw); }
+            const vars = await buildVariants(raw, `scan_${Date.now()}_${ts}`);
+            if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(raw); }
           } catch {}
         }
         if (!imagePaths.length) imagePaths.push(tmpInput);
       } else {
-        // For a still image, run on both raw and preprocessed
-        const proc = join(tmpdir(), `scan_proc_${Date.now()}.png`);
-        const ok   = await preprocessFrame(tmpInput, proc);
-        imagePaths.push(tmpInput);
-        if (ok) { imagePaths.push(proc); tmpFrames.push(proc); }
+        // For a still image build all four variants
+        const vars = await buildVariants(tmpInput, `scan_proc_${Date.now()}`);
+        if (vars.length) { for (const v of vars) imagePaths.push(v); } else { imagePaths.push(tmpInput); }
       }
 
-      // OCR via tesseract.js
-      // PSM 11 = "sparse text" — finds text anywhere on screen with no assumed layout,
-      // perfect for game UI player lists
+      // OCR via tesseract.js — three workers × four image variants = up to 12 passes per frame.
+      //   PSM 4  — single column of text (perfect for vertical player lists)
+      //   PSM 6  — single uniform text block
+      //   PSM 11 — sparse text (catches names scattered across the region)
       const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
-      await worker.setParameters({
-        tessedit_char_whitelist: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ',
-        tessedit_pageseg_mode:   '11'   // sparse text
-      });
+      const CHAR_WL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ';
+      const [wPSM4, wPSM6, wPSM11] = await Promise.all(['4','6','11'].map(async psm => {
+        const w = await createWorker('eng');
+        await w.setParameters({ tessedit_char_whitelist: CHAR_WL, tessedit_pageseg_mode: psm });
+        return w;
+      }));
 
       const allText = [];
       for (const imgPath of imagePaths) {
-        try {
-          const { data: { text } } = await worker.recognize(imgPath);
-          if (text?.trim()) allText.push(text);
-        } catch {}
+        for (const w of [wPSM4, wPSM6, wPSM11]) {
+          try { const { data: { text } } = await w.recognize(imgPath); if (text?.trim()) allText.push(text); } catch {}
+        }
       }
-      await worker.terminate();
+      await Promise.all([wPSM4, wPSM6, wPSM11].map(w => w.terminate()));
 
       // Cleanup every temp file
       try { fs.unlinkSync(tmpInput); } catch {}
       for (const f of tmpFrames) { try { fs.unlinkSync(f); } catch {} }
 
-      // Extract candidate Roblox usernames from every OCR pass combined.
-      // Strip stray non-username chars OCR may have injected, then filter
-      // to valid username shape: 5–20 chars, alphanumeric + underscore,
-      // must start and end with alphanumeric.
-      // Minimum of 5 prevents short OCR artifacts (e.g. UI labels, 3-4 char
-      // words) from being mistaken for player names that aren't in the video.
+      // Extract candidate Roblox usernames from all OCR passes combined.
+      // Min 3 chars — Roblox allows usernames as short as 3 characters.
+      // The Roblox API batch-lookup acts as the real filter; noise gets dropped there.
       const combinedText = allText.join('\n');
       const tokens = combinedText.split(/[\s\n\r|@()\[\]{}'":;<>!?\/\\=+\-,]+/);
       const candidates = [...new Set(
         tokens
           .map(w => w.replace(/[^a-zA-Z0-9_]/g, '').trim())
-          .filter(w => w.length >= 5 && w.length <= 20
+          .filter(w => w.length >= 3 && w.length <= 20
                     && /^[a-zA-Z0-9]/.test(w)
                     && /[a-zA-Z0-9]$/.test(w))
       )];
