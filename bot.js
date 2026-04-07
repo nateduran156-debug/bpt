@@ -611,14 +611,19 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
 
   const vData = loadVerify()
   const registeredMembers = verifiedUsers.filter(u => vData.robloxToDiscord?.[String(u.id)])
-  const unregisteredMembers = verifiedUsers.filter(u => !vData.robloxToDiscord?.[String(u.id)])
+  const unregisteredCandidates = verifiedUsers.filter(u => !vData.robloxToDiscord?.[String(u.id)])
 
   if (!verifiedUsers.length) {
     return `scan complete — no Roblox users detected`
   }
 
+  // Filter unregistered users to only those who are in the group
+  await editFn(`checking group membership for ${unregisteredCandidates.length} unregistered user${unregisteredCandidates.length !== 1 ? 's' : ''}...`)
+  const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID)
+  const unregisteredMembers = unregisteredCandidates.filter(u => groupMembers.has(String(u.id)))
+
   const totalToLog = registeredMembers.length + unregisteredMembers.length
-  await editFn(`**${totalToLog}** member${totalToLog !== 1 ? 's' : ''} found (${registeredMembers.length} registered, ${unregisteredMembers.length} unregistered), logging attendance...`)
+  await editFn(`**${totalToLog}** member${totalToLog !== 1 ? 's' : ''} found (${registeredMembers.length} registered, ${unregisteredMembers.length} unregistered in group), logging attendance...`)
 
   let posted = 0
 
@@ -655,7 +660,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
     await new Promise(r => setTimeout(r, 300))
   }
 
-  return `scan complete — logged **${posted}** member${posted !== 1 ? 's' : ''} to ${qCh} (${registeredMembers.length} registered, ${unregisteredMembers.length} unregistered)`
+  return `scan complete — logged **${posted}** member${posted !== 1 ? 's' : ''} to ${qCh} (${registeredMembers.length} registered, ${unregisteredMembers.length} unregistered in group)`
 }
 
 // ─── API-based group scan ─────────────────────────────────────────────────────
@@ -3868,10 +3873,11 @@ client.on('interactionCreate', async interaction => {
         body: JSON.stringify({ userIds: [targetUser.id] })
       })).json();
       const targetPresence = presRes.userPresences?.[0];
-      if (!targetPresence || targetPresence.userPresenceType !== 2 || !targetPresence.gameId) {
+      if (!targetPresence || targetPresence.userPresenceType !== 2 || (!targetPresence.gameId && !targetPresence.placeId && !targetPresence.rootPlaceId)) {
         return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is not currently in a Roblox game`)] });
       }
       const { gameId, placeId, rootPlaceId } = targetPresence;
+      const exactServerMatch = !!gameId;
       let gameName = `Place ${rootPlaceId || placeId}`;
       try {
         const plDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${rootPlaceId || placeId}`)).json();
@@ -3903,7 +3909,10 @@ client.on('interactionCreate', async interaction => {
           })).json();
           for (const p of (bRes.userPresences || [])) {
             if (String(p.userId) === String(targetUser.id)) continue;
-            if (p.gameId === gameId) {
+            const inSamePlace = (rootPlaceId && p.rootPlaceId && String(p.rootPlaceId) === String(rootPlaceId)) ||
+                                (placeId && p.placeId && String(p.placeId) === String(placeId));
+            const match = exactServerMatch ? (p.gameId === gameId) : inSamePlace;
+            if (match) {
               const discordId = registeredRobloxToDiscord[String(p.userId)] || null;
               const robloxName = registeredRobloxToName[String(p.userId)] || null;
               inSameServer.push({ discordId, robloxName, robloxId: p.userId });
@@ -3969,10 +3978,11 @@ client.on('interactionCreate', async interaction => {
       const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\` — not mverify'd`;
       const ingameSection = totalInServer ? `**In same server (${totalInServer})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
       const attendNote = queueChannel && totalInServer ? `\n\n*logged ${totalInServer} member${totalInServer !== 1 ? 's' : ''} to ${queueChannel}*` : '';
+      const scopeNote = exactServerMatch ? 'exact server' : 'same game (server ID private)';
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
         .setDescription(`${ingameSection}${attendNote}`)
-        .setFooter({ text: `${allRegisteredInGroup.length} registered group members checked • looking up ${targetUser.name}'s server` })
+        .setFooter({ text: `${allGroupIds.length} group members checked • ${scopeNote}` })
         .setTimestamp()] });
     } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ingame failed — ${err.message}`)] }); }
   }
@@ -6431,10 +6441,11 @@ client.on('messageCreate', async message => {
         body: JSON.stringify({ userIds: [targetUser.id] })
       })).json();
       const targetPresence = presRes.userPresences?.[0];
-      if (!targetPresence || targetPresence.userPresenceType !== 2 || !targetPresence.gameId) {
+      if (!targetPresence || targetPresence.userPresenceType !== 2 || (!targetPresence.gameId && !targetPresence.placeId && !targetPresence.rootPlaceId)) {
         return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is not currently in a Roblox game`)] });
       }
       const { gameId, placeId, rootPlaceId } = targetPresence;
+      const exactServerMatch = !!gameId;
       let gameName = `Place ${rootPlaceId || placeId}`;
       try {
         const plDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${rootPlaceId || placeId}`)).json();
@@ -6466,7 +6477,10 @@ client.on('messageCreate', async message => {
           })).json();
           for (const p of (bRes.userPresences || [])) {
             if (String(p.userId) === String(targetUser.id)) continue;
-            if (p.gameId === gameId) {
+            const inSamePlace = (rootPlaceId && p.rootPlaceId && String(p.rootPlaceId) === String(rootPlaceId)) ||
+                                (placeId && p.placeId && String(p.placeId) === String(placeId));
+            const match = exactServerMatch ? (p.gameId === gameId) : inSamePlace;
+            if (match) {
               const discordId = registeredRobloxToDiscord[String(p.userId)] || null;
               const robloxName = registeredRobloxToName[String(p.userId)] || null;
               inSameServer.push({ discordId, robloxName, robloxId: p.userId });
@@ -6531,10 +6545,11 @@ client.on('messageCreate', async message => {
       const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\` — not mverify'd`;
       const ingameSection = totalInServer ? `**In same server (${totalInServer})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
       const attendNote = queueChannel && totalInServer ? `\n\n*logged ${totalInServer} member${totalInServer !== 1 ? 's' : ''} to ${queueChannel}*` : '';
+      const scopeNote = exactServerMatch ? 'exact server' : 'same game (server ID private)';
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
         .setDescription(`${ingameSection}${attendNote}`)
-        .setFooter({ text: `${allRegisteredInGroup.length} registered group members checked` })
+        .setFooter({ text: `${allGroupIds.length} group members checked • ${scopeNote}` })
         .setTimestamp()] });
     } catch (err) { return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`ingame failed — ${err.message}`)] }); }
   }
