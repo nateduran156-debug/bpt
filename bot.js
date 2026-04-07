@@ -1540,6 +1540,15 @@ const slashCommands = [
   new SlashCommandBuilder().setName('setattendance').setDescription('set the channel where raid attendance logs are posted')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addChannelOption(o => o.setName('channel').setDescription('channel to post attendance logs in').setRequired(true)),
+  new SlashCommandBuilder().setName('startattend').setDescription('post a self-report button — members click it to log their own attendance')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+  new SlashCommandBuilder().setName('setraidvc').setDescription('set the voice channel that auto-logs attendance when group members join')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addChannelOption(o => o.setName('channel').setDescription('voice channel to monitor for attendance').setRequired(true)),
+  new SlashCommandBuilder().setName('rollcall').setDescription('start a reaction roll call — members react ✅ to log attendance')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+  new SlashCommandBuilder().setName('endrollcall').setDescription('close the active roll call and log all members who reacted')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
   new SlashCommandBuilder().setName('ingame').setDescription('show which registered members are in the same Roblox game as a player')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('Roblox username to look up').setRequired(true)),
@@ -1881,6 +1890,48 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
       saveVmChannels(vmChannels);
     }
   }
+
+  // ── Raid VC auto-attendance ────────────────────────────────────────────────
+  // When a verified group member joins the configured raid voice channel,
+  // automatically post their attendance embed to the queue channel.
+  if (newState.channelId && newState.channelId !== oldState.channelId && newState.member && guildId) {
+    try {
+      const raidData = loadQueue();
+      const raidVcId = raidData[guildId]?.raidVcId;
+      if (raidVcId && newState.channelId === raidVcId) {
+        const member = newState.member;
+        const vData = loadVerify();
+        const userVerify = vData.verified?.[member.id];
+        if (userVerify) {
+          // Prevent duplicate log in the same session
+          if (!raidData[guildId].vcLogged) raidData[guildId].vcLogged = [];
+          if (!raidData[guildId].vcLogged.includes(member.id)) {
+            const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
+            if (groupMembers.has(String(userVerify.robloxId))) {
+              const queueChannelId = raidData[guildId]?.channelId;
+              const queueChannel = queueChannelId ? newState.guild.channels.cache.get(queueChannelId) : null;
+              if (queueChannel) {
+                let avatarUrl = null;
+                try {
+                  const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userVerify.robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+                  avatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+                } catch {}
+                const vcEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+                  .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+                  .addFields({ name: 'Discord', value: `<@${member.id}>`, inline: false }, { name: 'Roblox', value: `\`${userVerify.robloxName}\``, inline: false })
+                  .setTimestamp().setFooter({ text: `auto-logged via voice channel • ${getBotName()}`, iconURL: LOGO_URL });
+                if (avatarUrl) vcEmbed.setThumbnail(avatarUrl);
+                await queueChannel.send({ embeds: [vcEmbed] });
+                addRaidStat(guildId, member.id);
+              }
+              raidData[guildId].vcLogged.push(member.id);
+              saveQueue(raidData);
+            }
+          }
+        }
+      }
+    } catch {}
+  }
 });
 
 // ─── Interaction handler ──────────────────────────────────────────────────────
@@ -1903,6 +1954,39 @@ client.on('interactionCreate', async interaction => {
     if (interaction.customId.startsWith('help_')) {
       const page = parseInt(interaction.customId.split('_')[1]);
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
+    }
+
+    if (interaction.customId === 'selfAttend') {
+      if (!interaction.guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+      const userId = interaction.user.id;
+      const guildId = interaction.guild.id;
+      const vData = loadVerify();
+      const userVerify = vData.verified?.[userId];
+      if (!userVerify) return interaction.reply({ content: "you haven't verified your Roblox account yet — use `/verify` first", ephemeral: true });
+      const qData = loadQueue();
+      const session = qData[guildId]?.selfAttendSession;
+      if (session?.logged?.includes(userId)) return interaction.reply({ content: 'you already logged your attendance for this session', ephemeral: true });
+      await interaction.deferReply({ ephemeral: true });
+      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
+      if (!groupMembers.has(String(userVerify.robloxId))) return interaction.editReply({ content: 'you need to be in the group to log attendance' });
+      let avatarUrl = null;
+      try {
+        const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userVerify.robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+        avatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+      } catch {}
+      const attendEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+        .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+        .addFields({ name: 'Discord', value: `<@${userId}>`, inline: false }, { name: 'Roblox', value: `\`${userVerify.robloxName}\``, inline: false })
+        .setTimestamp().setFooter({ text: `self-reported • ${getBotName()}`, iconURL: LOGO_URL });
+      if (avatarUrl) attendEmbed.setThumbnail(avatarUrl);
+      const queueChannelId = qData[guildId]?.channelId;
+      const queueChannel = queueChannelId ? interaction.guild.channels.cache.get(queueChannelId) : null;
+      if (queueChannel) { await queueChannel.send({ embeds: [attendEmbed] }); addRaidStat(guildId, userId); }
+      if (!qData[guildId]) qData[guildId] = {};
+      if (!qData[guildId].selfAttendSession) qData[guildId].selfAttendSession = { logged: [] };
+      qData[guildId].selfAttendSession.logged.push(userId);
+      saveQueue(qData);
+      return interaction.editReply({ content: queueChannel ? `✅ attendance logged to ${queueChannel}` : '✅ attendance logged' });
     }
 
     if (interaction.customId === 'ac_checkin') {
@@ -3683,6 +3767,112 @@ client.on('interactionCreate', async interaction => {
     queueData[guild.id].channelId = ch.id;
     saveQueue(queueData);
     return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Queue Channel Set').setDescription(`raid attendance logs will now post to ${ch}`).setTimestamp()] });
+  }
+
+  // ── startattend ───────────────────────────────────────────────────────────
+  if (commandName === 'startattend') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!loadWhitelist().includes(interaction.user.id) && !isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'you need to be whitelisted to use this', ephemeral: true });
+    const qData = loadQueue();
+    if (!qData[guild.id]) qData[guild.id] = {};
+    qData[guild.id].selfAttendSession = { logged: [] };
+    saveQueue(qData);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('selfAttend').setLabel('Log My Attendance').setStyle(ButtonStyle.Primary).setEmoji('✅')
+    );
+    const postEmbed = baseEmbed().setColor(0x8B0000)
+      .setTitle('Raid Attendance')
+      .setDescription('Click the button below to log your attendance.\nYou must be verified and in the group.')
+      .setTimestamp();
+    await interaction.reply({ embeds: [postEmbed], components: [row] });
+  }
+
+  // ── setraidvc ─────────────────────────────────────────────────────────────
+  if (commandName === 'setraidvc') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!loadWhitelist().includes(interaction.user.id) && !isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'you need to be whitelisted to use this', ephemeral: true });
+    const vc = interaction.options.getChannel('channel');
+    if (!vc || vc.type !== 2) return interaction.reply({ content: 'that must be a voice channel', ephemeral: true });
+    const qData = loadQueue();
+    if (!qData[guild.id]) qData[guild.id] = {};
+    qData[guild.id].raidVcId = vc.id;
+    qData[guild.id].vcLogged = [];
+    saveQueue(qData);
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Raid Voice Channel Set').setDescription(`attendance will now be auto-logged when verified group members join ${vc}\n\nThe logged list resets whenever you set a new channel.`).setTimestamp()] });
+  }
+
+  // ── rollcall ──────────────────────────────────────────────────────────────
+  if (commandName === 'rollcall') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!loadWhitelist().includes(interaction.user.id) && !isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'you need to be whitelisted to use this', ephemeral: true });
+    const rcEmbed = baseEmbed().setColor(0x8B0000)
+      .setTitle('Raid Roll Call')
+      .setDescription('React with ✅ to mark yourself present.\nOnly verified group members will be counted.\n\nStaff: use `/endrollcall` when the raid is over.')
+      .setTimestamp();
+    const rcMsg = await interaction.reply({ embeds: [rcEmbed], fetchReply: true });
+    await rcMsg.react('✅');
+    const qData = loadQueue();
+    if (!qData[guild.id]) qData[guild.id] = {};
+    qData[guild.id].rollCall = { messageId: rcMsg.id, channelId: rcMsg.channelId };
+    saveQueue(qData);
+  }
+
+  // ── endrollcall ───────────────────────────────────────────────────────────
+  if (commandName === 'endrollcall') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!loadWhitelist().includes(interaction.user.id) && !isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'you need to be whitelisted to use this', ephemeral: true });
+    const qData = loadQueue();
+    const rc = qData[guild.id]?.rollCall;
+    if (!rc) return interaction.reply({ content: 'no active roll call — start one with `/rollcall` first', ephemeral: true });
+    await interaction.deferReply();
+    try {
+      const rcChannel = guild.channels.cache.get(rc.channelId);
+      if (!rcChannel) return interaction.editReply({ content: "couldn't find the roll call channel" });
+      const rcMsg = await rcChannel.messages.fetch(rc.messageId);
+      const reaction = rcMsg.reactions.cache.get('✅');
+      let reactors = [];
+      if (reaction) {
+        await reaction.users.fetch();
+        reactors = [...reaction.users.cache.values()].filter(u => !u.bot);
+      }
+      if (!reactors.length) {
+        delete qData[guild.id].rollCall;
+        saveQueue(qData);
+        return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('roll call closed — no reactions found')] });
+      }
+      const vData = loadVerify();
+      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
+      const queueChannelId = qData[guild.id]?.channelId;
+      const queueChannel = queueChannelId ? guild.channels.cache.get(queueChannelId) : null;
+      let logged = 0; const skipped = [];
+      for (const user of reactors) {
+        const userVerify = vData.verified?.[user.id];
+        if (!userVerify || !groupMembers.has(String(userVerify.robloxId))) { skipped.push(user); continue; }
+        let avatarUrl = null;
+        try {
+          const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userVerify.robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+          avatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+        } catch {}
+        const rcAttendEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+          .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+          .addFields({ name: 'Discord', value: `<@${user.id}>`, inline: false }, { name: 'Roblox', value: `\`${userVerify.robloxName}\``, inline: false })
+          .setTimestamp().setFooter({ text: `roll call • ${getBotName()}`, iconURL: LOGO_URL });
+        if (avatarUrl) rcAttendEmbed.setThumbnail(avatarUrl);
+        if (queueChannel) { await queueChannel.send({ embeds: [rcAttendEmbed] }); addRaidStat(guild.id, user.id); }
+        logged++;
+        await new Promise(r => setTimeout(r, 300));
+      }
+      delete qData[guild.id].rollCall;
+      saveQueue(qData);
+      const skipNote = skipped.length ? `\n${skipped.length} skipped (not verified or not in group)` : '';
+      return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Roll Call Closed').setDescription(`logged **${logged}** member${logged !== 1 ? 's' : ''}${queueChannel ? ` to ${queueChannel}` : ''}${skipNote}`).setTimestamp()] });
+    } catch (err) {
+      return interaction.editReply({ content: `failed to close roll call — ${err.message}` });
+    }
   }
 
   // ── mverify ──────────────────────────────────────────────────────────────
@@ -6334,6 +6524,110 @@ client.on('messageCreate', async message => {
       await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`logged **${pairs.length}** attendee${pairs.length !== 1 ? 's' : ''} to ${queueChannel}`)] });
     }
     return;
+  }
+
+  // ── .startattend ──────────────────────────────────────────────────────────────────
+  if (command === 'startattend') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply('you need to be whitelisted to use this');
+    const qData = loadQueue();
+    if (!qData[message.guild.id]) qData[message.guild.id] = {};
+    qData[message.guild.id].selfAttendSession = { logged: [] };
+    saveQueue(qData);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('selfAttend').setLabel('Log My Attendance').setStyle(ButtonStyle.Primary).setEmoji('✅')
+    );
+    const postEmbed = baseEmbed().setColor(0x8B0000)
+      .setTitle('Raid Attendance')
+      .setDescription('Click the button below to log your attendance.\nYou must be verified and in the group.')
+      .setTimestamp();
+    return message.channel.send({ embeds: [postEmbed], components: [row] });
+  }
+
+  // ── .setraidvc ────────────────────────────────────────────────────────────────────
+  if (command === 'setraidvc') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply('you need to be whitelisted to use this');
+    const vc = message.mentions.channels.first() || message.guild.channels.cache.get(args[0]);
+    if (!vc || vc.type !== 2) return message.reply(`usage: \`${prefix}setraidvc #voice-channel\``);
+    const qData = loadQueue();
+    if (!qData[message.guild.id]) qData[message.guild.id] = {};
+    qData[message.guild.id].raidVcId = vc.id;
+    qData[message.guild.id].vcLogged = [];
+    saveQueue(qData);
+    return message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Raid Voice Channel Set').setDescription(`attendance will now be auto-logged when verified group members join ${vc}\n\nThe logged list resets whenever you set a new channel.`).setTimestamp()] });
+  }
+
+  // ── .rollcall ─────────────────────────────────────────────────────────────────────
+  if (command === 'rollcall') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply('you need to be whitelisted to use this');
+    const rcEmbed = baseEmbed().setColor(0x8B0000)
+      .setTitle('Raid Roll Call')
+      .setDescription('React with ✅ to mark yourself present.\nOnly verified group members will be counted.\n\nStaff: use `.endrollcall` when the raid is over.')
+      .setTimestamp();
+    const rcMsg = await message.channel.send({ embeds: [rcEmbed] });
+    await rcMsg.react('✅');
+    const qData = loadQueue();
+    if (!qData[message.guild.id]) qData[message.guild.id] = {};
+    qData[message.guild.id].rollCall = { messageId: rcMsg.id, channelId: rcMsg.channelId };
+    saveQueue(qData);
+    return;
+  }
+
+  // ── .endrollcall ──────────────────────────────────────────────────────────────────
+  if (command === 'endrollcall') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply('you need to be whitelisted to use this');
+    const qData = loadQueue();
+    const rc = qData[message.guild.id]?.rollCall;
+    if (!rc) return message.reply(`no active roll call — start one with \`${prefix}rollcall\` first`);
+    const status = await message.reply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('closing roll call and logging attendance...')] });
+    try {
+      const rcChannel = message.guild.channels.cache.get(rc.channelId);
+      if (!rcChannel) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription("couldn't find the roll call channel")] });
+      const rcMsg = await rcChannel.messages.fetch(rc.messageId);
+      const reaction = rcMsg.reactions.cache.get('✅');
+      let reactors = [];
+      if (reaction) { await reaction.users.fetch(); reactors = [...reaction.users.cache.values()].filter(u => !u.bot); }
+      if (!reactors.length) {
+        delete qData[message.guild.id].rollCall;
+        saveQueue(qData);
+        return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('roll call closed — no reactions found')] });
+      }
+      const vData = loadVerify();
+      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
+      const queueChannelId = qData[message.guild.id]?.channelId;
+      const queueChannel = queueChannelId ? message.guild.channels.cache.get(queueChannelId) : null;
+      let logged = 0; const skipped = [];
+      for (const user of reactors) {
+        const userVerify = vData.verified?.[user.id];
+        if (!userVerify || !groupMembers.has(String(userVerify.robloxId))) { skipped.push(user); continue; }
+        let avatarUrl = null;
+        try {
+          const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userVerify.robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+          avatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+        } catch {}
+        const rcAttendEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('registered user joined this raid')
+          .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+          .addFields({ name: 'Discord', value: `<@${user.id}>`, inline: false }, { name: 'Roblox', value: `\`${userVerify.robloxName}\``, inline: false })
+          .setTimestamp().setFooter({ text: `roll call • ${getBotName()}`, iconURL: LOGO_URL });
+        if (avatarUrl) rcAttendEmbed.setThumbnail(avatarUrl);
+        if (queueChannel) { await queueChannel.send({ embeds: [rcAttendEmbed] }); addRaidStat(message.guild.id, user.id); }
+        logged++;
+        await new Promise(r => setTimeout(r, 300));
+      }
+      delete qData[message.guild.id].rollCall;
+      saveQueue(qData);
+      const skipNote = skipped.length ? `\n${skipped.length} skipped (not verified or not in group)` : '';
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setTitle('Roll Call Closed').setDescription(`logged **${logged}** member${logged !== 1 ? 's' : ''}${queueChannel ? ` to ${queueChannel}` : ''}${skipNote}`).setTimestamp()] });
+    } catch (err) {
+      return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`failed to close roll call — ${err.message}`)] });
+    }
   }
 
   // ── .whoisin ──────────────────────────────────────────────────────────────────────
