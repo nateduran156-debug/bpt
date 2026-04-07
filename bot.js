@@ -292,6 +292,17 @@ async function fetchGroupMemberIds(groupId) {
   } while (cursor);
   return memberIds;
 }
+
+// Checks a single user's group membership directly — much more reliable than
+// fetching the full member list, especially for large groups.
+async function isUserInGroup(robloxId, groupId) {
+  try {
+    const res = await fetch(`https://groups.roblox.com/v1/users/${robloxId}/groups/roles`);
+    if (!res.ok) return false;
+    const json = await res.json();
+    return (json.data || []).some(g => String(g.group?.id) === String(groupId));
+  } catch { return false; }
+}
 const ATTEND_GROUP_ID = '206868002';
 
 // ─── OCR-based username extraction (no API key required) ─────────────────────
@@ -1906,8 +1917,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
           // Prevent duplicate log in the same session
           if (!raidData[guildId].vcLogged) raidData[guildId].vcLogged = [];
           if (!raidData[guildId].vcLogged.includes(member.id)) {
-            const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
-            if (groupMembers.has(String(userVerify.robloxId))) {
+            const inGroup = await isUserInGroup(userVerify.robloxId, ATTEND_GROUP_ID);
+            if (inGroup) {
               const queueChannelId = raidData[guildId]?.channelId;
               const queueChannel = queueChannelId ? newState.guild.channels.cache.get(queueChannelId) : null;
               if (queueChannel) {
@@ -1967,8 +1978,8 @@ client.on('interactionCreate', async interaction => {
       const session = qData[guildId]?.selfAttendSession;
       if (session?.logged?.includes(userId)) return interaction.reply({ content: 'you already logged your attendance for this session', ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
-      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
-      if (!groupMembers.has(String(userVerify.robloxId))) return interaction.editReply({ content: 'you need to be in the group to log attendance' });
+      const inGroup = await isUserInGroup(userVerify.robloxId, ATTEND_GROUP_ID);
+      if (!inGroup) return interaction.editReply({ content: 'you need to be in the group to log attendance' });
       let avatarUrl = null;
       try {
         const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userVerify.robloxId}&size=420x420&format=Png&isCircular=false`)).json();
@@ -3845,13 +3856,14 @@ client.on('interactionCreate', async interaction => {
         return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('roll call closed — no reactions found')] });
       }
       const vData = loadVerify();
-      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
       const queueChannelId = qData[guild.id]?.channelId;
       const queueChannel = queueChannelId ? guild.channels.cache.get(queueChannelId) : null;
       let logged = 0; const skipped = [];
       for (const user of reactors) {
         const userVerify = vData.verified?.[user.id];
-        if (!userVerify || !groupMembers.has(String(userVerify.robloxId))) { skipped.push(user); continue; }
+        if (!userVerify) { skipped.push(user); continue; }
+        const inGroup = await isUserInGroup(userVerify.robloxId, ATTEND_GROUP_ID);
+        if (!inGroup) { skipped.push(user); continue; }
         let avatarUrl = null;
         try {
           const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userVerify.robloxId}&size=420x420&format=Png&isCircular=false`)).json();
@@ -6600,13 +6612,14 @@ client.on('messageCreate', async message => {
         return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('roll call closed — no reactions found')] });
       }
       const vData = loadVerify();
-      const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
       const queueChannelId = qData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? message.guild.channels.cache.get(queueChannelId) : null;
       let logged = 0; const skipped = [];
       for (const user of reactors) {
         const userVerify = vData.verified?.[user.id];
-        if (!userVerify || !groupMembers.has(String(userVerify.robloxId))) { skipped.push(user); continue; }
+        if (!userVerify) { skipped.push(user); continue; }
+        const inGroup = await isUserInGroup(userVerify.robloxId, ATTEND_GROUP_ID);
+        if (!inGroup) { skipped.push(user); continue; }
         let avatarUrl = null;
         try {
           const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userVerify.robloxId}&size=420x420&format=Png&isCircular=false`)).json();
