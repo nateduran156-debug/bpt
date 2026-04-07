@@ -611,12 +611,14 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
 
   const vData = loadVerify()
   const registeredMembers = verifiedUsers.filter(u => vData.robloxToDiscord?.[String(u.id)])
+  const unregisteredMembers = verifiedUsers.filter(u => !vData.robloxToDiscord?.[String(u.id)])
 
-  if (!registeredMembers.length) {
-    return `scan complete — no registered members found in the video (${verifiedUsers.length} Roblox user${verifiedUsers.length !== 1 ? 's' : ''} detected but none were mverify'd)`
+  if (!verifiedUsers.length) {
+    return `scan complete — no Roblox users detected`
   }
 
-  await editFn(`**${registeredMembers.length}** registered member${registeredMembers.length !== 1 ? 's' : ''} found, logging attendance...`)
+  const totalToLog = registeredMembers.length + unregisteredMembers.length
+  await editFn(`**${totalToLog}** member${totalToLog !== 1 ? 's' : ''} found (${registeredMembers.length} registered, ${unregisteredMembers.length} unregistered), logging attendance...`)
 
   let posted = 0
 
@@ -638,7 +640,22 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
     await new Promise(r => setTimeout(r, 300))
   }
 
-  return `scan complete — logged **${posted}** registered member${posted !== 1 ? 's' : ''} to ${qCh}`
+  for (const robloxUser of unregisteredMembers) {
+    let avatarUrl = null
+    try {
+      const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUser.id}&size=420x420&format=Png&isCircular=false`)).json()
+      avatarUrl = avatarData.data?.[0]?.imageUrl ?? null
+    } catch {}
+    const unregEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('unregistered user joined this raid').setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+      .addFields({ name: 'Roblox', value: `[\`${robloxUser.name}\`](https://www.roblox.com/users/${robloxUser.id}/profile)`, inline: false }, { name: 'Status', value: 'not mverify\'d', inline: false })
+      .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL })
+    if (avatarUrl) unregEmbed.setThumbnail(avatarUrl)
+    await qCh.send({ embeds: [unregEmbed] })
+    posted++
+    await new Promise(r => setTimeout(r, 300))
+  }
+
+  return `scan complete — logged **${posted}** member${posted !== 1 ? 's' : ''} to ${qCh} (${registeredMembers.length} registered, ${unregisteredMembers.length} unregistered)`
 }
 
 // ─── API-based group scan ─────────────────────────────────────────────────────
@@ -3866,37 +3883,58 @@ client.on('interactionCreate', async interaction => {
       } catch {}
       const vData = loadVerify();
       const allRegistered = Object.entries(vData.verified || {});
-      if (!allRegistered.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('no registered members to check')] });
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is in **${gameName}** — fetching group members & checking presence...`)] });
-      // Only include users who are members of the required Roblox group
+      // Fetch all group members (registered + unregistered)
       const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
-      const allRegisteredInGroup = allRegistered.filter(([, v]) => groupMembers.has(String(v.robloxId)));
-      const allRobloxIds = allRegisteredInGroup.map(([, v]) => v.robloxId);
+      const allGroupIds = [...groupMembers];
+      // Build quick lookup maps from registered data
+      const registeredRobloxToDiscord = vData.robloxToDiscord || {};
+      const registeredRobloxToName = {};
+      for (const [, v] of allRegistered) {
+        if (v.robloxId) registeredRobloxToName[String(v.robloxId)] = v.robloxName;
+      }
       const inSameServer = [];
-      for (let i = 0; i < allRobloxIds.length; i += 50) {
+      for (let i = 0; i < allGroupIds.length; i += 50) {
         try {
-          const batch = allRobloxIds.slice(i, i + 50);
+          const batch = allGroupIds.slice(i, i + 50);
           const bRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userIds: batch })
           })).json();
           for (const p of (bRes.userPresences || [])) {
             if (String(p.userId) === String(targetUser.id)) continue;
-            const discordId = vData.robloxToDiscord?.[String(p.userId)];
-            const robloxName = allRegisteredInGroup.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
             if (p.gameId === gameId) {
+              const discordId = registeredRobloxToDiscord[String(p.userId)] || null;
+              const robloxName = registeredRobloxToName[String(p.userId)] || null;
               inSameServer.push({ discordId, robloxName, robloxId: p.userId });
             }
           }
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
-      // Post attendance embeds to the attendance channel — registered members only
+      // Resolve usernames for unregistered members found in same server
+      const needsName = inSameServer.filter(m => !m.robloxName);
+      if (needsName.length) {
+        try {
+          const nameRes = await (await fetch('https://users.roblox.com/v1/users', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds: needsName.map(m => m.robloxId), excludeBannedUsers: false })
+          })).json();
+          for (const u of (nameRes.data || [])) {
+            const entry = inSameServer.find(m => String(m.robloxId) === String(u.id));
+            if (entry) entry.robloxName = u.name;
+          }
+        } catch {}
+      }
+      // Fill any still-missing names with the ID as fallback
+      for (const m of inSameServer) { if (!m.robloxName) m.robloxName = String(m.robloxId); }
+      // Post attendance embeds to the attendance channel — all members (registered + unregistered)
       const queueData = loadQueue();
       const queueChannelId = queueData[guild.id]?.channelId;
       const queueChannel = queueChannelId ? (guild.channels.cache.get(queueChannelId) ?? null) : null;
       const registeredInSameServer = inSameServer.filter(m => m.discordId);
-      if (queueChannel && registeredInSameServer.length) {
+      const unregisteredInSameServer = inSameServer.filter(m => !m.discordId);
+      if (queueChannel) {
         for (const { discordId, robloxName, robloxId } of registeredInSameServer) {
           let ingameAvatarUrl = null;
           try {
@@ -3912,10 +3950,25 @@ client.on('interactionCreate', async interaction => {
           addRaidStat(guild.id, discordId);
           await new Promise(r => setTimeout(r, 300));
         }
+        for (const { robloxName, robloxId } of unregisteredInSameServer) {
+          let ingameAvatarUrl = null;
+          try {
+            const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+            ingameAvatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+          } catch {}
+          const unregEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('unregistered user joined this raid')
+            .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+            .addFields({ name: 'Roblox', value: `[\`${robloxName}\`](https://www.roblox.com/users/${robloxId}/profile)`, inline: false }, { name: 'Status', value: 'not mverify\'d', inline: false })
+            .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL });
+          if (ingameAvatarUrl) unregEmbed.setThumbnail(ingameAvatarUrl);
+          await queueChannel.send({ embeds: [unregEmbed] });
+          await new Promise(r => setTimeout(r, 300));
+        }
       }
-      const formatLine = ({ discordId, robloxName }) => `<@${discordId}> — \`${robloxName}\``;
-      const ingameSection = registeredInSameServer.length ? `**In same server (${registeredInSameServer.length})**\n${registeredInSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
-      const attendNote = queueChannel && registeredInSameServer.length ? `\n\n*logged ${registeredInSameServer.length} member${registeredInSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
+      const totalInServer = registeredInSameServer.length + unregisteredInSameServer.length;
+      const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\` — not mverify'd`;
+      const ingameSection = totalInServer ? `**In same server (${totalInServer})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
+      const attendNote = queueChannel && totalInServer ? `\n\n*logged ${totalInServer} member${totalInServer !== 1 ? 's' : ''} to ${queueChannel}*` : '';
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
         .setDescription(`${ingameSection}${attendNote}`)
@@ -6393,37 +6446,58 @@ client.on('messageCreate', async message => {
       } catch {}
       const vData = loadVerify();
       const allRegistered = Object.entries(vData.verified || {});
-      if (!allRegistered.length) return status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription('no registered members to check')] });
       await status.edit({ embeds: [baseEmbed().setColor(0x8B0000).setDescription(`**${targetUser.name}** is in **${gameName}** — fetching group members & checking presence...`)] });
-      // Only include users who are members of the required Roblox group
+      // Fetch all group members (registered + unregistered)
       const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
-      const allRegisteredInGroup = allRegistered.filter(([, v]) => groupMembers.has(String(v.robloxId)));
-      const allRobloxIds = allRegisteredInGroup.map(([, v]) => v.robloxId);
+      const allGroupIds = [...groupMembers];
+      // Build quick lookup maps from registered data
+      const registeredRobloxToDiscord = vData.robloxToDiscord || {};
+      const registeredRobloxToName = {};
+      for (const [, v] of allRegistered) {
+        if (v.robloxId) registeredRobloxToName[String(v.robloxId)] = v.robloxName;
+      }
       const inSameServer = [];
-      for (let i = 0; i < allRobloxIds.length; i += 50) {
+      for (let i = 0; i < allGroupIds.length; i += 50) {
         try {
-          const batch = allRobloxIds.slice(i, i + 50);
+          const batch = allGroupIds.slice(i, i + 50);
           const bRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userIds: batch })
           })).json();
           for (const p of (bRes.userPresences || [])) {
             if (String(p.userId) === String(targetUser.id)) continue;
-            const discordId = vData.robloxToDiscord?.[String(p.userId)];
-            const robloxName = allRegisteredInGroup.find(([, v]) => String(v.robloxId) === String(p.userId))?.[1]?.robloxName || String(p.userId);
             if (p.gameId === gameId) {
+              const discordId = registeredRobloxToDiscord[String(p.userId)] || null;
+              const robloxName = registeredRobloxToName[String(p.userId)] || null;
               inSameServer.push({ discordId, robloxName, robloxId: p.userId });
             }
           }
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
-      // Post attendance embeds to the queue channel — registered members only
+      // Resolve usernames for unregistered members found in same server
+      const needsName = inSameServer.filter(m => !m.robloxName);
+      if (needsName.length) {
+        try {
+          const nameRes = await (await fetch('https://users.roblox.com/v1/users', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds: needsName.map(m => m.robloxId), excludeBannedUsers: false })
+          })).json();
+          for (const u of (nameRes.data || [])) {
+            const entry = inSameServer.find(m => String(m.robloxId) === String(u.id));
+            if (entry) entry.robloxName = u.name;
+          }
+        } catch {}
+      }
+      // Fill any still-missing names with the ID as fallback
+      for (const m of inSameServer) { if (!m.robloxName) m.robloxName = String(m.robloxId); }
+      // Post attendance embeds to the queue channel — all members (registered + unregistered)
       const queueData = loadQueue();
       const queueChannelId = queueData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? (message.guild.channels.cache.get(queueChannelId) ?? null) : null;
       const registeredInSameServer = inSameServer.filter(m => m.discordId);
-      if (queueChannel && registeredInSameServer.length) {
+      const unregisteredInSameServer = inSameServer.filter(m => !m.discordId);
+      if (queueChannel) {
         for (const { discordId, robloxName, robloxId } of registeredInSameServer) {
           let ingameAvatarUrl = null;
           try {
@@ -6438,10 +6512,25 @@ client.on('messageCreate', async message => {
           await queueChannel.send({ embeds: [ingameEmbed] });
           await new Promise(r => setTimeout(r, 300));
         }
+        for (const { robloxName, robloxId } of unregisteredInSameServer) {
+          let ingameAvatarUrl = null;
+          try {
+            const avatarData = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxId}&size=420x420&format=Png&isCircular=false`)).json();
+            ingameAvatarUrl = avatarData.data?.[0]?.imageUrl ?? null;
+          } catch {}
+          const unregEmbed = new EmbedBuilder().setColor(0x8B0000).setTitle('unregistered user joined this raid')
+            .setAuthor({ name: getBotName(), iconURL: LOGO_URL })
+            .addFields({ name: 'Roblox', value: `[\`${robloxName}\`](https://www.roblox.com/users/${robloxId}/profile)`, inline: false }, { name: 'Status', value: 'not mverify\'d', inline: false })
+            .setTimestamp().setFooter({ text: getBotName(), iconURL: LOGO_URL });
+          if (ingameAvatarUrl) unregEmbed.setThumbnail(ingameAvatarUrl);
+          await queueChannel.send({ embeds: [unregEmbed] });
+          await new Promise(r => setTimeout(r, 300));
+        }
       }
-      const formatLine = ({ discordId, robloxName }) => `<@${discordId}> — \`${robloxName}\``;
-      const ingameSection = registeredInSameServer.length ? `**In same server (${registeredInSameServer.length})**\n${registeredInSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
-      const attendNote = queueChannel && registeredInSameServer.length ? `\n\n*logged ${registeredInSameServer.length} member${registeredInSameServer.length !== 1 ? 's' : ''} to ${queueChannel}*` : '';
+      const totalInServer = registeredInSameServer.length + unregisteredInSameServer.length;
+      const formatLine = ({ discordId, robloxName }) => discordId ? `<@${discordId}> — \`${robloxName}\`` : `\`${robloxName}\` — not mverify'd`;
+      const ingameSection = totalInServer ? `**In same server (${totalInServer})**\n${inSameServer.map(formatLine).join('\n')}` : '**In same server** — none';
+      const attendNote = queueChannel && totalInServer ? `\n\n*logged ${totalInServer} member${totalInServer !== 1 ? 's' : ''} to ${queueChannel}*` : '';
       return status.edit({ embeds: [baseEmbed().setColor(0x8B0000)
         .setTitle(`Members — ${gameName}`)
         .setDescription(`${ingameSection}${attendNote}`)
