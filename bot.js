@@ -30,8 +30,9 @@ const client = new Client({
 const DEFAULT_LOGO_URL = 'https://image2url.com/r2/default/images/1775525915147-4d88601d-cd66-4e98-8ca9-61cd2e33f5d1.png'
 const getLogoUrl = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.logoUrl || DEFAULT_LOGO_URL }
 const MOD_IMAGE_URL = 'https://i.imgur.com/CBDoIWa.png'
-const MTXX_GROUP_ID = '489845165'
-const MTXX_GROUP_LINK = 'https://www.roblox.com/communities/489845165/fraidfg#!/about'
+// aight so this is the group id and link, u can change it w .id command no cap
+const getGroupId = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.groupId || '489845165' }
+const getGroupLink = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.groupLink || `https://www.roblox.com/communities/${getGroupId()}/about` }
 
 // ─── Modern "Sins" embed system ───────────────────────────────────────────────
 // Every embed gets: author line (Sins + logo), logo thumbnail top-right,
@@ -964,114 +965,102 @@ async function unjailMember(guild, member, modTag) {
 }
 
 // ─── Help pages ───────────────────────────────────────────────────────────────
+// yo the help sections are organized hella clean - cali style fr fr
 const HELP_SECTIONS = [
   {
-    title: 'Moderation',
+    title: 'free commands (anyone can use these no cap)',
     commands: [
-      '{p}hb @user [reason]',
-      '{p}unhb [userId] [reason]',
-      '{p}ban @user [reason]',
-      '{p}unban [userId] [reason]',
-      '{p}kick @user [reason]',
-      '{p}purge [amount]',
-      '{p}timeout @user [minutes] [reason]',
-      '{p}untimeout @user',
-      '{p}mute @user [reason]',
-      '{p}unmute @user',
+      '/roblox [username] — look up a roblox user',
+      '/avatar [@user] — peep someones pfp',
+      '/banner [@user] — check someones banner',
+      '/serverinfo — server stats n info',
+      '/register [robloxUsername] — link ya roblox account',
     ]
   },
   {
-    title: 'Moderation 2',
+    title: 'moderation (whitelist only)',
     commands: [
-      '{p}hush @user',
-      '{p}unhush @user',
-      '{p}jail @user [reason]',
-      '{p}unjail @user',
-      '{p}lock',
-      '{p}unlock',
-      '{p}nuke',
+      '/hb @user [reason] — hardban someone fr',
+      '/unhb [id] [reason] — remove a hardban',
+      '/ban @user [reason] — ban hammer time',
+      '/unban [id] [reason] — let em back in',
+      '/kick @user [reason] — boot someone out',
+      '/purge [amount] — delete msgs in bulk',
+      '/timeout @user [mins] [reason] — put em on timeout',
+      '/mute @user [reason] — mute em up',
+      '/unmute @user — unmute',
     ]
   },
   {
-    title: 'Warnings',
+    title: 'moderation pt.2 (whitelist only)',
     commands: [
-      '{p}warn @user [reason]',
-      '{p}warnings @user',
-      '{p}clearwarns @user',
-      '{p}delwarn @user [#]',
+      '/hush @user — auto-delete their msgs lowkey',
+      '/unhush @user — stop auto-deleting',
+      '/jail @user [reason] — throw em in jail',
+      '/unjail @user — free em',
+      '/lock — lock the channel',
+      '/unlock — unlock the channel',
+      '/nuke — nuke the whole channel sheesh',
     ]
   },
   {
-    title: 'Special Actions',
+    title: 'warnings (whitelist only)',
     commands: [
-      '{p}annoy @user',
-      '{p}unannoy @user',
-      '{p}skull @user',
-      '{p}unskull @user',
+      '/warn @user [reason] — warn someone',
+      '/warnings @user — check someones warns',
+      '/clearwarns @user — clear all warns',
+      '/delwarn @user [#] — delete a specific warn',
     ]
   },
   {
-    title: 'Info & Utility',
+    title: 'trolling (whitelist only)',
     commands: [
-      '{p}about',
-      '{p}say [text]',
-      '{p}convert [robloxUsername]',
-      '/generate [discord-words|roblox-words|roblox-barcode]',
+      '/annoy @user — react w 10 random emojis lmaooo',
+      '/unannoy @user — stop the chaos',
+      '/skull @user — react w skull emoji every time',
+      '/unskull @user — stop skulling',
     ]
   },
   {
-    title: 'Info & Utility 2',
+    title: 'utility (whitelist only)',
     commands: [
-      '{p}userinfo [@user]',
-      '{p}serverinfo',
-      '{p}avatar [@user]',
-      '{p}banner [@user]',
-      '{p}invites [@user]',
-      '{p}dm @user/roleId [message]',
-      '{p}role @member @role1 @role2...',
-      '{p}inrole @role',
+      '/about — bot info n bio',
+      '/say [text] — make the bot talk',
+      '/convert [robloxUsername] — get a roblox user id',
+      '/generate [type] — generate usernames bussin',
+      '/userinfo [@user] — check user info',
+      '/invites [@user] — peep invite count',
+      '/dm @user/roleId [msg] — slide into dms',
+      '/role @member @role1... — toggle roles',
+      '/inrole @role — who got this role',
     ]
   },
   {
-    title: 'Roblox',
+    title: 'roblox (whitelist only)',
     commands: [
-      '{p}roblox [username]',
-      '{p}rid [userId]',
-      '{p}gc [username]',
-      '{p}grouproles',
-      '{p}tag [name] | [roleId]',
-      '{p}tag [robloxUser] [tagname]',
-      '{p}strip [robloxUser] [reason]',
-      '{p}striptag [tagname]',
-      '{p}rankup [Nx] @users...',
-      '{p}setrankroles set @role1 @role2...',
-      '{p}fileroles',
+      '/roblox [username] — look up a user',
+      '/rid [userId] — look up by id',
+      '/gc [username] — check their groups',
+      '/grouproles — list group roles',
+      '/rankup [Nx] @users... — rank someone up',
+      '/setrankroles set @role1... — set up rank ladder',
+      '/fileroles — download rank ladder json',
     ]
   },
   {
-    title: 'Admin',
+    title: 'admin (whitelist only)',
     commands: [
-      '{p}prefix [new prefix]',
-      '{p}status [type] [text]',
-      '{p}logo [url]',
-      '{p}name [text]',
-      '{p}flag [groupId]',
-      '{p}unflag [groupId]',
-      '{p}whitelist add/remove/list [@user]',
-      '{p}wlmanager add/remove/list [@user]',
-      '{p}leaveserver [serverId]',
-      '{p}servers',
-    ]
-  },
-  {
-    title: 'Server Setup',
-    commands: [
-      '{p}autorole set @role',
-      '{p}autorole disable/status',
-      '{p}joindm setmessage [text]',
-      '{p}joindm disable/status',
-      '{p}vanityset set/disable/status/syncfraud',
-      '{p}autoresponder add/remove/list [trigger] [response]',
+      '{p}id [groupId] — change the group id (big moves fr)',
+      '/prefix [new] — change the prefix',
+      '/status [type] [text] — change bot status',
+      '/logo [url] — change embed logo',
+      '/name [text] — change bot display name',
+      '/flag [groupId] — flag a roblox group',
+      '/unflag [groupId] — unflag a group',
+      '/whitelist add/remove/list — manage the whitelist',
+      '/wlmanager add/remove/list — manage wl managers',
+      '/leaveserver [id] — dip from a server',
+      '/servers — list all servers',
     ]
   },
 ];
@@ -1124,7 +1113,7 @@ function buildGcEmbed(username, groups, avatarUrl, page) {
 
 function buildGcNotInGroupEmbed(displayName, flaggedGroups) {
   const flagged = Array.isArray(flaggedGroups) ? flaggedGroups : loadFlaggedGroups();
-  let desc = `**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.\n\n> **Group ID:** \`${MTXX_GROUP_ID}\`\n> **Link:** [Click to Join](${MTXX_GROUP_LINK})`;
+  let desc = `**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.\n\n> **Group ID:** \`${getGroupId()}\`\n> **Link:** [Click to Join](${getGroupLink()})`;
   if (flagged.length > 0) {
     const lines = flagged.map(g => {
       const label = g.name ? `**[${g.name}](https://www.roblox.com/communities/${g.id}/about)**` : `**[Group ${g.id}](https://www.roblox.com/communities/${g.id}/about)**`;
@@ -1144,7 +1133,7 @@ function buildGcInGroupEmbed(displayName) {
   return new EmbedBuilder()
     .setColor(0x2C2F33)
     .setTitle('✅  In Group')
-    .setDescription(`**${displayName}** is in the group and ready to be verified.\n\n> **Group ID:** \`${MTXX_GROUP_ID}\`\n> **Link:** [View Group](${MTXX_GROUP_LINK})`)
+    .setDescription(`**${displayName}** is in the group and ready to be verified.\n\n> **Group ID:** \`${getGroupId()}\`\n> **Link:** [View Group](${getGroupLink()})`)
     .setFooter({ text: `${getBotName()} • ${getBotName()}`, iconURL: getLogoUrl() })
     .setTimestamp()
 }
@@ -1214,7 +1203,7 @@ const reactSnipeCache  = new Map(); // channelId -> { emoji, author, content, av
 
 
 // ─── Slash commands ───────────────────────────────────────────────────────────
-const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'nuke', 'tag', 'striptag']);
+const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'nuke']);
 
 // contexts for commands that work everywhere (guilds, bot DMs, and user-install DMs)
 const ALL_CONTEXTS = [InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel];
@@ -1333,22 +1322,7 @@ const slashCommands = [
     .addStringOption(o => o.setName('id').setDescription('user id to un-hardban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
 
-  // ── bleed-src features ────────────────────────────────────────────────────
-  new SlashCommandBuilder().setName('autorole').setDescription('manage the autorole system')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
-      .addChoices({ name: 'set', value: 'set' }, { name: 'disable', value: 'disable' }, { name: 'status', value: 'status' }))
-    .addRoleOption(o => o.setName('role').setDescription('role to auto-assign on join').setRequired(false)),
-  new SlashCommandBuilder().setName('joindm').setDescription('DM new members when they join')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
-      .addChoices(
-        { name: 'setmessage', value: 'setmessage' },
-        { name: 'disable', value: 'disable' },
-        { name: 'status', value: 'status' }
-      ))
-    .addStringOption(o => o.setName('message').setDescription('DM message — use {user}, {guild}').setRequired(false)),
-  // ── bleed.bot inspired commands ───────────────────────────────────────────
+  // ── bleed.bot inspired commands (we removed autorole/joindm/server setup - they gone fr) ──
   new SlashCommandBuilder().setName('warn').setDescription('warn a member')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member to warn').setRequired(true))
@@ -1379,27 +1353,6 @@ const slashCommands = [
   new SlashCommandBuilder().setName('invites').setDescription('show invite count for a member')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member').setRequired(false)),
-  new SlashCommandBuilder().setName('autoresponder').setDescription('manage auto-responses to trigger words')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
-      .addChoices(
-        { name: 'add',    value: 'add'    },
-        { name: 'remove', value: 'remove' },
-        { name: 'list',   value: 'list'   }
-      ))
-    .addStringOption(o => o.setName('trigger').setDescription('trigger phrase').setRequired(false))
-    .addStringOption(o => o.setName('response').setDescription('response message').setRequired(false)),
-
-  new SlashCommandBuilder().setName('vanityset').setDescription('set server vanity to /yourname and manage fraud pic perms')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
-      .addChoices(
-        { name: 'set', value: 'set' },
-        { name: 'disable', value: 'disable' },
-        { name: 'status', value: 'status' },
-        { name: 'syncfraud', value: 'syncfraud' }
-      ))
-    .addRoleOption(o => o.setName('picrole').setDescription('role to give users who have /fraud in custom status').setRequired(false)),
   new SlashCommandBuilder().setName('convert').setDescription('get a roblox user id from their username')
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
   new SlashCommandBuilder().setName('dm').setDescription('dm a user or everyone with a role')
@@ -1407,10 +1360,6 @@ const slashCommands = [
     .addStringOption(o => o.setName('message').setDescription('message to send').setRequired(true))
     .addUserOption(o => o.setName('user').setDescription('user to dm').setRequired(false))
     .addRoleOption(o => o.setName('role').setDescription('role to dm everyone in').setRequired(false)),
-  new SlashCommandBuilder().setName('strip').setDescription('strip a roblox user\'s rank')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason for strip').setRequired(true)),
   new SlashCommandBuilder().setName('vm').setDescription('voicemaster controls')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('action to perform').setRequired(true)
@@ -1493,18 +1442,6 @@ const slashCommands = [
   // ── utility ───────────────────────────────────────────────────────────────
   new SlashCommandBuilder().setName('servers').setDescription('list all servers the bot is in (WL managers only)')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
-  // ── tag commands ──────────────────────────────────────────────────────────
-  new SlashCommandBuilder().setName('tag').setDescription('create a tag or rank someone using a tag')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addSubcommand(sub => sub.setName('create').setDescription('create or update a tag (maps a name to a Roblox role ID)')
-      .addStringOption(o => o.setName('name').setDescription('tag name').setRequired(true))
-      .addStringOption(o => o.setName('roleid').setDescription('Roblox role ID to assign').setRequired(true)))
-    .addSubcommand(sub => sub.setName('apply').setDescription('rank a Roblox user using a tag and track them')
-      .addStringOption(o => o.setName('username').setDescription('Roblox username').setRequired(true))
-      .addStringOption(o => o.setName('tagname').setDescription('tag name').setRequired(true))),
-  new SlashCommandBuilder().setName('striptag').setDescription('strip all tracked members of a tag (bulk rank to rank 1)')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addStringOption(o => o.setName('tagname').setDescription('tag name to strip').setRequired(true)),
   new SlashCommandBuilder().setName('logo').setDescription('change the embed logo used across the bot')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
     .addStringOption(o => o.setName('url').setDescription('image URL for the new logo (leave blank to see current)').setRequired(false))
@@ -2182,7 +2119,7 @@ client.on('interactionCreate', async interaction => {
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
       const displayName = userBasic.displayName || userBasic.name;
-      const inFraidGroup = groupsData.some(g => String(g.group.id) === MTXX_GROUP_ID);
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === getGroupId());
       const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
@@ -2538,13 +2475,6 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`status changed to **${type}** ${text}`)] });
   }
 
-  if (commandName === 'setlog') {
-    const ch = interaction.options.getChannel('channel');
-    if (!ch?.isTextBased()) return interaction.reply({ content: 'that needs to be a text channel', ephemeral: true });
-    const cfg2 = loadConfig(); cfg2.logChannelId = ch.id; saveConfig(cfg2);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0x2C2F33).setDescription(`logs going to ${ch} now`).setTimestamp()] });
-  }
-
   if (commandName === 'wlmanager') {
     const sub  = interaction.options.getString('action');
     const mgrs = loadWlManagers();
@@ -2821,158 +2751,7 @@ client.on('interactionCreate', async interaction => {
       .addFields({ name: 'removed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
   }
 
-  // ── bleed-src slash command handlers ─────────────────────────────────────────
-
-  if (commandName === 'autorole') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const action = interaction.options.getString('action');
-    const autoroleData = loadAutorole();
-    if (action === 'set') {
-      const role = interaction.options.getRole('role');
-      if (!role) return interaction.reply({ content: "give a role to set", ephemeral: true });
-      if (!autoroleData[guild.id]) autoroleData[guild.id] = {};
-      autoroleData[guild.id].roleId = role.id;
-      saveAutorole(autoroleData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Autorole Set')
-        .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
-    }
-    if (action === 'disable') {
-      if (autoroleData[guild.id]) delete autoroleData[guild.id].roleId;
-      saveAutorole(autoroleData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Autorole Disabled').setTimestamp()] });
-    }
-    if (action === 'status') {
-      const roleId = autoroleData[guild.id]?.roleId;
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Autorole Status')
-        .addFields({ name: 'status', value: roleId ? 'enabled' : 'disabled', inline: true },
-          roleId ? { name: 'role', value: `<@&${roleId}>`, inline: true } : { name: 'role', value: 'not set', inline: true }
-        ).setTimestamp()] });
-    }
-  }
-
-  if (commandName === 'welcome') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const action = interaction.options.getString('action');
-    const welcomeData = loadWelcome();
-    if (!welcomeData[guild.id]) welcomeData[guild.id] = {};
-    if (action === 'setchannel') {
-      const ch = interaction.options.getChannel('channel');
-      if (!ch?.isTextBased()) return interaction.reply({ content: "that needs to be a text channel", ephemeral: true });
-      welcomeData[guild.id].channelId = ch.id;
-      saveWelcome(welcomeData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Channel Set')
-        .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
-    }
-    if (action === 'setmessage') {
-      const msg = interaction.options.getString('message');
-      if (!msg) return interaction.reply({ content: "give a message (use {user}, {guild}, {membercount})", ephemeral: true });
-      welcomeData[guild.id].message = msg;
-      saveWelcome(welcomeData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Message Set')
-        .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}` `{membercount}`' }).setTimestamp()] });
-    }
-    if (action === 'disable') {
-      delete welcomeData[guild.id];
-      saveWelcome(welcomeData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Messages Disabled').setTimestamp()] });
-    }
-    if (action === 'status') {
-      const gw = welcomeData[guild.id];
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Status')
-        .addFields(
-          { name: 'channel', value: gw?.channelId ? `<#${gw.channelId}>` : 'not set', inline: true },
-          { name: 'message', value: gw?.message || 'not set' }
-        ).setTimestamp()] });
-    }
-  }
-
-  if (commandName === 'antiinvite') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const action = interaction.options.getString('action');
-    const aiData = loadAntiinvite();
-    if (action === 'enable') {
-      if (!aiData[guild.id]) aiData[guild.id] = {};
-      aiData[guild.id].enabled = true;
-      saveAntiinvite(aiData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Anti-Invite Enabled')
-        .setDescription('Discord invite links will now be auto-deleted').setTimestamp()] });
-    }
-    if (action === 'disable') {
-      if (aiData[guild.id]) aiData[guild.id].enabled = false;
-      saveAntiinvite(aiData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Anti-Invite Disabled').setTimestamp()] });
-    }
-    if (action === 'status') {
-      const enabled = aiData[guild.id]?.enabled ?? false;
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Anti-Invite Status')
-        .addFields({ name: 'status', value: enabled ? 'enabled' : 'disabled', inline: true }).setTimestamp()] });
-    }
-  }
-
-  if (commandName === 'altdentifier') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const action = interaction.options.getString('action');
-    const adData = loadAltdentifier();
-    if (action === 'enable') {
-      if (!adData[guild.id]) adData[guild.id] = {};
-      adData[guild.id].enabled = true;
-      saveAltdentifier(adData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Altdentifier Enabled')
-        .setDescription('Accounts younger than 14 days will be kicked on join').setTimestamp()] });
-    }
-    if (action === 'disable') {
-      if (adData[guild.id]) adData[guild.id].enabled = false;
-      saveAltdentifier(adData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Altdentifier Disabled').setTimestamp()] });
-    }
-    if (action === 'status') {
-      const enabled = adData[guild.id]?.enabled ?? false;
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Altdentifier Status')
-        .addFields({ name: 'status', value: enabled ? 'enabled' : 'disabled', inline: true },
-          { name: 'min account age', value: '14 days', inline: true }).setTimestamp()] });
-    }
-  }
-
-  if (commandName === 'joindm') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const action = interaction.options.getString('action');
-    const jdData = loadJoindm();
-    if (!jdData[guild.id]) jdData[guild.id] = {};
-    if (action === 'setmessage') {
-      const msg = interaction.options.getString('message');
-      if (!msg) return interaction.reply({ content: "give a message (use {user}, {guild})", ephemeral: true });
-      jdData[guild.id].message = msg;
-      jdData[guild.id].enabled = true;
-      saveJoindm(jdData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Join DM Set')
-        .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}`' }).setTimestamp()] });
-    }
-    if (action === 'disable') {
-      jdData[guild.id].enabled = false;
-      saveJoindm(jdData);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Join DM Disabled').setTimestamp()] });
-    }
-    if (action === 'status') {
-      const gd = jdData[guild.id];
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Join DM Status')
-        .addFields(
-          { name: 'status', value: gd?.enabled ? 'enabled' : 'disabled', inline: true },
-          { name: 'message', value: gd?.message || 'not set' }
-        ).setTimestamp()] });
-    }
-  }
-
-  if (commandName === 'setlogs') {
-    if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
-    const ch = interaction.options.getChannel('channel');
-    if (!ch?.isTextBased()) return interaction.reply({ content: "that needs to be a text channel", ephemeral: true });
-    const logsData = loadLogs();
-    if (!logsData[guild.id]) logsData[guild.id] = {};
-    logsData[guild.id].channelId = ch.id;
-    saveLogs(logsData);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Logs Channel Set')
-      .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: interaction.user.tag, inline: true }).setTimestamp()] });
-  }
+  // server setup commands removed - they gone fr fr
 
   // ── /warn ─────────────────────────────────────────────────────────────────────
   if (commandName === 'warn') {
@@ -3188,135 +2967,6 @@ client.on('interactionCreate', async interaction => {
     } catch { return interaction.editReply('could not fetch invites — missing **Manage Guild** permission'); }
   }
 
-  // ── /autoresponder ────────────────────────────────────────────────────────────
-  if (commandName === 'autoresponder') {
-    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
-    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild))
-      return interaction.reply({ content: 'you need **Manage Server**', ephemeral: true });
-    const action   = interaction.options.getString('action');
-    const trigger  = interaction.options.getString('trigger');
-    const response = interaction.options.getString('response');
-    const arData   = loadAutoresponder();
-    if (!arData[guild.id]) arData[guild.id] = [];
-
-    if (action === 'add') {
-      if (!trigger || !response) return interaction.reply({ content: 'provide both a trigger and a response', ephemeral: true });
-      if (arData[guild.id].find(r => r.trigger.toLowerCase() === trigger.toLowerCase()))
-        return interaction.reply({ content: `trigger **${trigger}** already exists — remove it first`, ephemeral: true });
-      arData[guild.id].push({ trigger, response });
-      saveAutoresponder(arData);
-      return interaction.reply({ embeds: [successEmbed('Autoresponder Added')
-        .addFields(
-          { name: 'trigger',  value: `\`${trigger}\`` },
-          { name: 'response', value: response }
-        )] });
-    }
-
-    if (action === 'remove') {
-      if (!trigger) return interaction.reply({ content: 'provide the trigger to remove', ephemeral: true });
-      const before = arData[guild.id].length;
-      arData[guild.id] = arData[guild.id].filter(r => r.trigger.toLowerCase() !== trigger.toLowerCase());
-      if (arData[guild.id].length === before)
-        return interaction.reply({ content: `no autoresponder with trigger **${trigger}**`, ephemeral: true });
-      saveAutoresponder(arData);
-      return interaction.reply({ embeds: [successEmbed('Autoresponder Removed')
-        .addFields({ name: 'trigger removed', value: `\`${trigger}\`` })] });
-    }
-
-    if (action === 'list') {
-      const list = arData[guild.id];
-      if (!list?.length) return interaction.reply({ embeds: [infoEmbed('Autoresponders')
-        .setDescription('no autoresponders set — add one with `/autoresponder add`')] });
-      const lines = list.map((r, i) => `**${i + 1}.** \`${r.trigger}\` → ${r.response}`).join('\n');
-      return interaction.reply({ embeds: [infoEmbed('Autoresponders').setDescription(lines)] });
-    }
-  }
-
-  // ── /vanityset ────────────────────────────────────────────────────────────────
-  if (commandName === 'vanityset') {
-    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
-    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild))
-      return interaction.reply({ content: 'you need **Manage Server** to use this', ephemeral: true });
-
-    const action   = interaction.options.getString('action');
-    const picRole  = interaction.options.getRole('picrole');
-    const vData    = loadVanity();
-    if (!vData[guild.id]) vData[guild.id] = {};
-    const gv = vData[guild.id];
-
-    if (action === 'set') {
-      // first check if the guild already has a vanity URL
-      let vanityResult = null;
-      try {
-        const existing = await guild.fetchVanityData();
-        if (existing?.code) {
-          vanityResult = existing.code;
-        } else {
-          // no existing vanity — try to set one to the user's username
-          const vanityCode = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'bot';
-          await guild.setVanityCode(vanityCode);
-          vanityResult = vanityCode;
-        }
-      } catch {
-        vanityResult = null;
-      }
-      gv.vanityCode = vanityResult;
-      gv.setBy = interaction.user.id;
-      if (picRole) gv.picRoleId = picRole.id;
-      saveVanity(vData);
-
-      const fields = [{ name: 'set by', value: `<@${interaction.user.id}>`, inline: true }];
-      if (vanityResult) fields.unshift({ name: 'vanity', value: `discord.gg/${vanityResult}`, inline: true });
-      else fields.unshift({ name: 'vanity', value: 'could not set (server needs vanity URL feature)', inline: true });
-      if (picRole) fields.push({ name: 'pic role', value: `${picRole}`, inline: true });
-
-      return interaction.reply({ embeds: [vanityEmbed('Vanity Set').addFields(...fields)] });
-    }
-
-    if (action === 'disable') {
-      delete vData[guild.id];
-      saveVanity(vData);
-      return interaction.reply({ embeds: [errorEmbed('Vanity System Disabled')
-        .setDescription('fraud pic perm tracking is now off for this server')] });
-    }
-
-    if (action === 'status') {
-      const picRoleId = gv.picRoleId;
-      return interaction.reply({ embeds: [vanityEmbed('Vanity Status')
-        .addFields(
-          { name: 'vanity', value: gv.vanityCode ? `discord.gg/${gv.vanityCode}` : 'not set', inline: true },
-          { name: 'pic role', value: picRoleId ? `<@&${picRoleId}>` : 'not set', inline: true },
-          { name: 'set by', value: gv.setBy ? `<@${gv.setBy}>` : 'unknown', inline: true }
-        )] });
-    }
-
-    if (action === 'syncfraud') {
-      // manually scan all cached members and sync the vanity rep role
-      await interaction.deferReply();
-      const picRoleId  = gv.picRoleId;
-      const vanityCode = gv.vanityCode;
-      if (!picRoleId)  return interaction.editReply('set a pic role first with `/vanityset set picrole:@role`');
-      if (!vanityCode) return interaction.editReply('set a vanity first with `/vanityset set`');
-      const vanityTag = `/${vanityCode}`;
-      let granted = 0, revoked = 0;
-      for (const [, member] of guild.members.cache) {
-        if (member.user.bot) continue;
-        const isRepping = member.presence?.activities?.some(
-          a => a.type === 4 && typeof a.state === 'string' && a.state.includes(vanityTag)
-        ) ?? false;
-        const hasRole = member.roles.cache.has(picRoleId);
-        if (isRepping && !hasRole)  { try { await member.roles.add(picRoleId);    granted++; } catch {} }
-        if (!isRepping && hasRole)  { try { await member.roles.remove(picRoleId); revoked++; } catch {} }
-      }
-      return interaction.editReply({ embeds: [successEmbed('Vanity Sync Complete')
-        .addFields(
-          { name: 'vanity', value: vanityTag, inline: true },
-          { name: 'granted', value: `${granted}`, inline: true },
-          { name: 'revoked', value: `${revoked}`, inline: true }
-        )] });
-    }
-  }
-
   // ── /convert ──────────────────────────────────────────────────────────────────
   if (commandName === 'convert') {
     const username = interaction.options.getString('username');
@@ -3371,147 +3021,6 @@ client.on('interactionCreate', async interaction => {
       await target.voice.setChannel(myVc);
       return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`dragged **${target.displayName}** to **${myVc.name}**`)] });
     } catch { return interaction.reply({ content: "couldn't drag them — they might not be in a vc", ephemeral: true }); }
-  }
-
-  // ── /strip ────────────────────────────────────────────────────────────────────
-  if (commandName === 'strip') {
-    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
-    if (!loadWhitelist().includes(interaction.user.id)) return interaction.reply({ content: "you're not whitelisted to use `/strip`", ephemeral: true });
-    const robloxUser = interaction.options.getString('username');
-    const reason     = interaction.options.getString('reason');
-    const groupId = process.env.ROBLOX_GROUP_ID;
-    if (!groupId) return interaction.reply({ content: '`ROBLOX_GROUP_ID` isn\'t set', ephemeral: true });
-    let rank2RoleId;
-    try {
-      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 1);
-      if (!rank2) return interaction.reply({ content: "couldn't find a rank 1 role in the group", ephemeral: true });
-      rank2RoleId = String(rank2.id);
-    } catch { return interaction.reply({ content: "couldn't fetch group roles, try again", ephemeral: true }); }
-    await interaction.deferReply();
-    try {
-      let result, skipReason = null;
-      try {
-        result = await rankRobloxUser(robloxUser, rank2RoleId);
-      } catch (rankErr) {
-        const msg = rankErr.message?.toLowerCase() ?? '';
-        if (msg.includes('same role'))               skipReason = 'already at rank 1 (balls)';
-        else if (msg.includes("isn't in the group")) skipReason = 'not in group';
-        if (skipReason) {
-          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUser], excludeBannedUsers: false }) })).json()).data?.[0];
-          result = { displayName: userBasic?.name || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
-        } else { throw rankErr; }
-      }
-      const embed = baseEmbed().setTitle('strip').setColor(0x2C2F33)
-        .addFields(
-          { name: 'user',       value: result.displayName,           inline: true },
-          { name: 'stripped by', value: interaction.user.tag,        inline: true },
-          { name: 'reason',     value: reason }
-        ).setTimestamp();
-      if (skipReason)       embed.setFooter({ text: skipReason });
-      if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
-      await interaction.editReply({ embeds: [embed] });
-      const sLog = baseEmbed().setTitle('strip log').setColor(0x2C2F33)
-        .addFields(
-          { name: 'user',       value: result.displayName,              inline: true },
-          { name: 'stripped by', value: `<@${interaction.user.id}>`,   inline: true },
-          { name: 'reason',     value: reason }
-        ).setFooter({ text: `roblox id: ${result.userId}${skipReason ? ` • ${skipReason}` : ''}` }).setTimestamp();
-      if (result.avatarUrl) sLog.setThumbnail(result.avatarUrl);
-      await sendStripLog(guild, sLog);
-    } catch (err) {
-      await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't strip them — ${err.message}`)] });
-      await sendStripLog(guild, baseEmbed().setTitle('strip failed').setColor(0x2C2F33)
-        .addFields(
-          { name: 'user', value: robloxUser, inline: true },
-          { name: 'attempted by', value: `<@${interaction.user.id}>`, inline: true },
-          { name: 'reason', value: reason },
-          { name: 'error',  value: err.message }
-        ).setTimestamp());
-    }
-  }
-
-  // ── /tag ──────────────────────────────────────────────────────────────────────
-  if (commandName === 'tag') {
-    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
-    const sub = interaction.options.getSubcommand();
-
-    if (sub === 'create') {
-      const name   = interaction.options.getString('name').toLowerCase().trim();
-      const roleId = interaction.options.getString('roleid').trim();
-      if (!name || !roleId) return interaction.reply({ content: 'provide both a name and a role id', ephemeral: true });
-      const tags = loadTags(); const isNew = !tags[name]; tags[name] = roleId; saveTags(tags);
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
-    }
-
-    if (sub === 'apply') {
-      const robloxUser = interaction.options.getString('username');
-      const tagName    = interaction.options.getString('tagname').toLowerCase().trim();
-      const tags = loadTags();
-      if (!tags[tagName]) return interaction.reply({ content: `no tag called **${tagName}** exists`, ephemeral: true });
-      const roleId = tags[tagName].trim();
-      if (isNaN(Number(roleId))) return interaction.reply({ content: `tag **${tagName}** doesn't have a valid role id`, ephemeral: true });
-      await interaction.deferReply();
-      try {
-        const result = await rankRobloxUser(robloxUser, roleId);
-        const embed  = baseEmbed().setTitle('got em ranked').setColor(0x2C2F33)
-          .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true })
-          .setFooter({ text: `ranked by ${interaction.user.tag}` }).setTimestamp();
-        if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
-        await interaction.editReply({ embeds: [embed] });
-        const taggedMembers = loadTaggedMembers();
-        if (!taggedMembers[tagName]) taggedMembers[tagName] = [];
-        if (!taggedMembers[tagName].includes(result.displayName)) taggedMembers[tagName].push(result.displayName);
-        saveTaggedMembers(taggedMembers);
-        const logEmbed = baseEmbed().setTitle('rank log').setColor(0x2C2F33)
-          .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true },
-            { name: 'ranked by', value: `<@${interaction.user.id}>`, inline: true })
-          .setFooter({ text: `roblox id: ${result.userId}` }).setTimestamp();
-        if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
-        await sendLog(guild, logEmbed);
-      } catch (err) {
-        await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't rank them — ${err.message}`)] });
-      }
-    }
-  }
-
-  // ── /striptag ─────────────────────────────────────────────────────────────────
-  if (commandName === 'striptag') {
-    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
-    if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "only whitelist managers can use `/striptag`", ephemeral: true });
-    const tagName = interaction.options.getString('tagname').toLowerCase().trim();
-    const tags = loadTags();
-    if (!tags[tagName]) return interaction.reply({ content: `no tag called **${tagName}** exists`, ephemeral: true });
-    const taggedMembers = loadTaggedMembers();
-    const members = taggedMembers[tagName] || [];
-    if (!members.length) return interaction.reply({ content: `nobody is tracked under tag **${tagName}**`, ephemeral: true });
-    const groupId = process.env.ROBLOX_GROUP_ID;
-    if (!groupId) return interaction.reply({ content: '`ROBLOX_GROUP_ID` isn\'t set', ephemeral: true });
-    let rank2RoleId;
-    try {
-      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 1);
-      if (!rank2) return interaction.reply({ content: "couldn't find a rank 1 role in the group", ephemeral: true });
-      rank2RoleId = String(rank2.id);
-    } catch { return interaction.reply({ content: "couldn't fetch group roles, try again", ephemeral: true }); }
-    striptagPending.set(interaction.user.id, { tagName, members, rank2RoleId });
-    setTimeout(() => striptagPending.delete(interaction.user.id), 60 * 1000);
-    const confirmRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('striptag_confirm').setLabel('Confirm').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('striptag_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger)
-    );
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('confirm striptag')
-      .setDescription(`are you sure you want to strip **${members.length}** user${members.length !== 1 ? 's' : ''} from tag **${tagName}** and rank them all to rank 1?\n\n**Users:** ${members.join(', ')}`)
-      .setFooter({ text: 'this confirmation expires in 60 seconds' })], components: [confirmRow] });
-  }
-
-  // ── /tagstrip ─────────────────────────────────────────────────────────────────
-  if (commandName === 'tagstrip') {
-    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
-    const ch = interaction.options.getChannel('channel');
-    if (!ch?.isTextBased()) return interaction.reply({ content: 'that channel is not a text channel', ephemeral: true });
-    const cfg2 = loadConfig(); cfg2.stripLogChannelId = ch.id; saveConfig(cfg2);
-    return interaction.reply({ embeds: [baseEmbed().setTitle('strip log channel set').setColor(0x2C2F33).setDescription(`.strip and .striptag logs will now go to <#${ch.id}>`).setTimestamp()] });
   }
 
   // ── /vm ───────────────────────────────────────────────────────────────────────
@@ -4621,7 +4130,7 @@ client.on('messageCreate', async message => {
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
       const displayName = userBasic.displayName || userBasic.name;
-      const inFraidGroup = groupsData.some(g => String(g.group.id) === MTXX_GROUP_ID);
+      const inFraidGroup = groupsData.some(g => String(g.group.id) === getGroupId());
       const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
@@ -5096,175 +4605,6 @@ client.on('messageCreate', async message => {
     return message.reply(had ? 'snipe cleared' : 'nothing to clear');
   }
 
-  if (command === 'tag') {
-    const full = args.join(' ');
-    if (full.includes('|')) {
-      // .tag [name] | [roleId] — create/update a tag
-      const pipeIdx = full.indexOf('|');
-      const name    = full.slice(0, pipeIdx).trim().toLowerCase();
-      const content = full.slice(pipeIdx + 1).trim();
-      if (!name || !content) return message.reply('do it like: tag [name] | [content]');
-      const tags = loadTags(); const isNew = !tags[name]; tags[name] = content; saveTags(tags);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`tag **${name}** ${isNew ? 'created' : 'updated'}`)] });
-    }
-    // .tag [robloxUsername] [tagname] — rank someone using a tag
-    const robloxUser = args[0];
-    const tagName    = args.slice(1).join(' ').toLowerCase();
-    if (!robloxUser || !tagName) return message.reply(`idk what u want, try:\n\`${prefix}tag [name] | [roleId]\` — make a tag\n\`${prefix}tag [robloxUsername] [tagname]\` — rank someone`);
-    const tags = loadTags();
-    if (!tags[tagName]) return message.reply(`no tag called **${tagName}** exists`);
-    const roleId = tags[tagName].trim();
-    if (isNaN(Number(roleId))) return message.reply(`tag **${tagName}** doesn't have a valid role id`);
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`ranking **${robloxUser}**...`)] });
-    try {
-      const result = await rankRobloxUser(robloxUser, roleId);
-      const embed  = baseEmbed().setTitle('got em ranked').setColor(0x2C2F33)
-        .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true })
-        .setFooter({ text: `ranked by ${message.author.tag}`, iconURL: getLogoUrl() }).setTimestamp();
-      if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
-      await status.edit({ content: '', embeds: [embed] });
-      // track who got this tag so striptag can find them later
-      const taggedMembers = loadTaggedMembers();
-      if (!taggedMembers[tagName]) taggedMembers[tagName] = [];
-      if (!taggedMembers[tagName].includes(result.displayName)) taggedMembers[tagName].push(result.displayName);
-      saveTaggedMembers(taggedMembers);
-      const logEmbed = baseEmbed().setTitle('rank log').setColor(0x2C2F33)
-        .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'tag', value: tagName, inline: true }, { name: 'role id', value: roleId, inline: true },
-          { name: 'ranked by', value: `<@${message.author.id}>`, inline: true }, { name: 'channel', value: `<#${message.channel.id}>`, inline: true })
-        .setFooter({ text: `roblox id: ${result.userId}`, iconURL: getLogoUrl() }).setTimestamp();
-      if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
-      await sendLog(message.guild, logEmbed);
-    } catch (err) { await status.edit({ content: '', embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't rank them - ${err.message}`)] }); }
-    return;
-  }
-
-  if (command === 'striptag') {
-    if (!message.guild) return;
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers can run `.striptag`')] });
-    const tagName = args.join(' ').toLowerCase();
-    if (!tagName) return message.reply(`usage: \`${prefix}striptag [tagname]\``);
-    const tags = loadTags();
-    if (!tags[tagName]) return message.reply(`no tag called **${tagName}** exists`);
-    const taggedMembers = loadTaggedMembers();
-    const members = taggedMembers[tagName] || [];
-    if (!members.length) return message.reply(`nobody is tracked under tag **${tagName}**`);
-    const groupId = process.env.ROBLOX_GROUP_ID;
-    if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
-    let rank2RoleId;
-    try {
-      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 1);
-      if (!rank2) return message.reply("couldn't find a rank 1 role in the group");
-      rank2RoleId = String(rank2.id);
-    } catch { return message.reply("couldn't fetch group roles, try again"); }
-    // store pending and ask for confirmation
-    striptagPending.set(message.author.id, { tagName, members, rank2RoleId });
-    setTimeout(() => striptagPending.delete(message.author.id), 60 * 1000); // expire after 60s
-    const confirmRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('striptag_confirm').setLabel('Confirm').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('striptag_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger)
-    );
-    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('confirm striptag')
-      .setDescription(`are you sure you want to strip **${members.length}** user${members.length !== 1 ? 's' : ''} from tag **${tagName}** and rank them all to rank 1?\n\n**Users:** ${members.join(', ')}`)
-      .setFooter({ text: 'this confirmation expires in 60 seconds', iconURL: getLogoUrl() })], components: [confirmRow] });
-  }
-
-  if (command === 'tagstrip') {
-    const ch = message.mentions.channels?.first();
-    if (!ch?.isTextBased()) return message.reply('mention a text channel — e.g. `.tagstrip #strip-logs`');
-    const cfg2 = loadConfig(); cfg2.stripLogChannelId = ch.id; saveConfig(cfg2);
-    return message.reply({ embeds: [baseEmbed().setTitle('strip log channel set').setColor(0x2C2F33).setDescription(`.strip and .striptag logs will now go to ${ch}`).setTimestamp()] });
-  }
-
-  if (command === 'strip') {
-    if (!message.guild) return;
-    if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription("you're not whitelisted to use `.strip`")] });
-    const robloxUser = args[0];
-    const reason = args.slice(1).join(' ');
-    if (!robloxUser) return message.reply(`usage: \`${prefix}strip [robloxUsername] [reason]\``);
-    if (!reason) return message.reply('you need to provide a reason');
-    // find which tag this user has
-    const taggedMembersStrip = loadTaggedMembers();
-    let foundTag = null;
-    for (const [tagName, members] of Object.entries(taggedMembersStrip)) {
-      if (members.map(m => m.toLowerCase()).includes(robloxUser.toLowerCase())) {
-        foundTag = tagName;
-        break;
-      }
-    }
-    const groupId = process.env.ROBLOX_GROUP_ID;
-    if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
-    let rank2RoleId;
-    try {
-      const rolesData = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
-      const rank2 = rolesData.roles?.find(r => r.rank === 1);
-      if (!rank2) return message.reply("couldn't find a rank 1 role in the group");
-      rank2RoleId = String(rank2.id);
-    } catch { return message.reply("couldn't fetch group roles, try again"); }
-    const status = await message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`stripping **${robloxUser}**${foundTag ? ` (tag: **${foundTag}**)` : ''}...`)] });
-    try {
-      let result;
-      let skipReason = null;
-      try {
-        result = await rankRobloxUser(robloxUser, rank2RoleId);
-      } catch (rankErr) {
-        const msg = rankErr.message?.toLowerCase() ?? '';
-        if (msg.includes('same role')) {
-          skipReason = 'already at rank 1 (balls)';
-        } else if (msg.includes("isn't in the group")) {
-          skipReason = 'not in group — tag removed only';
-        }
-        if (skipReason) {
-          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUser], excludeBannedUsers: false }) })).json()).data?.[0];
-          result = { displayName: userBasic?.name || robloxUser, userId: userBasic?.id || 'unknown', avatarUrl: null };
-        } else {
-          throw rankErr;
-        }
-      }
-      // remove from tagged members if they had a tag
-      if (foundTag) {
-        taggedMembersStrip[foundTag] = taggedMembersStrip[foundTag].filter(m => m.toLowerCase() !== robloxUser.toLowerCase());
-        if (!taggedMembersStrip[foundTag].length) delete taggedMembersStrip[foundTag];
-        saveTaggedMembers(taggedMembersStrip);
-      }
-      const embedFields = [
-        { name: 'user', value: result.displayName, inline: true },
-        { name: 'stripped by', value: message.author.tag, inline: true },
-        { name: 'reason', value: reason }
-      ];
-      if (foundTag) embedFields.splice(1, 0, { name: 'tag removed', value: foundTag, inline: true });
-      const embed = baseEmbed().setTitle('strip').setColor(0x2C2F33)
-        .addFields(...embedFields)
-        .setTimestamp();
-      if (skipReason) embed.setFooter({ text: skipReason });
-      if (result.avatarUrl) embed.setThumbnail(result.avatarUrl);
-      await status.edit({ content: '', embeds: [embed] });
-      const logFields = [
-        { name: 'user', value: result.displayName, inline: true },
-        { name: 'stripped by', value: `<@${message.author.id}>`, inline: true },
-        { name: 'reason', value: reason }
-      ];
-      if (foundTag) logFields.splice(1, 0, { name: 'tag removed', value: foundTag, inline: true });
-      const logEmbed = baseEmbed().setTitle('strip log').setColor(0x2C2F33)
-        .addFields(...logFields)
-        .setFooter({ text: `roblox id: ${result.userId}${skipReason ? ` • ${skipReason}` : ''}` }).setTimestamp();
-      if (result.avatarUrl) logEmbed.setThumbnail(result.avatarUrl);
-      await sendStripLog(message.guild, logEmbed);
-    } catch (err) {
-      await status.edit({ content: '', embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't strip them — ${err.message}`)] });
-      const failEmbed = baseEmbed().setTitle('strip failed').setColor(0x2C2F33)
-        .addFields(
-          { name: 'user', value: robloxUser, inline: true },
-          ...(foundTag ? [{ name: 'tag', value: foundTag, inline: true }] : []),
-          { name: 'attempted by', value: `<@${message.author.id}>`, inline: true },
-          { name: 'reason', value: reason },
-          { name: 'error', value: err.message }
-        ).setTimestamp();
-      await sendStripLog(message.guild, failEmbed);
-    }
-    return;
-  }
-
   if (command === 'grouproles') {
     const groupId = process.env.ROBLOX_GROUP_ID;
     if (!groupId) return message.reply('`ROBLOX_GROUP_ID` isnt set');
@@ -5274,13 +4614,6 @@ client.on('messageCreate', async message => {
       const lines = data.roles.sort((a, b) => a.rank - b.rank).map(r => `\`${String(r.rank).padStart(3, '0')}\`  **${r.name}**  —  ID: \`${r.id}\``);
       return message.reply({ embeds: [baseEmbed().setTitle('group roles').setColor(0x2C2F33).setDescription(lines.join('\n')).setFooter({ text: `group id: ${groupId}` }).setTimestamp()] });
     } catch { return message.reply("couldn't load group roles, try again"); }
-  }
-
-  if (command === 'setlog') {
-    const ch = message.mentions.channels?.first();
-    if (!ch?.isTextBased()) return message.reply('mention a text channel');
-    const cfg2 = loadConfig(); cfg2.logChannelId = ch.id; saveConfig(cfg2);
-    return message.reply({ embeds: [baseEmbed().setTitle('log channel set').setColor(0x2C2F33).setDescription(`logs going to ${ch} now`).setTimestamp()] });
   }
 
   if (command === 'jail') {
@@ -5421,155 +4754,6 @@ client.on('messageCreate', async message => {
   }
 
   if (command === 'whitelist') return message.reply('whitelist is slash-command only — use `/whitelist` instead');
-
-  // ── bleed-src prefix commands ─────────────────────────────────────────────────
-
-  if (command === 'autorole') {
-    const sub = args[0]?.toLowerCase();
-    const autoroleData = loadAutorole();
-    if (!message.guild) return;
-    if (sub === 'set') {
-      const role = message.mentions.roles.first();
-      if (!role) return message.reply('mention a role to set as autorole');
-      if (!autoroleData[message.guild.id]) autoroleData[message.guild.id] = {};
-      autoroleData[message.guild.id].roleId = role.id;
-      saveAutorole(autoroleData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Autorole Set')
-        .addFields({ name: 'role', value: `${role}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
-    }
-    if (sub === 'disable') {
-      if (autoroleData[message.guild.id]) delete autoroleData[message.guild.id].roleId;
-      saveAutorole(autoroleData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Autorole Disabled').setTimestamp()] });
-    }
-    if (sub === 'status') {
-      const roleId = autoroleData[message.guild.id]?.roleId;
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Autorole Status')
-        .addFields({ name: 'status', value: roleId ? 'enabled' : 'disabled', inline: true },
-          roleId ? { name: 'role', value: `<@&${roleId}>`, inline: true } : { name: 'role', value: 'not set', inline: true }
-        ).setTimestamp()] });
-    }
-    return message.reply(`usage: \`${prefix}autorole [set @role / disable / status]\``);
-  }
-
-  if (command === 'welcome') {
-    if (!message.guild) return;
-    const sub = args[0]?.toLowerCase();
-    const welcomeData = loadWelcome();
-    if (!welcomeData[message.guild.id]) welcomeData[message.guild.id] = {};
-    if (sub === 'channel' || sub === 'setchannel') {
-      const ch = message.mentions.channels.first();
-      if (!ch?.isTextBased()) return message.reply('mention a text channel');
-      welcomeData[message.guild.id].channelId = ch.id;
-      saveWelcome(welcomeData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Channel Set')
-        .addFields({ name: 'channel', value: `${ch}`, inline: true }).setTimestamp()] });
-    }
-    if (sub === 'message' || sub === 'setmessage') {
-      const msg = args.slice(1).join(' ');
-      if (!msg) return message.reply('give a message (use {user}, {guild}, {membercount})');
-      welcomeData[message.guild.id].message = msg;
-      saveWelcome(welcomeData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Message Set')
-        .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}` `{membercount}`' }).setTimestamp()] });
-    }
-    if (sub === 'disable') {
-      delete welcomeData[message.guild.id];
-      saveWelcome(welcomeData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Messages Disabled').setTimestamp()] });
-    }
-    if (sub === 'status') {
-      const gw = welcomeData[message.guild.id];
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Welcome Status')
-        .addFields(
-          { name: 'channel', value: gw?.channelId ? `<#${gw.channelId}>` : 'not set', inline: true },
-          { name: 'message', value: gw?.message || 'not set' }
-        ).setTimestamp()] });
-    }
-    return message.reply(`usage: \`${prefix}welcome [channel #ch / message [text] / disable / status]\``);
-  }
-
-  if (command === 'antiinvite') {
-    if (!message.guild) return;
-    const sub = args[0]?.toLowerCase();
-    const aiData = loadAntiinvite();
-    if (sub === 'enable' || sub === 'on') {
-      if (!aiData[message.guild.id]) aiData[message.guild.id] = {};
-      aiData[message.guild.id].enabled = true;
-      saveAntiinvite(aiData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Anti-Invite Enabled')
-        .setDescription('Discord invite links will now be auto-deleted').setTimestamp()] });
-    }
-    if (sub === 'disable' || sub === 'off') {
-      if (aiData[message.guild.id]) aiData[message.guild.id].enabled = false;
-      saveAntiinvite(aiData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Anti-Invite Disabled').setTimestamp()] });
-    }
-    const enabled = aiData[message.guild.id]?.enabled ?? false;
-    return message.reply(`anti-invite is currently **${enabled ? 'enabled' : 'disabled'}** — use \`${prefix}antiinvite enable/disable\``);
-  }
-
-  if (command === 'altdentifier' || command === 'ad') {
-    if (!message.guild) return;
-    const sub = args[0]?.toLowerCase();
-    const adData = loadAltdentifier();
-    if (sub === 'enable' || sub === 'on') {
-      if (!adData[message.guild.id]) adData[message.guild.id] = {};
-      adData[message.guild.id].enabled = true;
-      saveAltdentifier(adData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Altdentifier Enabled')
-        .setDescription('Accounts younger than 14 days will be kicked on join').setTimestamp()] });
-    }
-    if (sub === 'disable' || sub === 'off') {
-      if (adData[message.guild.id]) adData[message.guild.id].enabled = false;
-      saveAltdentifier(adData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Altdentifier Disabled').setTimestamp()] });
-    }
-    const enabled = adData[message.guild.id]?.enabled ?? false;
-    return message.reply(`altdentifier is currently **${enabled ? 'enabled' : 'disabled'}** — use \`${prefix}altdentifier enable/disable\``);
-  }
-
-  if (command === 'joindm') {
-    if (!message.guild) return;
-    const sub = args[0]?.toLowerCase();
-    const jdData = loadJoindm();
-    if (!jdData[message.guild.id]) jdData[message.guild.id] = {};
-    if (sub === 'set' || sub === 'setmessage') {
-      const msg = args.slice(1).join(' ');
-      if (!msg) return message.reply('give a message (use {user}, {guild})');
-      jdData[message.guild.id].message = msg;
-      jdData[message.guild.id].enabled = true;
-      saveJoindm(jdData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Join DM Set')
-        .addFields({ name: 'message', value: msg }, { name: 'variables', value: '`{user}` `{guild}`' }).setTimestamp()] });
-    }
-    if (sub === 'disable' || sub === 'off') {
-      jdData[message.guild.id].enabled = false;
-      saveJoindm(jdData);
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Join DM Disabled').setTimestamp()] });
-    }
-    if (sub === 'status') {
-      const gd = jdData[message.guild.id];
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Join DM Status')
-        .addFields(
-          { name: 'status', value: gd?.enabled ? 'enabled' : 'disabled', inline: true },
-          { name: 'message', value: gd?.message || 'not set' }
-        ).setTimestamp()] });
-    }
-    return message.reply(`usage: \`${prefix}joindm [set [message] / disable / status]\``);
-  }
-
-  if (command === 'setlogs') {
-    if (!message.guild) return;
-    const ch = message.mentions.channels.first();
-    if (!ch?.isTextBased()) return message.reply('mention a text channel for logs');
-    const logsData = loadLogs();
-    if (!logsData[message.guild.id]) logsData[message.guild.id] = {};
-    logsData[message.guild.id].channelId = ch.id;
-    saveLogs(logsData);
-    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Logs Channel Set')
-      .addFields({ name: 'channel', value: `${ch}`, inline: true }, { name: 'set by', value: message.author.tag, inline: true }).setTimestamp()] });
-  }
 
   // ── warn system ───────────────────────────────────────────────────────────────
   if (command === 'warn') {
@@ -5736,48 +4920,6 @@ client.on('messageCreate', async message => {
     } catch { return message.reply('missing **Manage Guild** permission to fetch invites'); }
   }
 
-  if (command === 'autoresponder' || command === 'ar') {
-    if (!message.guild) return;
-    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageGuild))
-      return message.reply('you need **Manage Server**');
-    const sub = args[0]?.toLowerCase();
-    const arData = loadAutoresponder();
-    if (!arData[message.guild.id]) arData[message.guild.id] = [];
-
-    if (sub === 'add') {
-      const rest = args.slice(1).join(' ');
-      const [trigger, ...respParts] = rest.split('|');
-      const response = respParts.join('|').trim();
-      if (!trigger?.trim() || !response)
-        return message.reply(`usage: \`${prefix}ar add trigger | response\``);
-      arData[message.guild.id].push({ trigger: trigger.trim(), response });
-      saveAutoresponder(arData);
-      return message.reply({ embeds: [successEmbed('Autoresponder Added')
-        .addFields({ name: 'trigger', value: `\`${trigger.trim()}\`` }, { name: 'response', value: response })] });
-    }
-
-    if (sub === 'remove') {
-      const trigger = args.slice(1).join(' ');
-      if (!trigger) return message.reply(`usage: \`${prefix}ar remove trigger\``);
-      const before = arData[message.guild.id].length;
-      arData[message.guild.id] = arData[message.guild.id].filter(r => r.trigger.toLowerCase() !== trigger.toLowerCase());
-      if (arData[message.guild.id].length === before) return message.reply(`no autoresponder with that trigger`);
-      saveAutoresponder(arData);
-      return message.reply({ embeds: [successEmbed('Autoresponder Removed')
-        .addFields({ name: 'trigger removed', value: `\`${trigger}\`` })] });
-    }
-
-    if (sub === 'list') {
-      const list = arData[message.guild.id];
-      if (!list?.length) return message.reply({ embeds: [infoEmbed('Autoresponders')
-        .setDescription(`none set — use \`${prefix}ar add trigger | response\``)] });
-      const lines = list.map((r, i) => `**${i + 1}.** \`${r.trigger}\` → ${r.response}`).join('\n');
-      return message.reply({ embeds: [infoEmbed('Autoresponders').setDescription(lines)] });
-    }
-
-    return message.reply(`usage: \`${prefix}ar [add trigger | response / remove trigger / list]\``);
-  }
-
   // ── .purge ────────────────────────────────────────────────────────────────────
   if (command === 'purge') {
     if (!message.guild) return;
@@ -5933,76 +5075,6 @@ client.on('messageCreate', async message => {
       .setTimestamp()] });
   }
 
-  // ── .vanityset ────────────────────────────────────────────────────────────────
-  if (command === 'vanityset') {
-    if (!message.guild) return;
-    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageGuild))
-      return message.reply('you need **Manage Server** to use this');
-    const action    = args[0]?.toLowerCase();
-    const picRoleId = message.mentions.roles?.first()?.id ?? null;
-    const vData     = loadVanity();
-    if (!vData[message.guild.id]) vData[message.guild.id] = {};
-    const gv = vData[message.guild.id];
-
-    if (action === 'set') {
-      let vanityResult = null;
-      try {
-        const existing = await message.guild.fetchVanityData();
-        if (existing?.code) {
-          vanityResult = existing.code;
-        } else {
-          const vanityCode = message.author.username.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'bot';
-          await message.guild.setVanityCode(vanityCode);
-          vanityResult = vanityCode;
-        }
-      } catch {}
-      gv.vanityCode = vanityResult;
-      gv.setBy = message.author.id;
-      if (picRoleId) gv.picRoleId = picRoleId;
-      saveVanity(vData);
-      const fields = [{ name: 'set by', value: `<@${message.author.id}>`, inline: true }];
-      if (vanityResult) fields.unshift({ name: 'vanity', value: `discord.gg/${vanityResult}`, inline: true });
-      else fields.unshift({ name: 'vanity', value: 'could not set (server needs vanity URL feature)', inline: true });
-      if (picRoleId) fields.push({ name: 'pic role', value: `<@&${picRoleId}>`, inline: true });
-      return message.reply({ embeds: [vanityEmbed('Vanity Set').addFields(...fields)] });
-    }
-    if (action === 'disable') {
-      delete vData[message.guild.id];
-      saveVanity(vData);
-      return message.reply({ embeds: [errorEmbed('Vanity System Disabled').setDescription('fraud pic perm tracking is now off for this server')] });
-    }
-    if (action === 'status') {
-      return message.reply({ embeds: [vanityEmbed('Vanity Status')
-        .addFields(
-          { name: 'vanity',   value: gv.vanityCode ? `discord.gg/${gv.vanityCode}` : 'not set', inline: true },
-          { name: 'pic role', value: gv.picRoleId ? `<@&${gv.picRoleId}>` : 'not set',         inline: true },
-          { name: 'set by',   value: gv.setBy ? `<@${gv.setBy}>` : 'unknown',                  inline: true }
-        )] });
-    }
-    if (action === 'syncfraud') {
-      const picRId   = gv.picRoleId;
-      const vanityTag = gv.vanityCode ? `/${gv.vanityCode}` : null;
-      if (!picRId)    return message.reply('set a pic role first with `.vanityset set @role`');
-      if (!vanityTag) return message.reply('set a vanity first with `.vanityset set`');
-      const status = await message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('syncing vanity roles...')] });
-      let granted = 0, revoked = 0;
-      for (const [, member] of message.guild.members.cache) {
-        if (member.user.bot) continue;
-        const isRepping = member.presence?.activities?.some(a => a.type === 4 && typeof a.state === 'string' && a.state.includes(vanityTag)) ?? false;
-        const hasRole   = member.roles.cache.has(picRId);
-        if (isRepping && !hasRole)  { try { await member.roles.add(picRId);    granted++; } catch {} }
-        if (!isRepping && hasRole)  { try { await member.roles.remove(picRId); revoked++; } catch {} }
-      }
-      return status.edit({ embeds: [successEmbed('Vanity Sync Complete')
-        .addFields(
-          { name: 'vanity',  value: vanityTag, inline: true },
-          { name: 'granted', value: `${granted}`, inline: true },
-          { name: 'revoked', value: `${revoked}`, inline: true }
-        )] });
-    }
-    return message.reply(`usage: \`${prefix}vanityset <set|disable|status|syncfraud> [@picrole]\``);
-  }
-
   // ── .role / .r (WL managers only) ────────────────────────────────────────────
   if (command === 'role' || command === 'r') {
     if (!message.guild) return;
@@ -6138,53 +5210,20 @@ client.on('messageCreate', async message => {
   }
 
   // ── .id ───────────────────────────────────────────────────────────────────────
-  // Usage: .id <roblox username>
-  // Shows the player's current game server join link if they are in a game.
+  // aight this command changes the whole group id and link - big moves only no cap
   if (command === 'id') {
-    const input = args[0];
-    if (!input) return message.reply(`usage: \`${prefix}id <roblox username>\``);
+    if (!isWhitelisted(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setDescription("nah bro u aint whitelisted for this one 💀")] });
+    const newGroupId = args[0];
+    if (!newGroupId || isNaN(newGroupId)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`yo use it like this: \`${prefix}id <group id>\` — gotta be a number fr`)] });
     try {
-      // Resolve username → userId
-      const lookupRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ usernames: [input], excludeBannedUsers: false })
-      })).json();
-      const robloxUser = lookupRes.data?.[0];
-      if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a Roblox user named \`${input}\``)] });
-
-      // Check presence
-      const cookie = process.env.ROBLOX_COOKIE;
-      const headers = { 'Content-Type': 'application/json' };
-      if (cookie) headers['Cookie'] = `.ROBLOSECURITY=${cookie}`;
-      const presData = await (await fetch('https://presence.roblox.com/v1/presence/users', {
-        method: 'POST', headers, body: JSON.stringify({ userIds: [robloxUser.id] })
-      })).json();
-      const p = presData.userPresences?.[0];
-
-      const profileUrl = `https://www.roblox.com/users/${robloxUser.id}/profile`;
-      const avatarRes = await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${robloxUser.id}&size=150x150&format=Png&isCircular=false`)).json().catch(() => ({ data: [] }));
-      const avatarUrl = avatarRes?.data?.[0]?.imageUrl;
-
-      const embed = baseEmbed()
-        .setColor(0x2C2F33)
-        .setTitle(`${robloxUser.displayName} (@${robloxUser.name})`)
-        .setURL(profileUrl)
-        .setThumbnail(avatarUrl ?? null);
-
-      if (p?.userPresenceType === 2 && p.placeId && p.gameId) {
-        const joinLink = `https://www.roblox.com/games/start?placeId=${p.placeId}&gameInstanceId=${p.gameId}`;
-        embed.setDescription(`**currently in a game**\n\`\`\`${joinLink}\`\`\``);
-        const joinBtn = new ButtonBuilder().setLabel('JOIN SERVER').setStyle(ButtonStyle.Link).setURL(joinLink);
-        return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(joinBtn)] });
-      } else if (p?.userPresenceType === 1) {
-        embed.setDescription('online on Roblox but not in a game');
-      } else {
-        embed.setDescription('not currently online or in a game');
-      }
-      return message.reply({ embeds: [embed] });
+      const cfgPath = path.join(__dirname, 'config.json');
+      const cfg = loadJSON(cfgPath);
+      cfg.groupId = newGroupId;
+      cfg.groupLink = `https://www.roblox.com/communities/${newGroupId}/about`;
+      fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+      return message.reply({ embeds: [baseEmbed().setColor(0x57F287).setDescription(`bet, group id changed to \`${newGroupId}\` no cap 🔥\nnew link: ${cfg.groupLink}`)] });
     } catch (err) {
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`failed to look up \`${input}\` — ${err.message}`)] });
+      return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setDescription(`bruh something went wrong saving that — ${err.message}`)] });
     }
   }
 
