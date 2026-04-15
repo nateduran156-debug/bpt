@@ -1105,15 +1105,21 @@ function buildGcEmbed(username, groups, avatarUrl, page) {
   return embed;
 }
 
-function buildGcNotInGroupEmbed(displayName, flaggedGroups) {
-  const flagged = Array.isArray(flaggedGroups) ? flaggedGroups : loadFlaggedGroups();
+function buildFlaggedSection(userGroupIds) {
+  const allFlagged = loadFlaggedGroups();
+  const matched = allFlagged.filter(g => userGroupIds.has(String(g.id)));
+  return matched;
+}
+
+function buildGcNotInGroupEmbed(displayName, userGroupIds) {
   let desc = `**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.\n\n> **Group ID:** \`${getGroupId()}\`\n> **Link:** [Click to Join](${getGroupLink()})`;
-  if (flagged.length > 0) {
-    const lines = flagged.map(g => {
+  const matchedFlagged = buildFlaggedSection(userGroupIds);
+  if (matchedFlagged.length > 0) {
+    const lines = matchedFlagged.map(g => {
       const label = g.name ? `**[${g.name}](https://www.roblox.com/communities/${g.id}/about)**` : `**[Group ${g.id}](https://www.roblox.com/communities/${g.id}/about)**`;
       return `⚠️ ${label} \`${g.id}\``;
     });
-    desc += `\n\n**🚩 Flagged Groups (${flagged.length}):**\n${lines.join('\n')}`;
+    desc += `\n\n**🚩 Flagged Groups (${matchedFlagged.length}):**\n${lines.join('\n')}`;
   }
   return new EmbedBuilder()
     .setColor(0x2C2F33)
@@ -1123,11 +1129,20 @@ function buildGcNotInGroupEmbed(displayName, flaggedGroups) {
     .setTimestamp()
 }
 
-function buildGcInGroupEmbed(displayName) {
+function buildGcInGroupEmbed(displayName, userGroupIds) {
+  let desc = `**${displayName}** is in the group and ready to be verified.\n\n> **Group ID:** \`${getGroupId()}\`\n> **Link:** [View Group](${getGroupLink()})`;
+  const matchedFlagged = buildFlaggedSection(userGroupIds);
+  if (matchedFlagged.length > 0) {
+    const lines = matchedFlagged.map(g => {
+      const label = g.name ? `**[${g.name}](https://www.roblox.com/communities/${g.id}/about)**` : `**[Group ${g.id}](https://www.roblox.com/communities/${g.id}/about)**`;
+      return `⚠️ ${label} \`${g.id}\``;
+    });
+    desc += `\n\n**🚩 Flagged Groups (${matchedFlagged.length}):**\n${lines.join('\n')}`;
+  }
   return new EmbedBuilder()
     .setColor(0x2C2F33)
     .setTitle('✅  In Group')
-    .setDescription(`**${displayName}** is in the group and ready to be verified.\n\n> **Group ID:** \`${getGroupId()}\`\n> **Link:** [View Group](${getGroupLink()})`)
+    .setDescription(desc)
     .setFooter({ text: `${getBotName()} • ${getBotName()}`, iconURL: getLogoUrl() })
     .setTimestamp()
 }
@@ -2066,7 +2081,7 @@ client.on('interactionCreate', async interaction => {
     const username = interaction.options.getString('username');
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return interaction.editReply("couldn't find that user");
+      if (!userBasic) return interaction.editReply("could not find that user");
       const userId = userBasic.id;
       const [user, avatarRes, friendsRes, pastNamesRes, groupsRes] = await Promise.all([
         fetch(`https://users.roblox.com/v1/users/${userId}`).then(r => r.json()),
@@ -2109,7 +2124,7 @@ client.on('interactionCreate', async interaction => {
     const username = interaction.options.getString('username');
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return interaction.editReply("couldn't find that user")
+      if (!userBasic) return interaction.editReply("could not find that user")
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
       const displayName = userBasic.displayName || userBasic.name;
@@ -2118,14 +2133,15 @@ client.on('interactionCreate', async interaction => {
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
       setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
+      const userGroupIds = new Set(groups.map(g => String(g.group.id)));
       if (!inFraidGroup) {
         return interaction.editReply({
-          embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName)],
+          embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName, userGroupIds)],
           components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
         });
       }
       return interaction.editReply({
-        embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcInGroupEmbed(displayName)],
+        embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcInGroupEmbed(displayName, userGroupIds)],
         components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
       });
     } catch { return interaction.editReply("couldn't load their groups, try again") }
@@ -2140,13 +2156,13 @@ client.on('interactionCreate', async interaction => {
     const afk = loadAfk();
     afk[interaction.user.id] = { reason, since: Date.now() };
     saveAfk(afk);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`you're now afk${reason ? `: ${reason}` : ''}`)], ephemeral: true })
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`you are now AFK${reason ? `: ${reason}` : ''}`)], ephemeral: true })
   }
 
   if (commandName === 'snipe') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const sniped = snipeCache.get(channel.id);
-    if (!sniped) return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('nothing to snipe rn')] });
+    if (!sniped) return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('nothing to snipe')] });
     return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('sniped')
       .setDescription(sniped.content)
       .addFields({ name: 'author', value: sniped.author, inline: true }, { name: 'deleted', value: `<t:${Math.floor(sniped.deletedAt / 1000)}:R>`, inline: true })
@@ -2176,7 +2192,7 @@ client.on('interactionCreate', async interaction => {
   if (!loadWhitelist().includes(interaction.user.id)) {
     const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'avatar', 'banner', 'serverinfo', 'userinfo', 'grouproles', 'convert', 'rid']);
     if (!openCommands.has(commandName)) {
-      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you're not whitelisted for that")], ephemeral: true });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you are not whitelisted for that")], ephemeral: true });
     }
   }
 
@@ -2184,7 +2200,7 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getUser('user');
     const rawId  = interaction.options.getString('id');
-    if (!target && !rawId) return interaction.reply({ content: "give a user mention or their id", ephemeral: true });
+    if (!target && !rawId) return interaction.reply({ content: "provide a user mention or their ID", ephemeral: true });
     const userId = target?.id ?? rawId;
     const reason = interaction.options.getString('reason') || 'no reason';
     if (!/^\d{17,19}$/.test(userId)) return interaction.reply({ content: "that doesn't look like a real id", ephemeral: true });
@@ -2221,7 +2237,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'ban') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     if (!target.bannable) return interaction.reply({ content: "can't ban them, they might be above me", ephemeral: true });
     const reason = interaction.options.getString('reason') || 'no reason';
     await target.ban({ reason, deleteMessageSeconds: 86400 });
@@ -2232,7 +2248,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'kick') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     if (!target.kickable) return interaction.reply({ content: "can't kick them, they might be above me", ephemeral: true });
     const reason = interaction.options.getString('reason') || 'no reason';
     try { await target.kick(reason); } catch { return interaction.reply({ content: "couldn't kick them", ephemeral: true }); }
@@ -2259,7 +2275,7 @@ client.on('interactionCreate', async interaction => {
     const target  = interaction.options.getMember('user');
     const minutes = interaction.options.getInteger('minutes') || 5;
     const reason  = interaction.options.getString('reason') || 'no reason';
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try { await target.timeout(minutes * 60 * 1000, reason); } catch { return interaction.reply({ content: "couldn't time them out", ephemeral: true }); }
     return interaction.reply({ embeds: [baseEmbed().setTitle('timed out').setColor(0x2C2F33).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been timed out for ${minutes}m`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'duration', value: `${minutes}m`, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
@@ -2268,7 +2284,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'untimeout') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try { await target.timeout(null); } catch { return interaction.reply({ content: "couldn't remove their timeout", ephemeral: true }); }
     return interaction.reply({ embeds: [baseEmbed().setTitle('timeout removed').setColor(0x2C2F33).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
@@ -2278,7 +2294,7 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
     const reason = interaction.options.getString('reason') || 'no reason';
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try { await target.timeout(28 * 24 * 60 * 60 * 1000, reason); } catch { return interaction.reply({ content: "couldn't mute them", ephemeral: true }); }
     return interaction.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0x2C2F33).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
@@ -2287,7 +2303,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'unmute') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try { await target.timeout(null); } catch { return interaction.reply({ content: "couldn't unmute them", ephemeral: true }); }
     return interaction.reply({ embeds: [baseEmbed().setTitle('unmuted').setColor(0x2C2F33).setThumbnail(target.user.displayAvatarURL())
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }).setTimestamp()] });
@@ -2295,7 +2311,7 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'hush') {
     const target = interaction.options.getUser('user');
-    if (!target) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that user", ephemeral: true });
     const hushedData = loadHushed();
     if (hushedData[target.id]) return interaction.reply({ content: `**${target.tag}** is already hushed`, ephemeral: true });
     hushedData[target.id] = { hushedBy: interaction.user.id, at: Date.now() };
@@ -2306,7 +2322,7 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'unhush') {
     const target = interaction.options.getUser('user');
-    if (!target) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that user", ephemeral: true });
     const hushedData = loadHushed();
     if (!hushedData[target.id]) return interaction.reply({ content: `**${target.tag}** isn't hushed`, ephemeral: true });
     delete hushedData[target.id];
@@ -2345,7 +2361,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'annoy') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getUser('user');
-    if (!target) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that user", ephemeral: true });
     const annoyData = loadAnnoy();
     if (!annoyData[guild.id]) annoyData[guild.id] = [];
     if (annoyData[guild.id].includes(target.id)) return interaction.reply({ content: `already annoying **${target.tag}**`, ephemeral: true });
@@ -2359,7 +2375,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'unannoy') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getUser('user');
-    if (!target) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that user", ephemeral: true });
     const annoyData = loadAnnoy();
     if (!annoyData[guild.id]?.includes(target.id)) return interaction.reply({ content: `not annoying **${target.tag}**`, ephemeral: true });
     annoyData[guild.id] = annoyData[guild.id].filter(id => id !== target.id);
@@ -2438,7 +2454,7 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
     const reason = interaction.options.getString('reason') || 'no reason';
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try { return interaction.reply({ embeds: [await jailMember(guild, target, reason, interaction.user.tag)] }); }
     catch (e) { return interaction.reply({ content: `jail failed — ${e.message}`, ephemeral: true }); }
   }
@@ -2446,7 +2462,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'unjail') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const target = interaction.options.getMember('user');
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try { return interaction.reply({ embeds: [await unjailMember(guild, target, interaction.user.tag)] }); }
     catch (e) { return interaction.reply({ content: `unjail failed — ${e.message}`, ephemeral: true }); }
   }
@@ -2454,10 +2470,10 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'prefix') {
     const newPrefix = interaction.options.getString('new');
     const p = getPrefix();
-    if (!newPrefix) return interaction.reply({ content: `prefix is \`${p}\` rn`, ephemeral: true });
+    if (!newPrefix) return interaction.reply({ content: `current prefix is \`${p}\``, ephemeral: true });
     if (newPrefix.length > 5) return interaction.reply({ content: "prefix can't be more than 5 chars", ephemeral: true });
     const cfg = loadConfig(); cfg.prefix = newPrefix; saveConfig(cfg);
-    return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`prefix is \`${newPrefix}\` now`)] });
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`prefix updated to \`${newPrefix}\``)] });
   }
 
   if (commandName === 'status') {
@@ -2481,7 +2497,7 @@ client.on('interactionCreate', async interaction => {
     if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "ur not a whitelist manager", ephemeral: true });
     if (sub === 'add') {
       const target = interaction.options.getUser('user');
-      if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
+      if (!target) return interaction.reply({ content: "provide a user", ephemeral: true })
       if (mgrs.includes(target.id)) return interaction.reply({ content: `**${target.tag}** is already a whitelist manager`, ephemeral: true });
       mgrs.push(target.id); saveWlManagers(mgrs);
       return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist manager added').setColor(0x2C2F33).setThumbnail(target.displayAvatarURL())
@@ -2489,7 +2505,7 @@ client.on('interactionCreate', async interaction => {
     }
     if (sub === 'remove') {
       const target = interaction.options.getUser('user');
-      if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
+      if (!target) return interaction.reply({ content: "provide a user", ephemeral: true })
       if (!mgrs.includes(target.id)) return interaction.reply({ content: `**${target.tag}** isn't a whitelist manager`, ephemeral: true });
       saveWlManagers(mgrs.filter(id => id !== target.id));
       return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist manager removed').setColor(0x2C2F33).setThumbnail(target.displayAvatarURL())
@@ -2503,7 +2519,7 @@ client.on('interactionCreate', async interaction => {
     const wl  = loadWhitelist();
     if (sub === 'add') {
       const target = interaction.options.getUser('user');
-      if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
+      if (!target) return interaction.reply({ content: "provide a user", ephemeral: true })
       if (wl.includes(target.id)) return interaction.reply({ content: `**${target.tag}** is already on the whitelist`, ephemeral: true });
       wl.push(target.id); saveWhitelist(wl);
       return interaction.reply({ embeds: [baseEmbed().setTitle('whitelisted').setColor(0x2C2F33).setThumbnail(target.displayAvatarURL())
@@ -2511,14 +2527,14 @@ client.on('interactionCreate', async interaction => {
     }
     if (sub === 'remove') {
       const target = interaction.options.getUser('user');
-      if (!target) return interaction.reply({ content: "give a user", ephemeral: true })
+      if (!target) return interaction.reply({ content: "provide a user", ephemeral: true })
       if (!wl.includes(target.id)) return interaction.reply({ content: `**${target.tag}** isn't on the whitelist`, ephemeral: true });
       saveWhitelist(wl.filter(id => id !== target.id));
       return interaction.reply({ embeds: [baseEmbed().setTitle('removed from whitelist').setColor(0x2C2F33).setThumbnail(target.displayAvatarURL())
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'removed by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'list') {
-      if (!wl.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x2C2F33).setDescription('nobody on the whitelist rn')] });
+      if (!wl.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x2C2F33).setDescription('the whitelist is empty')] });
       return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist').setColor(0x2C2F33).setDescription(wl.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')).setTimestamp()] });
     }
   }
@@ -2627,7 +2643,7 @@ client.on('interactionCreate', async interaction => {
     const value = interaction.options.getString('value');
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return interaction.editReply("couldn't find that user");
+      if (!userBasic) return interaction.editReply("could not find that user");
       const groupId = process.env.ROBLOX_GROUP_ID;
       if (action === 'check') {
         const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userBasic.id}/groups/roles`)).json()).data ?? [];
@@ -2640,7 +2656,7 @@ client.on('interactionCreate', async interaction => {
           ).setTimestamp()] });
       }
       if (action === 'rank') {
-        if (!value) return interaction.editReply("give a role id to rank them to");
+        if (!value) return interaction.editReply("provide a role ID to rank to");
         const result = await rankRobloxUser(username, value);
         return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Ranked')
           .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'role id', value: value, inline: true }).setTimestamp()] });
@@ -2682,9 +2698,9 @@ client.on('interactionCreate', async interaction => {
     const isAllowed = guildVwl.users.includes(interaction.user.id) ||
       member.roles.cache.some(r => guildVwl.roles.includes(r.id)) ||
       member.permissions.has(PermissionsBitField.Flags.ManageGuild);
-    if (!isAllowed) return interaction.reply({ content: "you're not allowed to verify users", ephemeral: true });
+    if (!isAllowed) return interaction.reply({ content: "you are not allowed to verify users", ephemeral: true });
     const target = interaction.options.getMember('user');
-    if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try {
       await target.roles.add(guildVc.roleId, `verified by ${interaction.user.tag}`);
       return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Verified')
@@ -2725,7 +2741,7 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
     const role = interaction.options.getRole('role');
     const target = interaction.options.getUser('user');
-    if (!role && !target) return interaction.reply({ content: "give a role or user to remove", ephemeral: true });
+    if (!role && !target) return interaction.reply({ content: "provide a role or user to remove", ephemeral: true });
     const vwl = loadVerifyWhitelist();
     if (!vwl[guild.id]) return interaction.reply({ content: "nothing is whitelisted", ephemeral: true });
     const lines = [];
@@ -2754,7 +2770,7 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: 'you need **Moderate Members** to warn', ephemeral: true });
     const target = interaction.options.getMember('user') ?? interaction.options.getUser('user');
     const reason = interaction.options.getString('reason') ?? 'no reason given';
-    if (!target) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
+    if (!target) return interaction.reply({ content: "could not find that user", ephemeral: true });
     const userId = target.id ?? target.user?.id;
     const userTag = target.user?.tag ?? target.tag ?? 'Unknown';
     const warnsData = loadWarns();
@@ -2966,7 +2982,7 @@ client.on('interactionCreate', async interaction => {
     const username = interaction.options.getString('username');
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return interaction.reply({ content: "couldn't find that user", ephemeral: true });
+      if (!userBasic) return interaction.reply({ content: "could not find that user", ephemeral: true });
       return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roblox ID Lookup')
         .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
         .setFooter({ text: 'roblox user id' }).setTimestamp()] });
@@ -3010,7 +3026,7 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getMember('user');
     if (!target) return interaction.reply({ content: 'that user is not in this server', ephemeral: true });
     const myVc = interaction.member?.voice?.channel;
-    if (!myVc) return interaction.reply({ content: "you're not in a voice channel", ephemeral: true });
+    if (!myVc) return interaction.reply({ content: "you are not in a voice channel", ephemeral: true });
     try {
       await target.voice.setChannel(myVc);
       return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`dragged **${target.displayName}** to **${myVc.name}**`)] });
@@ -3022,7 +3038,7 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
     const sub = interaction.options.getString('action');
     if (sub === 'setup') {
-      if (!loadWhitelist().includes(interaction.user.id)) return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you're not whitelisted for this")], ephemeral: true });
+      if (!loadWhitelist().includes(interaction.user.id)) return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you are not whitelisted for this")], ephemeral: true });
       await interaction.deferReply();
       try {
         const category = await guild.channels.create({ name: 'Voice Master', type: ChannelType.GuildCategory });
@@ -3163,7 +3179,7 @@ client.on('interactionCreate', async interaction => {
 
     if (serverId) {
       const targetGuild = client.guilds.cache.get(serverId);
-      if (!targetGuild) return interaction.reply({ content: `i'm not in a server with id \`${serverId}\``, ephemeral: true });
+      if (!targetGuild) return interaction.reply({ content: `I am not in a server with ID \`${serverId}\``, ephemeral: true });
       await interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`leaving **${targetGuild.name}**...`)], ephemeral: true });
       try { await targetGuild.leave(); } catch (e) { return interaction.editReply({ content: `couldn't leave — ${e.message}` }); }
       return;
@@ -3308,7 +3324,7 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
     const targetMember = interaction.options.getMember('user');
     const roblox = interaction.options.getString('roblox') || 'unknown';
-    if (!targetMember) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+    if (!targetMember) return interaction.reply({ content: "could not find that member", ephemeral: true });
     const queueData = loadQueue();
     const queueChannelId = queueData[guild.id]?.channelId;
     const queueChannel = queueChannelId ? (guild.channels.cache.get(queueChannelId) ?? channel) : channel;
@@ -3468,7 +3484,7 @@ client.on('interactionCreate', async interaction => {
 
     let resolvedUser = targetUser;
     if (!resolvedUser) {
-      try { resolvedUser = await client.users.fetch(discordId); } catch { return interaction.reply({ content: "couldn't find that Discord user", ephemeral: true }); }
+      try { resolvedUser = await client.users.fetch(discordId); } catch { return interaction.reply({ content: "could not find that Discord user", ephemeral: true }); }
     }
 
     await interaction.deferReply();
@@ -3478,7 +3494,7 @@ client.on('interactionCreate', async interaction => {
         body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
       })).json();
       const robloxUser = res.data?.[0];
-      if (!robloxUser) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a Roblox user named \`${robloxInput}\``)] });
+      if (!robloxUser) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`could not find a Roblox user named \`${robloxInput}\``)] });
 
       const vData = loadVerify();
       if (!vData.verified) vData.verified = {};
@@ -3540,7 +3556,7 @@ client.on('interactionCreate', async interaction => {
       const cfg = loadConfig();
       if (!cfg.verifyRoleId) return interaction.reply({ content: 'no verify role set — use `/verify role set` first', ephemeral: true });
       const target = interaction.options.getMember('user');
-      if (!target) return interaction.reply({ content: "couldn't find that member", ephemeral: true });
+      if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
       const role = guild.roles.cache.get(cfg.verifyRoleId);
       if (!role) return interaction.reply({ content: "couldn't find the configured verify role — it may have been deleted", ephemeral: true });
       if (target.roles.cache.has(role.id)) return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`<@${target.id}> already has ${role}`)], ephemeral: true });
@@ -3625,7 +3641,7 @@ client.on('interactionCreate', async interaction => {
     const msg = await interaction.editReply({ embeds: [embed], files: [exportAttachment], components: [row] });
     const collector = msg.createMessageComponentCollector({ time: 120000 });
     collector.on('collect', async btn => {
-      if (btn.user.id !== interaction.user.id) return btn.reply({ content: 'this is not your command', ephemeral: true });
+      if (btn.user.id !== interaction.user.id) return btn.reply({ content: 'you did not run this command', ephemeral: true });
       if (btn.customId === 'rfile_next') page = Math.min(page + 1, pages.length - 1);
       else page = Math.max(page - 1, 0);
       const updEmbed = baseEmbed().setColor(0x2C2F33)
@@ -3656,7 +3672,7 @@ client.on('interactionCreate', async interaction => {
         body: JSON.stringify({ usernames: [inputUsername], excludeBannedUsers: false })
       })).json();
       const targetUser = userRes.data?.[0];
-      if (!targetUser) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a Roblox user named \`${inputUsername}\``)] });
+      if (!targetUser) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`could not find a Roblox user named \`${inputUsername}\``)] });
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`checking **${targetUser.name}**'s current game...`)] });
       const presRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3830,13 +3846,13 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'rid') {
     await interaction.deferReply();
     const input = interaction.options.getString('id');
-    if (!/^\d+$/.test(input)) return interaction.editReply({ content: 'give a numeric Roblox ID — e.g. `1`' });
+    if (!/^\d+$/.test(input)) return interaction.editReply({ content: 'provide a numeric Roblox ID — e.g. `1`' });
     try {
       const [user, avatarRes] = await Promise.all([
         fetch(`https://users.roblox.com/v1/users/${input}`).then(r => r.json()),
         fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${input}&size=420x420&format=Png&isCircular=false`).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
-      if (user.errors || !user.name) return interaction.editReply({ content: "couldn't find a Roblox user with that ID" });
+      if (user.errors || !user.name) return interaction.editReply({ content: "could not find a Roblox user with that ID" });
       const profileUrl = `https://www.roblox.com/users/${input}/profile`;
       const avatarUrl = avatarRes.data?.[0]?.imageUrl;
       const created = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -3969,7 +3985,7 @@ client.on('interactionCreate', async interaction => {
 
 // prefix command handler
 client.on('messageCreate', async message => {
-  // if message is partial (happens in dms) we gotta fetch the full thing first
+  // if message is partial (happens in dms) we need to fetch the full message first
   if (message.partial) {
     try { await message.fetch() } catch { return }
   }
@@ -4074,10 +4090,10 @@ client.on('messageCreate', async message => {
   // ── Open-to-everyone prefix commands ─────────────────────────────────────────
   if (command === 'roblox') {
     const username = args[0];
-    if (!username) return message.reply('give a roblox username');
+    if (!username) return message.reply('provide a Roblox username');
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return message.reply("couldn't find that user");
+      if (!userBasic) return message.reply("could not find that user");
       const userId = userBasic.id;
       const [user, avatarRes, friendsRes, pastNamesRes, groupsRes] = await Promise.all([
         fetch(`https://users.roblox.com/v1/users/${userId}`).then(r => r.json()),
@@ -4117,10 +4133,10 @@ client.on('messageCreate', async message => {
 
   if (command === 'gc') {
     const username = args[0];
-    if (!username) return message.reply('give a roblox username')
+    if (!username) return message.reply('provide a Roblox username')
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return message.reply("couldn't find that user")
+      if (!userBasic) return message.reply("could not find that user")
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
       const displayName = userBasic.displayName || userBasic.name;
@@ -4129,14 +4145,15 @@ client.on('messageCreate', async message => {
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
       gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
       setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
+      const userGroupIds = new Set(groups.map(g => String(g.group.id)));
       if (!inFraidGroup) {
         return message.reply({
-          embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName)],
+          embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName, userGroupIds)],
           components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
         });
       }
       return message.reply({
-        embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcInGroupEmbed(displayName)],
+        embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcInGroupEmbed(displayName, userGroupIds)],
         components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
       });
     } catch { return message.reply("couldn't load their groups, try again") }
@@ -4157,10 +4174,10 @@ client.on('messageCreate', async message => {
 
   if (command === 'convert') {
     const username = args[0];
-    if (!username) return message.reply('give a roblox username');
+    if (!username) return message.reply('provide a Roblox username');
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return message.reply("couldn't find that user");
+      if (!userBasic) return message.reply("could not find that user");
       return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roblox ID Lookup')
         .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
         .setFooter({ text: 'roblox user id' }).setTimestamp()] });
@@ -4170,7 +4187,7 @@ client.on('messageCreate', async message => {
   if (command === 'snipe') {
     if (!message.guild) return;
     const sniped = snipeCache.get(message.channel.id);
-    if (!sniped) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('nothing to snipe rn')] });
+    if (!sniped) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('nothing to snipe')] });
     return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('sniped')
       .setDescription(sniped.content)
       .addFields({ name: 'author', value: sniped.author, inline: true }, { name: 'deleted', value: `<t:${Math.floor(sniped.deletedAt / 1000)}:R>`, inline: true })
@@ -4183,7 +4200,7 @@ client.on('messageCreate', async message => {
     const target = message.mentions.members?.first();
     if (!target) return message.reply('mention a user to drag');
     const myVc = message.member?.voice?.channel;
-    if (!myVc) return message.reply("you're not in a voice channel");
+    if (!myVc) return message.reply("you are not in a voice channel");
     try { await target.voice.setChannel(myVc); return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`dragged **${target.displayName}** to **${myVc.name}**`)] }); }
     catch { return message.reply("couldn't drag them — they might not be in a vc"); }
   }
@@ -4192,7 +4209,7 @@ client.on('messageCreate', async message => {
     if (!message.guild) return;
     const sub = args[0]?.toLowerCase();
     if (sub === 'setup') {
-      if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you're not whitelisted for this")] });
+      if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you are not whitelisted for this")] });
       await message.reply('setting up voicemaster...');
       try {
         const category = await message.guild.channels.create({ name: 'Voice Master', type: ChannelType.GuildCategory });
@@ -4223,7 +4240,7 @@ client.on('messageCreate', async message => {
     if (sub === 'limit') {
       if (!isOwner) return message.reply("you don't own this channel");
       const n = parseInt(args[1], 10);
-      if (isNaN(n) || n < 0 || n > 99) return message.reply('give a number between 0 and 99 (0 means no limit)')
+      if (isNaN(n) || n < 0 || n > 99) return message.reply('provide a number between 0 and 99 (0 means no limit)')
       await vc.setUserLimit(n);
       return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`limit set to **${n === 0 ? 'no limit' : n}**`)] });
     }
@@ -4263,7 +4280,7 @@ client.on('messageCreate', async message => {
   if (!loadWhitelist().includes(message.author.id)) {
     const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'registeredlist', 'register']);
     if (!openPrefixCommands.has(command)) {
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you're not whitelisted for that")] });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Not Whitelisted').setDescription("you are not whitelisted for that")] });
     }
   }
 
@@ -4271,7 +4288,7 @@ client.on('messageCreate', async message => {
     if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers can use `.hb`')] });
     const target = message.mentions.users.first();
     const rawId  = args[0];
-    if (!target && !rawId) return message.reply("give a user mention or their id");
+    if (!target && !rawId) return message.reply("provide a user mention or their ID");
     const userId = target?.id ?? rawId;
     const reason = args.slice(1).join(' ') || 'no reason';
     if (!/^\d{17,19}$/.test(userId)) return message.reply("that doesn't look like a real id");
@@ -4561,10 +4578,10 @@ client.on('messageCreate', async message => {
 
   if (command === 'prefix') {
     const newPrefix = args[0];
-    if (!newPrefix) return message.reply(`prefix is \`${prefix}\` rn`);
+    if (!newPrefix) return message.reply(`current prefix is \`${prefix}\``);
     if (newPrefix.length > 5) return message.reply("prefix can't be more than 5 chars");
     const cfg = loadConfig(); cfg.prefix = newPrefix; saveConfig(cfg);
-    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`prefix is \`${newPrefix}\` now`)] });
+    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`prefix updated to \`${newPrefix}\``)] });
   }
 
   if (command === 'status') {
@@ -4583,7 +4600,7 @@ client.on('messageCreate', async message => {
     const afk = loadAfk();
     afk[message.author.id] = { reason, since: Date.now() };
     saveAfk(afk);
-    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`You're now AFK${reason ? `: ${reason}` : '.'}`)], allowedMentions: { repliedUser: false } });
+    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`You are now AFK${reason ? `: ${reason}` : '.'}`)], allowedMentions: { repliedUser: false } });
   }
 
   if (command === 'say') {
@@ -4663,7 +4680,7 @@ client.on('messageCreate', async message => {
     if (!targetUser) {
       const rawId = rawTarget.replace(/\D/g, '');
       if (!/^\d{17,19}$/.test(rawId)) return message.reply("that doesn't look like a valid user or role");
-      try { targetUser = await client.users.fetch(rawId); } catch { return message.reply("couldn't find that user"); }
+      try { targetUser = await client.users.fetch(rawId); } catch { return message.reply("could not find that user"); }
     }
     if (targetUser.bot) return message.reply("can't DM a bot");
     try {
@@ -4685,7 +4702,7 @@ client.on('messageCreate', async message => {
     if (!username || !action) return message.reply(`usage: \`${prefix}group [username] [check/rank/exile] [roleId for rank]\``);
     try {
       const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
-      if (!userBasic) return message.reply("couldn't find that user");
+      if (!userBasic) return message.reply("could not find that user");
       const groupId = process.env.ROBLOX_GROUP_ID;
       if (action === 'check') {
         const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userBasic.id}/groups/roles`)).json()).data ?? [];
@@ -4698,7 +4715,7 @@ client.on('messageCreate', async message => {
           ).setTimestamp()] });
       }
       if (action === 'rank') {
-        if (!value) return message.reply('give a role id to rank them to');
+        if (!value) return message.reply('provide a role ID to rank to');
         const result = await rankRobloxUser(username, value);
         return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Ranked')
           .addFields({ name: 'user', value: result.displayName, inline: true }, { name: 'role id', value: value, inline: true }).setTimestamp()] });
@@ -4918,7 +4935,7 @@ client.on('messageCreate', async message => {
   if (command === 'purge') {
     if (!message.guild) return;
     const amount = parseInt(args[0], 10);
-    if (isNaN(amount) || amount < 1 || amount > 100) return message.reply('give a number between 1 and 100');
+    if (isNaN(amount) || amount < 1 || amount > 100) return message.reply('provide a number between 1 and 100');
     try {
       const deleted = await message.channel.bulkDelete(amount, true);
       const confirm = await message.channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`deleted **${deleted.size}** messages`)] });
@@ -5173,13 +5190,13 @@ client.on('messageCreate', async message => {
   if (command === 'rid') {
     const input = args[0];
     if (!input) return message.reply(`usage: \`${getPrefix()}rid <roblox id>\``);
-    if (!/^\d+$/.test(input)) return message.reply('give a numeric Roblox ID — e.g. `.rid 1`');
+    if (!/^\d+$/.test(input)) return message.reply('provide a numeric Roblox ID — e.g. `.rid 1`');
     try {
       const [user, avatarRes] = await Promise.all([
         fetch(`https://users.roblox.com/v1/users/${input}`).then(r => r.json()),
         fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${input}&size=420x420&format=Png&isCircular=false`).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
-      if (user.errors || !user.name) return message.reply("couldn't find a Roblox user with that ID");
+      if (user.errors || !user.name) return message.reply("could not find a Roblox user with that ID");
       const profileUrl = `https://www.roblox.com/users/${input}/profile`;
       const avatarUrl = avatarRes.data?.[0]?.imageUrl;
       const created = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -5230,7 +5247,7 @@ client.on('messageCreate', async message => {
 
     if (serverId) {
       const targetGuild = client.guilds.cache.get(serverId);
-      if (!targetGuild) return message.reply(`i'm not in a server with id \`${serverId}\``);
+      if (!targetGuild) return message.reply(`I am not in a server with ID \`${serverId}\``);
       const reply = await message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`leaving **${targetGuild.name}**...`)] });
       try { await targetGuild.leave(); } catch (e) { return reply.edit(`couldn't leave — ${e.message}`); }
       return;
@@ -5486,7 +5503,7 @@ client.on('messageCreate', async message => {
     if (pages.length === 1) return;
     const collector = msg.createMessageComponentCollector({ time: 120000 });
     collector.on('collect', async btn => {
-      if (btn.user.id !== message.author.id) return btn.reply({ content: 'this is not your command', ephemeral: true });
+      if (btn.user.id !== message.author.id) return btn.reply({ content: 'you did not run this command', ephemeral: true });
       if (btn.customId === 'rfile_next') page = Math.min(page + 1, pages.length - 1);
       else page = Math.max(page - 1, 0);
       await btn.update({ embeds: [makeEmbed()], components: [makeRow()] });
@@ -5567,7 +5584,7 @@ client.on('messageCreate', async message => {
       })).json();
       const robloxUser = res.data?.[0];
       if (!robloxUser)
-        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a Roblox user named \`${robloxInput}\``)] });
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`could not find a Roblox user named \`${robloxInput}\``)] });
 
       const vData = loadVerify();
       if (!vData.verified) vData.verified = {};
@@ -5617,7 +5634,7 @@ client.on('messageCreate', async message => {
     const discordId = discordRaw.replace(/[<@!>]/g, '');
     if (!/^\d{17,20}$/.test(discordId)) return message.reply('provide a valid Discord user mention or ID as the second argument');
     let discordUser;
-    try { discordUser = await client.users.fetch(discordId); } catch { return message.reply("couldn't find that Discord user"); }
+    try { discordUser = await client.users.fetch(discordId); } catch { return message.reply("could not find that Discord user"); }
 
     try {
       const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
@@ -5625,7 +5642,7 @@ client.on('messageCreate', async message => {
         body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
       })).json();
       const robloxUser = res.data?.[0];
-      if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a Roblox user named \`${robloxInput}\``)] });
+      if (!robloxUser) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`could not find a Roblox user named \`${robloxInput}\``)] });
 
       const vData = loadVerify();
       if (!vData.verified) vData.verified = {};
@@ -5755,7 +5772,7 @@ client.on('messageCreate', async message => {
 
     const collector = reply.createMessageComponentCollector({ time: 5 * 60 * 1000 });
     collector.on('collect', async i => {
-      if (i.user.id !== message.author.id) return i.reply({ content: 'only the command user can navigate', ephemeral: true });
+      if (i.user.id !== message.author.id) return i.reply({ content: 'only the user who ran this command can navigate', ephemeral: true });
       const page = parseInt(i.customId.split('_')[1]);
       await i.update({ embeds: [buildPage(page)], components: [buildRow(page)] });
     });
@@ -6132,7 +6149,7 @@ client.on('messageCreate', async message => {
         body: JSON.stringify({ usernames: [inputUsername], excludeBannedUsers: false })
       })).json();
       const targetUser = userRes.data?.[0];
-      if (!targetUser) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a Roblox user named \`${inputUsername}\``)] });
+      if (!targetUser) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`could not find a Roblox user named \`${inputUsername}\``)] });
       await status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`checking **${targetUser.name}**'s current game...`)] });
       const presRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
