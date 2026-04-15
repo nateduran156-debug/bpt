@@ -968,99 +968,99 @@ async function unjailMember(guild, member, modTag) {
 // yo the help sections are organized hella clean - cali style fr fr
 const HELP_SECTIONS = [
   {
-    title: 'free commands (anyone can use these no cap)',
+    title: 'unwhitelisted',
     commands: [
-      '/roblox [username] — look up a roblox user',
-      '/avatar [@user] — peep someones pfp',
-      '/banner [@user] — check someones banner',
-      '/serverinfo — server stats n info',
-      '/register [robloxUsername] — link ya roblox account',
+      '{p}roblox [username] — look up a roblox user',
+      '{p}avatar [@user] — peep someones pfp',
+      '{p}banner [@user] — check someones banner',
+      '{p}serverinfo — server stats n info',
+      '{p}register [robloxUsername] — link ya roblox account',
     ]
   },
   {
     title: 'moderation (whitelist only)',
     commands: [
-      '/hb @user [reason] — hardban someone fr',
-      '/unhb [id] [reason] — remove a hardban',
-      '/ban @user [reason] — ban hammer time',
-      '/unban [id] [reason] — let em back in',
-      '/kick @user [reason] — boot someone out',
-      '/purge [amount] — delete msgs in bulk',
-      '/timeout @user [mins] [reason] — put em on timeout',
-      '/mute @user [reason] — mute em up',
-      '/unmute @user — unmute',
+      '{p}hb @user [reason] — hardban someone fr',
+      '{p}unhb [id] [reason] — remove a hardban',
+      '{p}ban @user [reason] — ban hammer time',
+      '{p}unban [id] [reason] — let em back in',
+      '{p}kick @user [reason] — boot someone out',
+      '{p}purge [amount] — delete msgs in bulk',
+      '{p}timeout @user [mins] [reason] — put em on timeout',
+      '{p}mute @user [reason] — mute em up',
+      '{p}unmute @user — unmute',
     ]
   },
   {
     title: 'moderation pt.2 (whitelist only)',
     commands: [
-      '/hush @user — auto-delete their msgs lowkey',
-      '/unhush @user — stop auto-deleting',
-      '/jail @user [reason] — throw em in jail',
-      '/unjail @user — free em',
-      '/lock — lock the channel',
-      '/unlock — unlock the channel',
-      '/nuke — nuke the whole channel sheesh',
+      '{p}hush @user — auto-delete their msgs lowkey',
+      '{p}unhush @user — stop auto-deleting',
+      '{p}jail @user [reason] — throw em in jail',
+      '{p}unjail @user — free em',
+      '{p}lock — lock the channel',
+      '{p}unlock — unlock the channel',
+      '{p}nuke — nuke the whole channel sheesh',
     ]
   },
   {
     title: 'warnings (whitelist only)',
     commands: [
-      '/warn @user [reason] — warn someone',
-      '/warnings @user — check someones warns',
-      '/clearwarns @user — clear all warns',
-      '/delwarn @user [#] — delete a specific warn',
+      '{p}warn @user [reason] — warn someone',
+      '{p}warnings @user — check someones warns',
+      '{p}clearwarns @user — clear all warns',
+      '{p}delwarn @user [#] — delete a specific warn',
     ]
   },
   {
     title: 'trolling (whitelist only)',
     commands: [
-      '/annoy @user — react w 10 random emojis lmaooo',
-      '/unannoy @user — stop the chaos',
-      '/skull @user — react w skull emoji every time',
-      '/unskull @user — stop skulling',
+      '{p}annoy @user — react w 10 random emojis lmaooo',
+      '{p}unannoy @user — stop the chaos',
+      '{p}skull @user — react w skull emoji every time',
+      '{p}unskull @user — stop skulling',
     ]
   },
   {
     title: 'utility (whitelist only)',
     commands: [
-      '/about — bot info n bio',
-      '/say [text] — make the bot talk',
-      '/convert [robloxUsername] — get a roblox user id',
-      '/generate [type] — generate usernames bussin',
-      '/userinfo [@user] — check user info',
-      '/invites [@user] — peep invite count',
-      '/dm @user/roleId [msg] — slide into dms',
-      '/role @member @role1... — toggle roles',
-      '/inrole @role — who got this role',
+      '{p}about — bot info n bio',
+      '{p}say [text] — make the bot talk',
+      '{p}convert [robloxUsername] — get a roblox user id',
+      '{p}generate [type] — generate usernames bussin',
+      '{p}userinfo [@user] — check user info',
+      '{p}invites [@user] — peep invite count',
+      '{p}dm @user/roleId [msg] — slide into dms',
+      '{p}role @member @role1... — toggle roles',
+      '{p}inrole @role — who got this role',
     ]
   },
   {
     title: 'roblox (whitelist only)',
     commands: [
-      '/roblox [username] — look up a user',
-      '/rid [userId] — look up by id',
-      '/gc [username] — check their groups',
-      '/grouproles — list group roles',
-      '/rankup [Nx] @users... — rank someone up',
-      '/setrankroles set @role1... — set up rank ladder',
-      '/fileroles — download rank ladder json',
+      '{p}roblox [username] — look up a user',
+      '{p}rid [userId] — look up by id',
+      '{p}gc [username] — check their groups',
+      '{p}grouproles — list group roles',
+      '{p}rankup [Nx] @users... — rank someone up',
+      '{p}setrankroles set @role1... — set up rank ladder',
+      '{p}fileroles — download rank ladder json',
     ]
   },
   {
     title: 'admin (whitelist only)',
     commands: [
       '{p}id [groupId] — change the group id (big moves fr)',
-      '/prefix [new] — change the prefix',
-      '/status [type] [text] — change bot status',
-      '/logo [url] — change embed logo',
-      '/name [text] — change bot display name',
-      '/flag [groupId] — flag a roblox group',
-      '/unflag [groupId] — unflag a group',
-      '/whitelist add/remove/list — manage the whitelist',
-      '/wlmanager add/remove/list — manage wl managers',
-      '/leaveserver [id] — dip from a server',
-      '/servers — list all servers',
+      '{p}prefix [new] — change the prefix',
+      '{p}status [type] [text] — change bot status',
+      '{p}logo [url] — change embed logo',
+      '{p}name [text] — change bot display name',
+      '{p}flag [groupId] — flag a roblox group',
+      '{p}unflag [groupId] — unflag a group',
+      '{p}whitelist add/remove/list — manage the whitelist',
+      '{p}wlmanager add/remove/list — manage wl managers',
+      '{p}leaveserver [id] — dip from a server',
+      '{p}servers — list all servers',
     ]
   },
 ];
@@ -2182,7 +2182,7 @@ client.on('interactionCreate', async interaction => {
   if (!loadWhitelist().includes(interaction.user.id)) {
     const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'grouproles', 'convert', 'rid']);
     if (!openCommands.has(commandName)) {
-      return interaction.reply({ content: "you're not whitelisted for that", ephemeral: true });
+      return interaction.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription("you're not whitelisted for that")], ephemeral: true });
     }
   }
 
@@ -3028,7 +3028,7 @@ client.on('interactionCreate', async interaction => {
     if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
     const sub = interaction.options.getString('action');
     if (sub === 'setup') {
-      if (!loadWhitelist().includes(interaction.user.id)) return interaction.reply({ content: "you're not whitelisted for this", ephemeral: true });
+      if (!loadWhitelist().includes(interaction.user.id)) return interaction.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription("you're not whitelisted for this")], ephemeral: true });
       await interaction.deferReply();
       try {
         const category = await guild.channels.create({ name: 'Voice Master', type: ChannelType.GuildCategory });
@@ -4198,7 +4198,7 @@ client.on('messageCreate', async message => {
     if (!message.guild) return;
     const sub = args[0]?.toLowerCase();
     if (sub === 'setup') {
-      if (!loadWhitelist().includes(message.author.id)) return message.reply("you're not whitelisted for this");
+      if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription("you're not whitelisted for this")] });
       await message.reply('setting up voicemaster...');
       try {
         const category = await message.guild.channels.create({ name: 'Voice Master', type: ChannelType.GuildCategory });
@@ -4269,7 +4269,7 @@ client.on('messageCreate', async message => {
   if (!loadWhitelist().includes(message.author.id)) {
     const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'registeredlist', 'register']);
     if (!openPrefixCommands.has(command)) {
-      return;
+      return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription("you're not whitelisted for that")] });
     }
   }
 
@@ -4498,7 +4498,7 @@ client.on('messageCreate', async message => {
 
   // ── .cleanup (deletes all non-pinned messages in the channel) ───────────────
   if (command === 'cleanup') {
-    if (!isWhitelisted(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`you need to be whitelisted to use \`${prefix}cleanup\``)] });
+    if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription(`you need to be whitelisted to use \`${prefix}cleanup\``)] });
     if (!message.guild) return;
     try {
       const ch = message.channel;
@@ -5212,7 +5212,7 @@ client.on('messageCreate', async message => {
   // ── .id ───────────────────────────────────────────────────────────────────────
   // aight this command changes the whole group id and link - big moves only no cap
   if (command === 'id') {
-    if (!isWhitelisted(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setDescription("nah bro u aint whitelisted for this one 💀")] });
+    if (!loadWhitelist().includes(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription("nah bro u aint whitelisted for this one")] });
     const newGroupId = args[0];
     if (!newGroupId || isNaN(newGroupId)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`yo use it like this: \`${prefix}id <group id>\` — gotta be a number fr`)] });
     try {
