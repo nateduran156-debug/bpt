@@ -1024,15 +1024,10 @@ const HELP_SECTIONS = [
   {
     title: 'utility (whitelist only)',
     commands: [
-      '{p}about — bot info n bio',
       '{p}say [text] — make the bot talk',
       '{p}convert [robloxUsername] — get a roblox user id',
-      '{p}generate [type] — generate usernames bussin',
       '{p}userinfo [@user] — check user info',
-      '{p}invites [@user] — peep invite count',
       '{p}dm @user/roleId [msg] — slide into dms',
-      '{p}role @member @role1... — toggle roles',
-      '{p}inrole @role — who got this role',
     ]
   },
   {
@@ -2180,7 +2175,7 @@ client.on('interactionCreate', async interaction => {
 
   // ── Whitelist-required slash commands ────────────────────────────────────────
   if (!loadWhitelist().includes(interaction.user.id)) {
-    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'grouproles', 'convert', 'rid']);
+    const openCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'avatar', 'banner', 'serverinfo', 'userinfo', 'grouproles', 'convert', 'rid']);
     if (!openCommands.has(commandName)) {
       return interaction.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription("you're not whitelisted for that")], ephemeral: true });
     }
@@ -4267,7 +4262,7 @@ client.on('messageCreate', async message => {
 
   // ── Whitelist-required prefix commands ───────────────────────────────────────
   if (!loadWhitelist().includes(message.author.id)) {
-    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'about', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'invites', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'registeredlist', 'register']);
+    const openPrefixCommands = new Set(['roblox', 'gc', 'help', 'vmhelp', 'afk', 'snipe', 'convert', 'avatar', 'banner', 'serverinfo', 'userinfo', 'roleinfo', 'editsnipe', 'reactsnipe', 'cs', 'grouproles', 'img2gif', 'rid', 'linked', 'registeredlist', 'register']);
     if (!openPrefixCommands.has(command)) {
       return message.reply({ embeds: [baseEmbed().setColor(0xff0000).setTitle('Not Whitelisted').setDescription("you're not whitelisted for that")] });
     }
