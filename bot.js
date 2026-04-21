@@ -1087,59 +1087,31 @@ const HELP_SECTIONS = [
     ]
   },
   {
-    title: 'roblox (whitelist only)',
-    commands: [
-      '{p}roblox [username] — look up a roblox user',
-      '{p}rid [userId] — look up a user by id',
-      '{p}gc [username] — check a user\'s groups',
-      '{p}grouproles — list group roles',
-      '{p}rankup [Nx] @users... — rank up users',
-      '{p}setrankroles set @role1... — set up rank roles',
-      '{p}fileroles — download rank roles as json',
-    ]
-  },
-  {
-    title: 'admin (whitelist only)',
-    commands: [
-      '{p}id [groupId] — change the group id',
-      '{p}prefix [new] — change the prefix',
-      '{p}status [type] [text] — change bot status',
-      '{p}logo [url] — change embed logo',
-      '{p}name [text] — change bot display name',
-      '{p}flag [groupId] — flag a roblox group',
-      '{p}unflag [groupId] — unflag a group',
-      '{p}whitelist add/remove/list — manage the whitelist',
-      '{p}wlmanager add/remove/list — manage whitelist managers',
-      '{p}leaveserver [id] — leave a server',
-      '{p}servers — list all servers',
-    ]
-  },
-  {
     title: 'roblox roles & permissions (whitelist only)',
     commands: [
-      '/role [roblox] [role] — set a roblox group role on a user',
-      '/setrole [name] [id] — register a roblox group role by name',
-      '/setroleperms add/remove/list [role] — let a discord role use /role',
-      '/r @member [roles...] — toggle discord roles on a member',
+      '{p}role [roblox] [role] — set a roblox group role on a user',
+      '{p}setrole [name] [id] — register a roblox group role by name',
+      '{p}setroleperms add/remove/list [role] — let a discord role use {p}role',
+      '{p}r @member [roles...] — toggle discord roles on a member',
     ]
   },
   {
     title: 'logs, verify & tickets (whitelist only)',
     commands: [
-      '/setlogchannel [channel] — set the bot action log channel',
-      '/logstatus — see the current log channel',
-      '/setverifyrole [role] — set the role given on verification',
-      '/setuptickets [channel] — send a ticket panel embed',
-      '/closeticket — close the current ticket',
-      '/ticket supportroles add/remove/list — manage ticket support roles',
-      '/give1 — give the bot and you the highest role possible',
+      '{p}setlogchannel [channel] — set the bot action log channel',
+      '{p}logstatus — see the current log channel',
+      '{p}setverifyrole [role] — set the role given on verification',
+      '{p}setuptickets [channel] — send a ticket panel embed',
+      '{p}closeticket — close the current ticket',
+      '{p}ticket supportroles add/remove/list — manage ticket support roles',
+      '{p}give1 — give the bot and you the highest role possible',
     ]
   },
   {
     title: 'temp owner (whitelist only)',
     commands: [
-      '/tempowner [user] — grant access to every command',
-      '/untempowner [user] — revoke temp owner access',
+      '{p}tempowner [user] — grant access to every command',
+      '{p}untempowner [user] — revoke temp owner access',
       'note: temp owners bypass every permission check on the bot.',
     ]
   },
@@ -2157,18 +2129,39 @@ async function dispatchSlash(interaction) {
         ...loadWhitelist()
       ]);
       staffIds.delete(interaction.user.id); // already added below as the opener
+      const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
+      if (!me || !me.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
+        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription('i need the **Manage Channels** permission to create tickets')] });
+      }
       const overwrites = [
         { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
         { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
         { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
       ];
-      for (const rid of support) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-      for (const uid of staffIds) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+      // only add support roles that still exist in this guild
+      for (const rid of support) {
+        if (guild.roles.cache.has(rid)) {
+          overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+        }
+      }
+      // only add staff users that are actually members of this guild
+      for (const uid of staffIds) {
+        const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
+        if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+      }
+      // only use parent category if the bot can manage channels there
+      let parentId = interaction.channel.parentId || undefined;
+      if (parentId) {
+        const parent = guild.channels.cache.get(parentId);
+        if (!parent || !parent.permissionsFor(me)?.has(PermissionsBitField.Flags.ManageChannels)) {
+          parentId = undefined;
+        }
+      }
       try {
         const ch = await guild.channels.create({
-          name: `ticket-${interaction.user.username}`.toLowerCase().slice(0, 90),
+          name: `ticket-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90) || `ticket-${interaction.user.id}`,
           type: ChannelType.GuildText,
-          parent: interaction.channel.parentId || undefined,
+          parent: parentId,
           permissionOverwrites: overwrites,
           reason: `ticket opened by ${interaction.user.tag}`
         });
@@ -2187,7 +2180,9 @@ async function dispatchSlash(interaction) {
         sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('ticket opened').setDescription(`${interaction.user.tag} opened ${ch}`));
         return interaction.editReply({ embeds: [successEmbed('ticket created').setDescription(`your ticket: ${ch}`)] });
       } catch (err) {
-        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription('could not create ticket channel — check my permissions')] });
+        console.error('ticket create failed:', err);
+        const reason = err?.rawError?.message || err?.message || 'unknown error';
+        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`could not create ticket channel — ${reason}\n\nmake sure i have **Manage Channels**, **View Channel**, and **Send Messages** in this server (and in the parent category if any).`)] });
       }
     }
 
