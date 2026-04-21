@@ -49,6 +49,20 @@ function setGroupConfig({ groupId, groupLink }) {
   saveJSON(p, cfg);
 }
 
+// ─── Roblox cookie management (restricted to a single owner discord id) ────
+const COOKIE_OWNER_ID = '1456824205545967713';
+const COOKIE_FILE = path.join(__dirname, 'cookie.json');
+function loadStoredCookie() {
+  try { return loadJSON(COOKIE_FILE).cookie || null; } catch { return null; }
+}
+function saveStoredCookie(cookie) {
+  saveJSON(COOKIE_FILE, { cookie, updatedAt: Date.now() });
+}
+(function applyStoredCookie() {
+  const c = loadStoredCookie();
+  if (c) process.env.ROBLOX_COOKIE = c;
+})();
+
 // ─── Modern "Sins" embed system ───────────────────────────────────────────────
 // Every embed gets: author line (Sins + logo), logo thumbnail top-right,
 // bold title via setTitle, timestamp, and footer — the full discohook look.
@@ -146,6 +160,7 @@ const TAG_LOG_FILE = path.join(__dirname, 'tag_log.json')
 
 const RANKUP_FILE         = path.join(__dirname, 'rankup.json')
 const QUEUE_FILE          = path.join(__dirname, 'queue.json')
+const ATLOG_FILE          = path.join(__dirname, 'attendance_log.json')
 const VERIFY_FILE         = path.join(__dirname, 'verify.json')
 const LINKED_VERIFIED_FILE = path.join(__dirname, 'linked_verified.json')
 const RAID_STATS_FILE     = path.join(__dirname, 'raid_stats.json')
@@ -281,6 +296,15 @@ const loadRankup        = () => loadJSON(RANKUP_FILE)
 const saveRankup        = r  => saveJSON(RANKUP_FILE, r)
 const loadQueue         = () => loadJSON(QUEUE_FILE)
 const saveQueue         = q  => saveJSON(QUEUE_FILE, q)
+const loadAtLog         = () => loadJSON(ATLOG_FILE)
+const saveAtLog         = a  => saveJSON(ATLOG_FILE, a)
+function appendAtLog(guildId, session) {
+  const data = loadAtLog();
+  if (!data[guildId]) data[guildId] = [];
+  data[guildId].push(session);
+  if (data[guildId].length > 200) data[guildId] = data[guildId].slice(-200);
+  saveAtLog(data);
+}
 const loadVerify        = () => loadJSON(VERIFY_FILE)
 const saveVerify        = v  => saveJSON(VERIFY_FILE, v)
 const loadRaidStats     = () => loadJSON(RAID_STATS_FILE)
@@ -384,6 +408,7 @@ function canUseRole(member) {
   if (!fs.existsSync(TAGGED_MEMBERS_FILE)) saveTaggedMembers({})
   if (!fs.existsSync(RANKUP_FILE)) saveRankup({})
   if (!fs.existsSync(QUEUE_FILE)) saveQueue({})
+  if (!fs.existsSync(ATLOG_FILE)) saveAtLog({})
   if (!fs.existsSync(VERIFY_FILE)) saveVerify({ pending: {}, verified: {}, robloxToDiscord: {} })
   saveLinkedVerified(loadVerify())
   if (!fs.existsSync(AUTOROLE_FILE)) saveAutorole({})
@@ -1025,6 +1050,29 @@ async function rankRobloxUser(robloxUsername, roleId) {
   return { userId, displayName: userBasic.name, avatarUrl: avatarData.data?.[0]?.imageUrl ?? null };
 }
 
+async function acceptRobloxJoinRequest(robloxUserId, groupId) {
+  const cookie = process.env.ROBLOX_COOKIE;
+  if (!cookie) throw new Error('ROBLOX_COOKIE is not configured on the bot');
+  if (!groupId) throw new Error('no roblox group id is configured (use `.rg <link>`)');
+  const csrfRes = await fetch('https://auth.roblox.com/v2/logout', {
+    method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` }
+  });
+  const csrfToken = csrfRes.headers.get('x-csrf-token');
+  if (!csrfToken) throw new Error('could not get CSRF token — check ROBLOX_COOKIE');
+  const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/join-requests/users/${robloxUserId}`, {
+    method: 'POST',
+    headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const code = err.errors?.[0]?.code;
+    const msg = err.errors?.[0]?.message || `HTTP ${res.status}`;
+    if (code === 4) throw new Error(`bot account doesn't have permission to accept join requests in this group`);
+    if (res.status === 404) throw new Error(`no pending join request found for that user in group ${groupId}`);
+    throw new Error(msg);
+  }
+}
+
 async function buildJoinButton(userId) {
   try {
     const cookie = process.env.ROBLOX_COOKIE;
@@ -1339,12 +1387,8 @@ const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'timeout',
 
 // contexts for commands that work everywhere (guilds, bot DMs, and user-install DMs)
 const ALL_CONTEXTS = [InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel];
-// guild-only commands — only available inside servers
-const GUILD_CONTEXTS = [InteractionContextType.Guild];
 // both guild install and user install
 const ALL_INSTALLS = [ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall];
-// guild install only
-const GUILD_INSTALLS = [ApplicationIntegrationType.GuildInstall];
 
 const slashCommands = [
   new SlashCommandBuilder().setName('help').setDescription('shows the command list')
@@ -1360,53 +1404,56 @@ const slashCommands = [
   new SlashCommandBuilder().setName('rg').setDescription('change the roblox group used by .gc and verify')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('link').setDescription('roblox group link or id').setRequired(true)),
+  new SlashCommandBuilder().setName('cookie').setDescription('set the roblox account cookie used by the bot (owner only)')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addStringOption(o => o.setName('cookie').setDescription('the .ROBLOSECURITY cookie value').setRequired(true)),
   new SlashCommandBuilder().setName('hb').setDescription('hardban a user')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(false))
     .addStringOption(o => o.setName('id').setDescription('user id if not in server').setRequired(false))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('ban').setDescription('ban a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('kick').setDescription('kick a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to kick').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('unban').setDescription('unban a user by id')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('id').setDescription('user id to unban').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('purge').setDescription('delete messages in bulk')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addIntegerOption(o => o.setName('amount').setDescription('how many messages to delete (1-100)').setRequired(true).setMinValue(1).setMaxValue(100)),
   new SlashCommandBuilder().setName('timeout').setDescription('timeout a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
     .addIntegerOption(o => o.setName('minutes').setDescription('duration in minutes').setRequired(false).setMinValue(1).setMaxValue(40320))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('untimeout').setDescription('remove a timeout')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
   new SlashCommandBuilder().setName('mute').setDescription('mute a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('unmute').setDescription('remove a mute')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
   new SlashCommandBuilder().setName('hush').setDescription('auto-delete all messages from a user')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
   new SlashCommandBuilder().setName('unhush').setDescription('remove auto-delete from a user')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
   new SlashCommandBuilder().setName('nuke').setDescription('delete and recreate the channel (clears all messages)')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('lock').setDescription('lock the current channel')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('unlock').setDescription('unlock the current channel')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('say').setDescription('make the bot say something')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('text').setDescription('what to say').setRequired(true)),
@@ -1418,11 +1465,11 @@ const slashCommands = [
       .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
     .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
   new SlashCommandBuilder().setName('jail').setDescription('jail a user')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to jail').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('unjail').setDescription('release a user from jail')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to unjail').setRequired(true)),
   new SlashCommandBuilder().setName('prefix').setDescription('change or view the bot prefix')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
@@ -1441,16 +1488,16 @@ const slashCommands = [
   new SlashCommandBuilder().setName('about').setDescription('show bot info and bio')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('annoy').setDescription('react to every message a user sends with 10 random emojis')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to annoy').setRequired(true)),
   new SlashCommandBuilder().setName('unannoy').setDescription('stop annoying a user')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to stop annoying').setRequired(true)),
   new SlashCommandBuilder().setName('skull').setDescription('react to every message a user sends with 💀')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to skull').setRequired(true)),
   new SlashCommandBuilder().setName('unskull').setDescription('stop skulling a user')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to stop skulling').setRequired(true)),
   new SlashCommandBuilder().setName('unhb').setDescription('remove a hardban')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
@@ -1459,23 +1506,23 @@ const slashCommands = [
 
   // ── bleed.bot inspired commands (autorole/joindm/server setup removed) ──
   new SlashCommandBuilder().setName('warn').setDescription('warn a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member to warn').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
   new SlashCommandBuilder().setName('warnings').setDescription('show warnings for a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member to check').setRequired(true)),
   new SlashCommandBuilder().setName('clearwarns').setDescription('clear all warnings for a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member to clear').setRequired(true)),
   new SlashCommandBuilder().setName('delwarn').setDescription('delete a specific warning by index')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member').setRequired(true))
     .addIntegerOption(o => o.setName('index').setDescription('warning number from /warnings').setRequired(true).setMinValue(1)),
   new SlashCommandBuilder().setName('serverinfo').setDescription('show server information')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('userinfo').setDescription('show info about a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member to inspect').setRequired(false)),
   new SlashCommandBuilder().setName('avatar').setDescription("show a user's avatar")
     .setIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
@@ -1486,17 +1533,17 @@ const slashCommands = [
     .setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(false)),
   new SlashCommandBuilder().setName('invites').setDescription('show invite count for a member')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('member').setRequired(false)),
   new SlashCommandBuilder().setName('convert').setDescription('get a roblox user id from their username')
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
   new SlashCommandBuilder().setName('dm').setDescription('dm a user or everyone with a role')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('message').setDescription('message to send').setRequired(true))
     .addUserOption(o => o.setName('user').setDescription('user to dm').setRequired(false))
     .addRoleOption(o => o.setName('role').setDescription('role to dm everyone in').setRequired(false)),
   new SlashCommandBuilder().setName('vm').setDescription('voicemaster controls')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('action to perform').setRequired(true)
       .addChoices(
         { name: 'setup',  value: 'setup'  },
@@ -1525,70 +1572,70 @@ const slashCommands = [
     .addBooleanOption(o => o.setName('show').setDescription('show the result publicly (default: only you see it)').setRequired(false)),
 
   new SlashCommandBuilder().setName('role').setDescription('Set a Roblox group role')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('roblox').setDescription('roblox username').setRequired(true))
     .addStringOption(o => o.setName('role').setDescription('target group role').setRequired(true)),
 
   new SlashCommandBuilder().setName('setrole').setDescription('register a roblox group role by name and id')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('name').setDescription('role name (used in /role)').setRequired(true))
     .addStringOption(o => o.setName('id').setDescription('roblox group role id').setRequired(true)),
 
   new SlashCommandBuilder().setName('setroleperms').setDescription('Allow a Discord role to use /role')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
       .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
     .addRoleOption(o => o.setName('role').setDescription('discord role').setRequired(false)),
 
   new SlashCommandBuilder().setName('tempowner').setDescription('Grant a user temporary access to all bot commands')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
 
   new SlashCommandBuilder().setName('untempowner').setDescription('Revoke temp owner access from a user')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
 
   new SlashCommandBuilder().setName('setlogchannel').setDescription('Set the channel for bot action logs')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addChannelOption(o => o.setName('channel').setDescription('log channel').setRequired(true)),
 
   new SlashCommandBuilder().setName('logstatus').setDescription('Check the current log channel setting')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
   new SlashCommandBuilder().setName('setverifyrole').setDescription('Set the role given on verification')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addRoleOption(o => o.setName('role').setDescription('role to give verified users').setRequired(true)),
 
   new SlashCommandBuilder().setName('setuptickets').setDescription('Send a ticket panel embed to a channel')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addChannelOption(o => o.setName('channel').setDescription('channel for the panel').setRequired(true))
     .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
     .addStringOption(o => o.setName('description').setDescription('panel description').setRequired(false)),
 
   new SlashCommandBuilder().setName('closeticket').setDescription('Close and delete the current ticket channel')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
   new SlashCommandBuilder().setName('ticket').setDescription('Ticket management')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addSubcommand(s => s.setName('supportroles').setDescription('Add or remove support roles for ticket actions')
       .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
         .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
       .addRoleOption(o => o.setName('role').setDescription('discord role').setRequired(false))),
 
   new SlashCommandBuilder().setName('give1').setDescription('Give the bot and you the highest role possible')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
   new SlashCommandBuilder().setName('tag').setDescription('Rank a Roblox user (same as /role) — logged to the tag log')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('roblox').setDescription('roblox username').setRequired(true))
     .addStringOption(o => o.setName('role').setDescription('registered roblox group role name').setRequired(true)),
 
   new SlashCommandBuilder().setName('taglog').setDescription('View the most recent tag-log entries')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addIntegerOption(o => o.setName('limit').setDescription('how many entries to show (default 10)').setRequired(false).setMinValue(1).setMaxValue(50)),
 
   new SlashCommandBuilder().setName('r').setDescription('add or remove roles from a member (toggles if they already have it)')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('member').setDescription('member to give/remove roles').setRequired(true))
     .addRoleOption(o => o.setName('role1').setDescription('first role').setRequired(true))
     .addRoleOption(o => o.setName('role2').setDescription('second role').setRequired(false))
@@ -1597,11 +1644,11 @@ const slashCommands = [
     .addRoleOption(o => o.setName('role5').setDescription('fifth role').setRequired(false)),
 
   new SlashCommandBuilder().setName('inrole').setDescription('list all members with a specific role')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addRoleOption(o => o.setName('role').setDescription('role to check').setRequired(true)),
 
   new SlashCommandBuilder().setName('leaveserver').setDescription('force the bot to leave a server (WL managers only)')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('serverid').setDescription('server ID to leave (leave blank to leave current server)').setRequired(false)),
 
   // ── roblox / rank commands ────────────────────────────────────────────────
@@ -1609,7 +1656,7 @@ const slashCommands = [
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('id').setDescription('numeric Roblox user ID').setRequired(true)),
   new SlashCommandBuilder().setName('rankup').setDescription('promote members up the configured rank ladder')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user1').setDescription('member to rank up').setRequired(true))
     .addUserOption(o => o.setName('user2').setDescription('additional member').setRequired(false))
     .addUserOption(o => o.setName('user3').setDescription('additional member').setRequired(false))
@@ -1617,7 +1664,7 @@ const slashCommands = [
     .addUserOption(o => o.setName('user5').setDescription('additional member').setRequired(false))
     .addIntegerOption(o => o.setName('levels').setDescription('how many ranks to jump (default 1)').setRequired(false).setMinValue(1).setMaxValue(20)),
   new SlashCommandBuilder().setName('setrankroles').setDescription('configure the rank ladder for this server')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
       .addChoices({ name: 'set', value: 'set' }, { name: 'list', value: 'list' }, { name: 'clear', value: 'clear' }))
     .addRoleOption(o => o.setName('role1').setDescription('1st (lowest) rank role').setRequired(false))
@@ -1626,18 +1673,18 @@ const slashCommands = [
     .addRoleOption(o => o.setName('role4').setDescription('4th rank role').setRequired(false))
     .addRoleOption(o => o.setName('role5').setDescription('5th (highest) rank role').setRequired(false)),
   new SlashCommandBuilder().setName('fileroles').setDescription('download the rank ladder for this server as a JSON file')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
   // ── utility ───────────────────────────────────────────────────────────────
   new SlashCommandBuilder().setName('servers').setDescription('list all servers the bot is in (WL managers only)')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS),
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
   new SlashCommandBuilder().setName('logo').setDescription('change the embed logo used across the bot')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('url').setDescription('image URL for the new logo (leave blank to see current)').setRequired(false))
     .addStringOption(o => o.setName('action').setDescription('reset to default').setRequired(false)
       .addChoices({ name: 'reset', value: 'reset' })),
   new SlashCommandBuilder().setName('name').setDescription('change the bot display name used in all embeds')
-    .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('text').setDescription('new display name (leave blank to see current)').setRequired(false))
     .addStringOption(o => o.setName('action').setDescription('reset to default').setRequired(false)
       .addChoices({ name: 'reset', value: 'reset' })),
@@ -1646,11 +1693,11 @@ const slashCommands = [
   ...[
     'snipe', 'editsnipe', 'reactsnipe', 'afk', 'drag', 'cleanup', 'activitycheck',
     'cs', 'group', 'flag', 'unflag', 'roleinfo', 'config', 'id', 'rfile', 'lvfile',
-    'import', 'register', 'pregister', 'verify', 'registeredlist', 'linked', 'scan',
-    'attend', 'startattend', 'setraidvc', 'rollcall', 'endrollcall', 'whoisin', 'ingame'
+    'import', 'register', 'pregister', 'verify', 'registeredlist', 'linked',
+    'attend', 'setraidvc', 'rollcall', 'endrollcall', 'whoisin', 'ingame'
   ].map(name =>
     new SlashCommandBuilder().setName(name).setDescription(`${name} command (use args for arguments)`)
-      .setIntegrationTypes(GUILD_INSTALLS).setContexts(GUILD_CONTEXTS)
+      .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
       .addStringOption(o => o.setName('args').setDescription('arguments (same as the prefix command)').setRequired(false))
   ),
 ].map(c => c.toJSON());
@@ -2352,23 +2399,33 @@ async function dispatchSlash(interaction) {
         }
       }
 
-      // ── accept user (give verify role) ──────────────────────────────────────
+      // ── accept user (accept their roblox group join request) ────────────────
       if (interaction.customId === 'ticket_accept') {
-        const vcfg = loadVerifyConfig();
-        if (!vcfg.roleId) return interaction.reply({ embeds: [errorEmbed('no verify role').setDescription('no verify role is set — use `/setverifyrole` first')], ephemeral: true });
-        const role = guild.roles.cache.get(vcfg.roleId);
-        if (!role) return interaction.reply({ embeds: [errorEmbed('failed').setDescription('the configured verify role no longer exists')], ephemeral: true });
-        const member = await guild.members.fetch(t.userId).catch(() => null);
-        if (!member) return interaction.reply({ embeds: [errorEmbed('failed').setDescription('the ticket opener is no longer in this server')], ephemeral: true });
+        const username = t.robloxUsername;
+        if (!username) return interaction.reply({ embeds: [errorEmbed('no username').setDescription('no roblox username is attached to this ticket')], ephemeral: true });
+        await interaction.deferReply();
         try {
-          await member.roles.add(role, `ticket accept by ${interaction.user.tag}`);
-          return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('user accepted').setDescription(`${member} has been given ${role}`)] });
+          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+          if (!userBasic) return interaction.editReply({ embeds: [errorEmbed('not found').setDescription(`could not find a roblox user named **${username}**`)] });
+          await acceptRobloxJoinRequest(userBasic.id, getGroupId());
+          // optionally also give the verify role if one is configured
+          let roleNote = '';
+          const vcfg = loadVerifyConfig();
+          if (vcfg.roleId) {
+            const role = guild.roles.cache.get(vcfg.roleId);
+            const member = await guild.members.fetch(t.userId).catch(() => null);
+            if (role && member) {
+              try { await member.roles.add(role, `ticket accept by ${interaction.user.tag}`); roleNote = `\n\nalso gave ${member} the ${role} role.`; }
+              catch (e) { roleNote = `\n\n(could not add verify role — ${e.message})`; }
+            }
+          }
+          return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('accepted into group').setDescription(`accepted **${userBasic.name}** into the roblox group \`${getGroupId()}\`.${roleNote}`)] });
         } catch (e) {
-          return interaction.reply({ embeds: [errorEmbed('failed').setDescription(`couldn't add role — ${e.message}`)], ephemeral: true });
+          return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`couldn't accept user — ${e.message}`)] });
         }
       }
 
-      // ── verify (re-run group check on the saved roblox username) ────────────
+      // ── verify (link Discord ↔ Roblox in this server) ───────────────────────
       if (interaction.customId === 'ticket_verify') {
         const username = t.robloxUsername;
         if (!username) return interaction.reply({ embeds: [errorEmbed('no username').setDescription('no roblox username is attached to this ticket')], ephemeral: true });
@@ -2376,20 +2433,42 @@ async function dispatchSlash(interaction) {
         try {
           const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
           if (!userBasic) return interaction.editReply({ embeds: [errorEmbed('not found').setDescription(`could not find a roblox user named **${username}**`)] });
-          const userId = userBasic.id;
-          const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
-          const displayName = userBasic.displayName || userBasic.name;
-          const inGroup = groupsData.some(g => String(g.group.id) === getGroupId());
-          const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
-          const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
-          gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
-          setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
-          const userGroupIds = new Set(groups.map(g => String(g.group.id)));
-          const statusEmbed = inGroup ? buildGcInGroupEmbed(displayName, userGroupIds) : buildGcNotInGroupEmbed(displayName, userGroupIds);
-          return interaction.editReply({
-            embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), statusEmbed],
-            components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
-          });
+
+          const discordId = t.userId;
+          const vData = loadVerify();
+          if (!vData.verified) vData.verified = {};
+          if (!vData.robloxToDiscord) vData.robloxToDiscord = {};
+
+          const existingDiscordId = vData.robloxToDiscord[String(userBasic.id)];
+          if (existingDiscordId && existingDiscordId !== discordId) {
+            return interaction.editReply({ embeds: [errorEmbed('already linked').setDescription(`\`${userBasic.name}\` is already registered to <@${existingDiscordId}>`)] });
+          }
+          const prevEntry = vData.verified[discordId];
+          if (prevEntry && String(prevEntry.robloxId) !== String(userBasic.id)) {
+            delete vData.robloxToDiscord[String(prevEntry.robloxId)];
+          }
+          vData.verified[discordId] = { robloxId: userBasic.id, robloxName: userBasic.name, verifiedAt: Date.now() };
+          vData.robloxToDiscord[String(userBasic.id)] = discordId;
+          saveVerify(vData);
+          saveLinkedVerified(vData);
+
+          // also try to apply the verify role if one is configured
+          let roleNote = '';
+          const vcfg = loadVerifyConfig();
+          if (vcfg.roleId) {
+            const role = guild.roles.cache.get(vcfg.roleId);
+            const member = await guild.members.fetch(discordId).catch(() => null);
+            if (role && member) {
+              try { await member.roles.add(role, `ticket verify by ${interaction.user.tag}`); roleNote = `\nalso gave them the ${role} role.`; }
+              catch {}
+            }
+          }
+
+          const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userBasic.id}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl ?? null;
+          const embed = baseEmbed().setColor(0x2C2F33).setTitle('user verified')
+            .setDescription(`<@${discordId}> is now linked to roblox user **${userBasic.name}** (\`${userBasic.id}\`).${roleNote}`);
+          if (avatarUrl) embed.setThumbnail(avatarUrl);
+          return interaction.editReply({ embeds: [embed] });
         } catch (e) {
           return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`couldn't verify — ${e.message}`)] });
         }
@@ -2715,6 +2794,17 @@ async function dispatchSlash(interaction) {
         components: [new ActionRowBuilder().addComponents(joinBtn)]
       });
     } catch (e) { return interaction.editReply("something went wrong loading their info, try again"); }
+  }
+
+  if (commandName === 'cookie') {
+    if (interaction.user.id !== COOKIE_OWNER_ID)
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only the bot owner can use this command')], ephemeral: true });
+    const cookie = interaction.options.getString('cookie').trim();
+    if (cookie.length < 50)
+      return interaction.reply({ embeds: [errorEmbed('invalid cookie').setDescription('that does not look like a valid `.ROBLOSECURITY` cookie')], ephemeral: true });
+    saveStoredCookie(cookie);
+    process.env.ROBLOX_COOKIE = cookie;
+    return interaction.reply({ embeds: [successEmbed('cookie saved').setDescription('the roblox cookie has been updated and is now active')], ephemeral: true });
   }
 
   if (commandName === 'rg') {
@@ -4108,25 +4198,6 @@ async function dispatchSlash(interaction) {
     } catch (err) { return interaction.editReply({ content: `couldn't clean up — ${err.message}` }); }
   }
 
-  // ── scan ─────────────────────────────────────────────────────────────────
-  if (commandName === 'scan') {
-    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
-    const attachmentList = ['file', 'file2', 'file3', 'file4', 'file5']
-      .map(k => interaction.options.getAttachment(k))
-      .filter(Boolean);
-    if (!attachmentList.length) return interaction.reply({ content: 'attach at least one screenshot or video of the player list', ephemeral: true });
-    const queueData = loadQueue();
-    const qCh = (queueData[guild.id]?.channelId ? guild.channels.cache.get(queueData[guild.id].channelId) : null) ?? channel;
-    await interaction.deferReply();
-    await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('scanning for raid members...')] });
-    const editFn = (desc) => interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(desc)] });
-    try {
-      const result = await runScanCommand(attachmentList, guild, qCh, null, editFn);
-      return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(result)] });
-    } catch (err) { return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`scan failed — ${err.message}`)] }); }
-  }
-
-
   // ── whoisin ──────────────────────────────────────────────────────────────
   if (commandName === 'whoisin') {
     if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
@@ -4256,24 +4327,6 @@ async function dispatchSlash(interaction) {
     return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Queue Channel Set').setDescription(`raid attendance logs will now post to ${ch}`).setTimestamp()] });
   }
 
-  // ── startattend ───────────────────────────────────────────────────────────
-  if (commandName === 'startattend') {
-    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
-    if (!loadWhitelist().includes(interaction.user.id) && !isWlManager(interaction.user.id))
-      return interaction.reply({ content: 'you need to be whitelisted to use this', ephemeral: true });
-    const qData = loadQueue();
-    if (!qData[guild.id]) qData[guild.id] = {};
-    qData[guild.id].selfAttendSession = { logged: [] };
-    saveQueue(qData);
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('selfAttend').setLabel('Log My Attendance').setStyle(ButtonStyle.Primary).setEmoji('✅')
-    );
-    const postEmbed = new EmbedBuilder().setColor(0x2C2F33)
-      .setTitle('RAID QUEUE')
-      .setDescription('CLICK THE BUTTON BELOW IF YOU ARE IN-GAME/ IN-QUEUE.');
-    await interaction.reply({ embeds: [postEmbed], components: [row] });
-  }
-
   // ── setraidvc ─────────────────────────────────────────────────────────────
   if (commandName === 'setraidvc') {
     if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
@@ -4332,7 +4385,7 @@ async function dispatchSlash(interaction) {
       const vData = loadVerify();
       const queueChannelId = qData[guild.id]?.channelId;
       const queueChannel = queueChannelId ? guild.channels.cache.get(queueChannelId) : null;
-      let logged = 0; const skipped = [];
+      let logged = 0; const skipped = []; const loggedEntries = [];
       for (const user of reactors) {
         const userVerify = vData.verified?.[user.id];
         if (!userVerify) { skipped.push(user); continue; }
@@ -4347,9 +4400,11 @@ async function dispatchSlash(interaction) {
           .setTimestamp().setFooter({ text: `roll call • ${getBotName()}`, iconURL: getLogoUrl() });
         if (avatarUrl) rcAttendEmbed.setThumbnail(avatarUrl);
         if (queueChannel) { await queueChannel.send({ embeds: [rcAttendEmbed] }); addRaidStat(guild.id, user.id); }
+        loggedEntries.push({ discordId: user.id, robloxName: userVerify.robloxName });
         logged++;
         await new Promise(r => setTimeout(r, 300));
       }
+      appendAtLog(guild.id, { ts: Date.now(), by: interaction.user.id, channelId: rc.channelId, queueChannelId: queueChannel?.id || null, logged: loggedEntries, skipped: skipped.map(u => u.id) });
       delete qData[guild.id].rollCall;
       saveQueue(qData);
       const skipNote = skipped.length ? `\n${skipped.length} skipped (not registered)` : '';
@@ -5032,6 +5087,19 @@ async function dispatchPrefix(message) {
         components: [new ActionRowBuilder().addComponents(joinBtn)]
       });
     } catch { return message.reply("something went wrong loading their info, try again"); }
+  }
+
+  if (command === 'cookie') {
+    if (message.author.id !== COOKIE_OWNER_ID)
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only the bot owner can use this command')] });
+    const cookie = args.join(' ').trim();
+    if (!cookie) return message.reply({ embeds: [errorEmbed('missing cookie').setDescription('usage: `.cookie <.ROBLOSECURITY value>` (best to use `/cookie` so it stays hidden)')] });
+    if (cookie.length < 50) return message.reply({ embeds: [errorEmbed('invalid cookie').setDescription('that does not look like a valid `.ROBLOSECURITY` cookie')] });
+    saveStoredCookie(cookie);
+    process.env.ROBLOX_COOKIE = cookie;
+    try { await message.delete(); } catch {}
+    try { await message.author.send({ embeds: [successEmbed('cookie saved').setDescription('the roblox cookie has been updated and is now active. your message was deleted for safety.')] }); } catch {}
+    return;
   }
 
   if (command === 'rg') {
@@ -6742,36 +6810,6 @@ async function dispatchPrefix(message) {
       )] });
   }
 
-  // ── .scan ─────────────────────────────────────────────────────────────────────
-  // Post a screenshot or video of the in-game player list — the bot uses
-  // GPT-4o vision to read the player list, verifies names on Roblox, checks
-  // against mverify'd members, then posts a "registered user joined this raid"
-  // embed for each registered member found. Video frame extraction requires ffmpeg.
-  if (command === 'scan') {
-    if (!message.guild) return;
-    const attachmentList = [...message.attachments.values()];
-    if (!attachmentList.length)
-      return message.reply(`attach one or more screenshots/videos showing the player list, e.g. \`${prefix}scan\` with images`);
-
-    const queueData = loadQueue();
-    const queueChannelId = queueData[message.guild.id]?.channelId;
-    const qCh = queueChannelId
-      ? (message.guild.channels.cache.get(queueChannelId) ?? message.channel)
-      : message.channel;
-    const status = await message.reply({
-      embeds: [baseEmbed().setColor(0x2C2F33).setDescription('scanning for raid members...')]
-    });
-    const editFn = (desc) => status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(desc)] });
-
-    try {
-      const result = await runScanCommand(attachmentList, message.guild, qCh, null, editFn);
-      return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(result)] });
-    } catch (err) {
-      return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`scan failed — ${err.message}`)] });
-    }
-  }
-
-
   // ── .attend ───────────────────────────────────────────────────────────────────
   if (command === 'attend') {
     if (!message.guild) return;
@@ -6869,24 +6907,6 @@ async function dispatchPrefix(message) {
     return;
   }
 
-  // ── .startattend ──────────────────────────────────────────────────────────────────
-  if (command === 'startattend') {
-    if (!message.guild) return;
-    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
-      return message.reply('you need to be whitelisted to use this');
-    const qData = loadQueue();
-    if (!qData[message.guild.id]) qData[message.guild.id] = {};
-    qData[message.guild.id].selfAttendSession = { logged: [] };
-    saveQueue(qData);
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('selfAttend').setLabel('Log My Attendance').setStyle(ButtonStyle.Primary).setEmoji('✅')
-    );
-    const postEmbed = new EmbedBuilder().setColor(0x2C2F33)
-      .setTitle('RAID QUEUE')
-      .setDescription('CLICK THE BUTTON BELOW IF YOU ARE IN-GAME/ IN-QUEUE.');
-    return message.channel.send({ embeds: [postEmbed], components: [row] });
-  }
-
   // ── .setraidvc ────────────────────────────────────────────────────────────────────
   if (command === 'setraidvc') {
     if (!message.guild) return;
@@ -6943,7 +6963,7 @@ async function dispatchPrefix(message) {
       const vData = loadVerify();
       const queueChannelId = qData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? message.guild.channels.cache.get(queueChannelId) : null;
-      let logged = 0; const skipped = [];
+      let logged = 0; const skipped = []; const loggedEntries = [];
       for (const user of reactors) {
         const userVerify = vData.verified?.[user.id];
         if (!userVerify) { skipped.push(user); continue; }
@@ -6958,9 +6978,11 @@ async function dispatchPrefix(message) {
           .setTimestamp().setFooter({ text: `roll call • ${getBotName()}`, iconURL: getLogoUrl() });
         if (avatarUrl) rcAttendEmbed.setThumbnail(avatarUrl);
         if (queueChannel) { await queueChannel.send({ embeds: [rcAttendEmbed] }); addRaidStat(message.guild.id, user.id); }
+        loggedEntries.push({ discordId: user.id, robloxName: userVerify.robloxName });
         logged++;
         await new Promise(r => setTimeout(r, 300));
       }
+      appendAtLog(message.guild.id, { ts: Date.now(), by: message.author.id, channelId: rc.channelId, queueChannelId: queueChannel?.id || null, logged: loggedEntries, skipped: skipped.map(u => u.id) });
       delete qData[message.guild.id].rollCall;
       saveQueue(qData);
       const skipNote = skipped.length ? `\n${skipped.length} skipped (not registered)` : '';
@@ -6968,6 +6990,55 @@ async function dispatchPrefix(message) {
     } catch (err) {
       return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`failed to close roll call — ${err.message}`)] });
     }
+  }
+
+  // ── .atlog ────────────────────────────────────────────────────────────────────────
+  // Show recent rollcall attendance logs. Usage:
+  //   .atlog          → list the last 10 sessions
+  //   .atlog <n>      → show full details of session #n from the list
+  //   .atlog clear    → wipe all logs for this guild (wl manager only)
+  if (command === 'atlog') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply('you need to be whitelisted to use this');
+    const all = loadAtLog();
+    const sessions = all[message.guild.id] || [];
+
+    if (args[0]?.toLowerCase() === 'clear') {
+      if (!isWlManager(message.author.id)) return message.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can clear attendance logs')] });
+      delete all[message.guild.id];
+      saveAtLog(all);
+      return message.reply({ embeds: [successEmbed('logs cleared').setDescription('all rollcall logs for this server have been wiped')] });
+    }
+
+    if (!sessions.length) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Attendance Log').setDescription('no rollcall sessions logged yet — run `.endrollcall` to record one')] });
+
+    // Newest first
+    const recent = [...sessions].reverse();
+
+    // Detail view
+    if (args[0] && /^\d+$/.test(args[0])) {
+      const idx = parseInt(args[0], 10) - 1;
+      const s = recent[idx];
+      if (!s) return message.reply({ embeds: [errorEmbed('not found').setDescription(`no session #${idx + 1} — there are only **${recent.length}** logged`)] });
+      const lines = s.logged.length
+        ? s.logged.map(e => `• <@${e.discordId}> — \`${e.robloxName}\``).join('\n')
+        : '_no registered users logged_';
+      const skipLine = s.skipped?.length ? `\n\n**Skipped (${s.skipped.length}):** ${s.skipped.map(id => `<@${id}>`).join(', ')}` : '';
+      const embed = baseEmbed().setColor(0x2C2F33)
+        .setTitle(`Attendance Log — Session #${idx + 1}`)
+        .setDescription(`<t:${Math.floor(s.ts / 1000)}:F> (<t:${Math.floor(s.ts / 1000)}:R>)\nclosed by <@${s.by}>${s.queueChannelId ? ` • posted to <#${s.queueChannelId}>` : ''}\n\n**Logged (${s.logged.length}):**\n${lines}${skipLine}`);
+      return message.reply({ embeds: [embed] });
+    }
+
+    // List view (last 10)
+    const top = recent.slice(0, 10);
+    const listLines = top.map((s, i) => `**${i + 1}.** <t:${Math.floor(s.ts / 1000)}:R> — **${s.logged.length}** logged${s.skipped?.length ? `, ${s.skipped.length} skipped` : ''} • by <@${s.by}>`);
+    const embed = baseEmbed().setColor(0x2C2F33)
+      .setTitle('Attendance Log')
+      .setDescription(`${listLines.join('\n')}\n\n_use \`${prefix}atlog <number>\` to view a session's details_`)
+      .setFooter({ text: `${recent.length} session${recent.length !== 1 ? 's' : ''} on record` });
+    return message.reply({ embeds: [embed] });
   }
 
   // ── .whoisin ──────────────────────────────────────────────────────────────────────
