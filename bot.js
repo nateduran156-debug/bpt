@@ -33,6 +33,21 @@ const MOD_IMAGE_URL = 'https://i.imgur.com/CBDoIWa.png'
 // this is the group id and link, changeable with the .id command
 const getGroupId = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.groupId || '489845165' }
 const getGroupLink = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.groupLink || `https://www.roblox.com/communities/${getGroupId()}/about` }
+function parseRobloxGroupLink(input) {
+  if (!input) return null;
+  const s = String(input).trim();
+  if (/^\d+$/.test(s)) return { groupId: s, groupLink: `https://www.roblox.com/communities/${s}/about` };
+  const m = s.match(/roblox\.com\/(?:groups|communities)\/(\d+)/i);
+  if (!m) return null;
+  return { groupId: m[1], groupLink: s.startsWith('http') ? s : `https://${s}` };
+}
+function setGroupConfig({ groupId, groupLink }) {
+  const p = path.join(__dirname, 'config.json');
+  const cfg = loadJSON(p);
+  cfg.groupId = groupId;
+  cfg.groupLink = groupLink;
+  saveJSON(p, cfg);
+}
 
 // ─── Modern "Sins" embed system ───────────────────────────────────────────────
 // Every embed gets: author line (Sins + logo), logo thumbnail top-right,
@@ -148,11 +163,61 @@ const JOINDM_FILE = path.join(__dirname, 'joindm.json')
 const LOGS_FILE = path.join(__dirname, 'logs.json')
 
 // read/write json helpers
+// Loads JSON safely. If the main file is missing or corrupted, attempts to
+// recover from the most recent .bak file before giving up. A corrupted main
+// file is preserved as <file>.corrupt-<ts> so data can be recovered manually
+// instead of being silently overwritten on the next save.
 function loadJSON(file) {
-  if (!fs.existsSync(file)) return {}
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return {} }
+  const tryParse = (p) => {
+    if (!fs.existsSync(p)) return undefined
+    const raw = fs.readFileSync(p, 'utf8')
+    if (!raw.trim()) return undefined
+    return JSON.parse(raw)
+  }
+  try {
+    const v = tryParse(file)
+    if (v !== undefined) return v
+  } catch (e) {
+    try {
+      const corruptPath = `${file}.corrupt-${Date.now()}`
+      fs.copyFileSync(file, corruptPath)
+      console.error(`[loadJSON] ${file} is corrupted; preserved as ${corruptPath}: ${e.message}`)
+    } catch {}
+    // try the backup
+    try {
+      const v = tryParse(`${file}.bak`)
+      if (v !== undefined) {
+        console.error(`[loadJSON] recovered ${file} from .bak`)
+        return v
+      }
+    } catch (e2) {
+      console.error(`[loadJSON] backup for ${file} also unreadable: ${e2.message}`)
+    }
+  }
+  return {}
 }
-function saveJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2)) }
+
+// Atomic write: serialize first (so a JSON.stringify error doesn't truncate the
+// existing file), keep a .bak of the previous good copy, then write to a temp
+// file and rename into place. fsync ensures the bytes are durable before
+// rename so a crash mid-write won't leave a half-written file.
+function saveJSON(file, data) {
+  const json = JSON.stringify(data, null, 2)
+  const dir = path.dirname(file)
+  try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+  if (fs.existsSync(file)) {
+    try { fs.copyFileSync(file, `${file}.bak`) } catch (e) { console.error(`[saveJSON] backup failed for ${file}: ${e.message}`) }
+  }
+  const tmp = `${file}.tmp`
+  const fd = fs.openSync(tmp, 'w')
+  try {
+    fs.writeSync(fd, json)
+    try { fs.fsyncSync(fd) } catch {}
+  } finally {
+    fs.closeSync(fd)
+  }
+  fs.renameSync(tmp, file)
+}
 
 // shortcut load/save functions for each file
 
@@ -1149,16 +1214,16 @@ function buildHelpRow(page) {
 }
 
 function buildGcEmbed(username, groups, avatarUrl, page) {
-  const totalPages = Math.ceil(groups.length / GC_PER_PAGE);
+  const totalPages = Math.max(1, Math.ceil(groups.length / GC_PER_PAGE));
   const slice = groups.slice(page * GC_PER_PAGE, page * GC_PER_PAGE + GC_PER_PAGE);
-  const groupLines = slice.map(g => `↗ [**${g.group.name}**](https://www.roblox.com/communities/${g.group.id}/about)`).join('\n');
+  const groupLines = slice.length
+    ? slice.map(g => `• [${g.group.name}](https://www.roblox.com/communities/${g.group.id}/about)`).join('\n')
+    : '_no groups_';
   const embed = new EmbedBuilder()
     .setColor(0x2C2F33)
     .setTitle('Group Check')
-    .setThumbnail(avatarUrl ?? getLogoUrl())
-    .setDescription(`> Showing groups **${page * GC_PER_PAGE + 1}–${Math.min((page + 1) * GC_PER_PAGE, groups.length)}** of **${groups.length}** total\n\n${groupLines}`)
-    .setFooter({ text: `${getBotName()} • Page ${page + 1} of ${totalPages}`, iconURL: getLogoUrl() })
-    .setTimestamp();
+    .setDescription(`${username}\n\n**Groups**\n${groupLines}`)
+    .setFooter({ text: `${getBotName()} • Page ${page + 1} of ${totalPages}` });
   if (avatarUrl) embed.setAuthor({ name: username, iconURL: avatarUrl });
   return embed;
 }
@@ -1292,6 +1357,9 @@ const slashCommands = [
   new SlashCommandBuilder().setName('gc').setDescription('list roblox groups for a user')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
+  new SlashCommandBuilder().setName('rg').setDescription('change the roblox group used by .gc and verify')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addStringOption(o => o.setName('link').setDescription('roblox group link or id').setRequired(true)),
   new SlashCommandBuilder().setName('hb').setDescription('hardban a user')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(false))
@@ -1608,13 +1676,20 @@ client.once('clientReady', async () => {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
     const guildId = process.env.GUILD_ID;
-    // Always register globally so commands work in DMs
-    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
-    console.log('slash commands registered globally (DMs supported)');
     if (guildId) {
-      // Also register to guild for instant availability in the server
+      // Guild-only registration for instant availability. Clear globals first
+      // so commands don't appear twice in the server.
+      await rest.put(Routes.applicationCommands(client.user.id), { body: [] });
       await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: slashCommands });
-      console.log('slash commands also registered to guild');
+      console.log('slash commands registered to guild (globals cleared to avoid duplicates)');
+    } else {
+      // Global registration so commands work everywhere (and in DMs). Clear any
+      // stale guild registrations first to avoid duplicates.
+      for (const [gid] of client.guilds.cache) {
+        try { await rest.put(Routes.applicationGuildCommands(client.user.id, gid), { body: [] }); } catch {}
+      }
+      await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
+      console.log('slash commands registered globally (guild duplicates cleared)');
     }
   } catch (err) { console.error('failed to register slash commands:', err.message); }
 
@@ -2104,6 +2179,118 @@ async function dispatchSlash(interaction) {
     } catch (e) { return interaction.reply({ content: `couldn't rename — ${e.message}`, ephemeral: true }); }
   }
 
+  // ── Modal: Open ticket (asks for roblox username) ───────────────────────────
+  if (interaction.isModalSubmit() && interaction.customId === 'ticket_open_modal') {
+    const guild = interaction.guild;
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    const robloxUsername = interaction.fields.getTextInputValue('ticket_roblox_username').trim();
+    const tickets = loadTickets();
+    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id);
+    if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open ticket: <#${existing[0]}>`)], ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
+
+    const support = loadTicketSupport();
+    const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
+    const staffIds = new Set([
+      ...loadWlManagers(),
+      ...envMgrs,
+      ...loadTempOwners(),
+      ...loadWhitelist()
+    ]);
+    staffIds.delete(interaction.user.id);
+
+    const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
+    if (!me || !me.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
+      return interaction.editReply({ embeds: [errorEmbed('failed').setDescription('i need the **Manage Channels** permission to create tickets')] });
+    }
+    const overwrites = [
+      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+      { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
+      { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
+    ];
+    for (const rid of support) {
+      if (guild.roles.cache.has(rid)) {
+        overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+      }
+    }
+    for (const uid of staffIds) {
+      const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
+      if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+    }
+    let parentId = interaction.channel.parentId || undefined;
+    if (parentId) {
+      const parent = guild.channels.cache.get(parentId);
+      if (!parent || !parent.permissionsFor(me)?.has(PermissionsBitField.Flags.ManageChannels)) parentId = undefined;
+    }
+
+    let ch;
+    try {
+      ch = await guild.channels.create({
+        name: `ticket-${robloxUsername || interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90) || `ticket-${interaction.user.id}`,
+        type: ChannelType.GuildText,
+        parent: parentId,
+        permissionOverwrites: overwrites,
+        reason: `ticket opened by ${interaction.user.tag}`
+      });
+    } catch (err) {
+      console.error('ticket create failed:', err);
+      const reason = err?.rawError?.message || err?.message || 'unknown error';
+      return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`could not create ticket channel — ${reason}\n\nmake sure i have **Manage Channels**, **View Channel**, and **Send Messages** in this server (and in the parent category if any).`)] });
+    }
+
+    tickets[ch.id] = { userId: interaction.user.id, openedAt: Date.now(), robloxUsername };
+    saveTickets(tickets);
+
+    const supportPing = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
+    const ticketRow1 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ticket_verify').setLabel('Verify').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('ticket_kick').setLabel('Kick').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Secondary)
+    );
+    const ticketRow2 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ticket_accept').setLabel('Accept User').setStyle(ButtonStyle.Success)
+    );
+
+    const intro = baseEmbed().setColor(0x2C2F33).setTitle('ticket opened')
+      .setDescription(`opener: ${interaction.user}\nroblox username: \`${robloxUsername}\`\n\nrunning a group check now — staff use the buttons below.`);
+
+    await ch.send({
+      content: `${interaction.user} ${supportPing}`.trim(),
+      embeds: [intro],
+      components: [ticketRow1, ticketRow2],
+      allowedMentions: { users: [interaction.user.id], roles: support }
+    });
+
+    // auto group check
+    try {
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false }) })).json()).data?.[0];
+      if (!userBasic) {
+        await ch.send({ embeds: [errorEmbed('roblox user not found').setDescription(`could not find a roblox user named **${robloxUsername}**`)] });
+      } else {
+        const userId = userBasic.id;
+        const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
+        const displayName = userBasic.displayName || userBasic.name;
+        const inGroup = groupsData.some(g => String(g.group.id) === getGroupId());
+        const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
+        const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
+        gcCache.set(robloxUsername.toLowerCase(), { displayName, groups, avatarUrl });
+        setTimeout(() => gcCache.delete(robloxUsername.toLowerCase()), 10 * 60 * 1000);
+        const userGroupIds = new Set(groups.map(g => String(g.group.id)));
+        const statusEmbed = inGroup ? buildGcInGroupEmbed(displayName, userGroupIds) : buildGcNotInGroupEmbed(displayName, userGroupIds);
+        await ch.send({
+          embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), statusEmbed],
+          components: groups.length > GC_PER_PAGE ? [buildGcRow(robloxUsername, groups, 0)] : []
+        });
+      }
+    } catch (e) {
+      await ch.send({ embeds: [errorEmbed('group check failed').setDescription(`couldn't load groups — ${e.message}`)] });
+    }
+
+    sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('ticket opened').setDescription(`${interaction.user.tag} opened ${ch} (roblox: \`${robloxUsername}\`)`));
+    return interaction.editReply({ embeds: [successEmbed('ticket created').setDescription(`your ticket: ${ch}`)] });
+  }
+
   // ── Buttons ─────────────────────────────────────────────────────────────────
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('help_')) {
@@ -2111,78 +2298,101 @@ async function dispatchSlash(interaction) {
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
     }
 
-    // ── ticket panel: open a ticket ───────────────────────────────────────────
+    // ── ticket panel: open a ticket (shows roblox username modal) ────────────
     if (interaction.customId === 'ticket_open') {
-      const guild = interaction.guild;
-      if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+      if (!interaction.guild) return interaction.reply({ content: 'server only', ephemeral: true });
       const tickets = loadTickets();
       const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id);
       if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open ticket: <#${existing[0]}>`)], ephemeral: true });
-      await interaction.deferReply({ ephemeral: true });
+      const modal = new ModalBuilder().setCustomId('ticket_open_modal').setTitle('Open a Ticket')
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('ticket_roblox_username')
+            .setLabel('Roblox Username')
+            .setPlaceholder('Enter your Roblox username...')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(20)
+        ));
+      return interaction.showModal(modal);
+    }
+
+    // ── ticket: staff buttons (verify / kick / claim / accept) ───────────────
+    if (interaction.customId === 'ticket_verify' || interaction.customId === 'ticket_kick' ||
+        interaction.customId === 'ticket_claim'  || interaction.customId === 'ticket_accept') {
+      const guild = interaction.guild;
+      if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+      const tickets = loadTickets();
+      const t = tickets[interaction.channel.id];
+      if (!t) return interaction.reply({ embeds: [errorEmbed('not a ticket').setDescription('this isn\'t a ticket channel')], ephemeral: true });
       const support = loadTicketSupport();
-      // staff who automatically see every ticket: wl managers, temp owners, whitelisted users
-      const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
-      const staffIds = new Set([
-        ...loadWlManagers(),
-        ...envMgrs,
-        ...loadTempOwners(),
-        ...loadWhitelist()
-      ]);
-      staffIds.delete(interaction.user.id); // already added below as the opener
-      const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
-      if (!me || !me.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
-        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription('i need the **Manage Channels** permission to create tickets')] });
-      }
-      const overwrites = [
-        { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
-        { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
-      ];
-      // only add support roles that still exist in this guild
-      for (const rid of support) {
-        if (guild.roles.cache.has(rid)) {
-          overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-        }
-      }
-      // only add staff users that are actually members of this guild
-      for (const uid of staffIds) {
-        const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
-        if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-      }
-      // only use parent category if the bot can manage channels there
-      let parentId = interaction.channel.parentId || undefined;
-      if (parentId) {
-        const parent = guild.channels.cache.get(parentId);
-        if (!parent || !parent.permissionsFor(me)?.has(PermissionsBitField.Flags.ManageChannels)) {
-          parentId = undefined;
-        }
-      }
-      try {
-        const ch = await guild.channels.create({
-          name: `ticket-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90) || `ticket-${interaction.user.id}`,
-          type: ChannelType.GuildText,
-          parent: parentId,
-          permissionOverwrites: overwrites,
-          reason: `ticket opened by ${interaction.user.tag}`
-        });
-        tickets[ch.id] = { userId: interaction.user.id, openedAt: Date.now() };
+      const isStaff = isWlManager(interaction.user.id) || isTempOwner(interaction.user.id) ||
+        interaction.member.roles.cache.some(r => support.includes(r.id));
+      if (!isStaff) return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only support roles, whitelist managers, or temp owners can use this button')], ephemeral: true });
+
+      // ── claim ───────────────────────────────────────────────────────────────
+      if (interaction.customId === 'ticket_claim') {
+        if (t.claimedBy) return interaction.reply({ embeds: [errorEmbed('already claimed').setDescription(`this ticket is already claimed by <@${t.claimedBy}>`)], ephemeral: true });
+        t.claimedBy = interaction.user.id;
+        tickets[interaction.channel.id] = t;
         saveTickets(tickets);
-        const supportPing = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
-        const closeRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Secondary)
-        );
-        await ch.send({
-          content: `${interaction.user} ${supportPing}`.trim(),
-          embeds: [baseEmbed().setColor(0x2C2F33).setTitle('ticket opened').setDescription('describe your issue and a support member will be with you shortly. use the button below or `/closeticket` to close.')],
-          components: [closeRow],
-          allowedMentions: { users: [interaction.user.id], roles: support }
-        });
-        sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('ticket opened').setDescription(`${interaction.user.tag} opened ${ch}`));
-        return interaction.editReply({ embeds: [successEmbed('ticket created').setDescription(`your ticket: ${ch}`)] });
-      } catch (err) {
-        console.error('ticket create failed:', err);
-        const reason = err?.rawError?.message || err?.message || 'unknown error';
-        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`could not create ticket channel — ${reason}\n\nmake sure i have **Manage Channels**, **View Channel**, and **Send Messages** in this server (and in the parent category if any).`)] });
+        return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('ticket claimed').setDescription(`${interaction.user} has claimed this ticket`)] });
+      }
+
+      // ── kick ────────────────────────────────────────────────────────────────
+      if (interaction.customId === 'ticket_kick') {
+        const member = await guild.members.fetch(t.userId).catch(() => null);
+        if (!member) return interaction.reply({ embeds: [errorEmbed('failed').setDescription('the ticket opener is no longer in this server')], ephemeral: true });
+        if (!member.kickable) return interaction.reply({ embeds: [errorEmbed('failed').setDescription('i can\'t kick this user — check my role position and permissions')], ephemeral: true });
+        try {
+          await member.kick(`ticket kick by ${interaction.user.tag}`);
+          return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('user kicked').setDescription(`${member.user.tag} was kicked by ${interaction.user}`)] });
+        } catch (e) {
+          return interaction.reply({ embeds: [errorEmbed('failed').setDescription(`couldn't kick — ${e.message}`)], ephemeral: true });
+        }
+      }
+
+      // ── accept user (give verify role) ──────────────────────────────────────
+      if (interaction.customId === 'ticket_accept') {
+        const vcfg = loadVerifyConfig();
+        if (!vcfg.roleId) return interaction.reply({ embeds: [errorEmbed('no verify role').setDescription('no verify role is set — use `/setverifyrole` first')], ephemeral: true });
+        const role = guild.roles.cache.get(vcfg.roleId);
+        if (!role) return interaction.reply({ embeds: [errorEmbed('failed').setDescription('the configured verify role no longer exists')], ephemeral: true });
+        const member = await guild.members.fetch(t.userId).catch(() => null);
+        if (!member) return interaction.reply({ embeds: [errorEmbed('failed').setDescription('the ticket opener is no longer in this server')], ephemeral: true });
+        try {
+          await member.roles.add(role, `ticket accept by ${interaction.user.tag}`);
+          return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('user accepted').setDescription(`${member} has been given ${role}`)] });
+        } catch (e) {
+          return interaction.reply({ embeds: [errorEmbed('failed').setDescription(`couldn't add role — ${e.message}`)], ephemeral: true });
+        }
+      }
+
+      // ── verify (re-run group check on the saved roblox username) ────────────
+      if (interaction.customId === 'ticket_verify') {
+        const username = t.robloxUsername;
+        if (!username) return interaction.reply({ embeds: [errorEmbed('no username').setDescription('no roblox username is attached to this ticket')], ephemeral: true });
+        await interaction.deferReply();
+        try {
+          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+          if (!userBasic) return interaction.editReply({ embeds: [errorEmbed('not found').setDescription(`could not find a roblox user named **${username}**`)] });
+          const userId = userBasic.id;
+          const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
+          const displayName = userBasic.displayName || userBasic.name;
+          const inGroup = groupsData.some(g => String(g.group.id) === getGroupId());
+          const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
+          const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
+          gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
+          setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
+          const userGroupIds = new Set(groups.map(g => String(g.group.id)));
+          const statusEmbed = inGroup ? buildGcInGroupEmbed(displayName, userGroupIds) : buildGcNotInGroupEmbed(displayName, userGroupIds);
+          return interaction.editReply({
+            embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), statusEmbed],
+            components: groups.length > GC_PER_PAGE ? [buildGcRow(username, groups, 0)] : []
+          });
+        } catch (e) {
+          return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`couldn't verify — ${e.message}`)] });
+        }
       }
     }
 
@@ -2505,6 +2715,16 @@ async function dispatchSlash(interaction) {
         components: [new ActionRowBuilder().addComponents(joinBtn)]
       });
     } catch (e) { return interaction.editReply("something went wrong loading their info, try again"); }
+  }
+
+  if (commandName === 'rg') {
+    if (!isWlManager(interaction.user.id) && !isTempOwner(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers and temp owners can use `/rg`')], ephemeral: true });
+    const link = interaction.options.getString('link');
+    const parsed = parseRobloxGroupLink(link);
+    if (!parsed) return interaction.reply({ embeds: [errorEmbed('invalid link').setDescription('give a roblox group link like `https://www.roblox.com/communities/12345/about` or just the group id')], ephemeral: true });
+    setGroupConfig(parsed);
+    return interaction.reply({ embeds: [successEmbed('group updated').setDescription(`now using group \`${parsed.groupId}\`\n${parsed.groupLink}`)] });
   }
 
   if (commandName === 'gc') {
@@ -4812,6 +5032,17 @@ async function dispatchPrefix(message) {
         components: [new ActionRowBuilder().addComponents(joinBtn)]
       });
     } catch { return message.reply("something went wrong loading their info, try again"); }
+  }
+
+  if (command === 'rg') {
+    if (!isWlManager(message.author.id) && !isTempOwner(message.author.id))
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers and temp owners can use `.rg`')] });
+    const link = args.join(' ').trim();
+    if (!link) return message.reply({ embeds: [errorEmbed('missing link').setDescription('usage: `.rg <roblox group link or id>`')] });
+    const parsed = parseRobloxGroupLink(link);
+    if (!parsed) return message.reply({ embeds: [errorEmbed('invalid link').setDescription('give a roblox group link like `https://www.roblox.com/communities/12345/about` or just the group id')] });
+    setGroupConfig(parsed);
+    return message.reply({ embeds: [successEmbed('group updated').setDescription(`now using group \`${parsed.groupId}\`\n${parsed.groupLink}`)] });
   }
 
   if (command === 'gc') {
@@ -7124,5 +7355,21 @@ http.createServer(async (req, res) => {
 }).listen(ATTEND_PORT, () => {
   console.log(`attend server listening on port ${ATTEND_PORT}`);
 });
+
+// Survive transient errors so the bot doesn't crash mid-write and lose data.
+process.on('uncaughtException', (err) => { console.error('uncaughtException:', err); });
+process.on('unhandledRejection', (reason) => { console.error('unhandledRejection:', reason); });
+
+// Graceful shutdown: try to log out cleanly so any in-flight writes finish.
+let shuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`received ${signal}, shutting down...`);
+  try { await client.destroy(); } catch {}
+  process.exit(0);
+}
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 client.login(process.env.DISCORD_TOKEN);
