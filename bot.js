@@ -2509,6 +2509,40 @@ async function dispatchSlash(interaction) {
 
   // ── Select menus ────────────────────────────────────────────────────────────
   if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
+    // /setuptickets panel kind picker → show the right modal
+    if (interaction.customId === 'ticket_kind_select') {
+      const kind = interaction.values[0];
+      if (kind === 'verification') {
+        const tickets = loadTickets();
+        const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && (t.kind === 'ticket' || !t.kind));
+        if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open ticket: <#${existing[0]}>`)], ephemeral: true });
+        const modal = new ModalBuilder().setCustomId('ticket_open_modal').setTitle('Open a Ticket')
+          .addComponents(new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('ticket_roblox_username')
+              .setLabel('Roblox Username')
+              .setPlaceholder('Enter your Roblox username...')
+              .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(20)
+          ));
+        return interaction.showModal(modal);
+      }
+      if (kind === 'tag') {
+        const tickets = loadTickets();
+        const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tag');
+        if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
+        const modal = new ModalBuilder().setCustomId('tag_open_modal').setTitle('Open a Tag Ticket')
+          .addComponents(new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('tag_roblox_username')
+              .setLabel('Roblox Username')
+              .setPlaceholder('Enter your Roblox username...')
+              .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(20)
+          ));
+        return interaction.showModal(modal);
+      }
+      return interaction.reply({ content: 'unknown choice', ephemeral: true });
+    }
+
     // /setuptag self-tag select → opener picked their own tag, await whitelist approval
     if (interaction.customId.startsWith('tag_select:')) {
       const parts = interaction.customId.split(':');
@@ -4485,10 +4519,15 @@ async function dispatchSlash(interaction) {
     const title = interaction.options.getString('title') || 'Open a Ticket';
     const description = interaction.options.getString('description') || 'click the button below to open a ticket. a private channel will be created for you and the support team.';
     if (ch.type !== ChannelType.GuildText) return interaction.reply({ embeds: [errorEmbed('bad channel').setDescription('pick a text channel')], ephemeral: true });
-    const panel = baseEmbed().setColor(0x2C2F33).setTitle(title).setDescription(description);
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('ticket_open').setLabel('Open Ticket').setStyle(ButtonStyle.Secondary)
-    );
+    const panel = baseEmbed().setColor(0x2C2F33).setTitle(title).setDescription(`${description}\n\n**Verification** — open a verification ticket\n**Tag** — request a roblox tag (a whitelisted user must approve)`);
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('ticket_kind_select')
+      .setPlaceholder('choose what you need…')
+      .addOptions(
+        { label: 'Verification', value: 'verification', description: 'open a verification ticket' },
+        { label: 'Tag',          value: 'tag',          description: 'pick a roblox tag — needs whitelist approval' }
+      );
+    const row = new ActionRowBuilder().addComponents(menu);
     try {
       await ch.send({ embeds: [panel], components: [row] });
       return interaction.reply({ embeds: [successEmbed('ticket panel sent').setDescription(`sent to ${ch}`)], ephemeral: true });
