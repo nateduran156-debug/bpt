@@ -1726,21 +1726,23 @@ client.once('clientReady', async () => {
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
+    // Always register globally so user-install + DM + foreign-server use works.
+    // Clear any stale per-guild registrations to avoid duplicates everywhere
+    // EXCEPT the optional GUILD_ID, which gets a duplicate guild-scoped copy
+    // for instant updates during development.
     const guildId = process.env.GUILD_ID;
+    for (const [gid] of client.guilds.cache) {
+      if (gid === guildId) continue;
+      try { await rest.put(Routes.applicationGuildCommands(client.user.id, gid), { body: [] }); } catch {}
+    }
+    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
     if (guildId) {
-      // Guild-only registration for instant availability. Clear globals first
-      // so commands don't appear twice in the server.
-      await rest.put(Routes.applicationCommands(client.user.id), { body: [] });
-      await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: slashCommands });
-      console.log('slash commands registered to guild (globals cleared to avoid duplicates)');
+      try {
+        await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: slashCommands });
+        console.log('slash commands registered globally + dev guild (instant updates in GUILD_ID)');
+      } catch (e) { console.error('dev guild register failed:', e.message); }
     } else {
-      // Global registration so commands work everywhere (and in DMs). Clear any
-      // stale guild registrations first to avoid duplicates.
-      for (const [gid] of client.guilds.cache) {
-        try { await rest.put(Routes.applicationGuildCommands(client.user.id, gid), { body: [] }); } catch {}
-      }
-      await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
-      console.log('slash commands registered globally (guild duplicates cleared)');
+      console.log('slash commands registered globally (works in any server + DMs)');
     }
   } catch (err) { console.error('failed to register slash commands:', err.message); }
 
@@ -2436,6 +2438,19 @@ async function dispatchSlash(interaction) {
       const allowedGuild = !!interaction.guild && (canUseRole(interaction.member) || interaction.user.id === ownerId);
       if (!allowedDm && !allowedGuild)
         return interaction.reply({ content: 'only the ticket owner or staff can close this', ephemeral: true });
+
+      // If this is a real ticket channel, delete it like /closeticket does.
+      const tickets = loadTickets();
+      const t = interaction.channel ? tickets[interaction.channel.id] : null;
+      if (t && t.kind === 'tagticket' && interaction.guild) {
+        await interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('closing tag ticket').setDescription(`closed by <@${interaction.user.id}> — channel will be deleted in 3s`)] });
+        delete tickets[interaction.channel.id]; saveTickets(tickets);
+        sendBotLog(interaction.guild, baseEmbed().setColor(0x2C2F33).setTitle('tag ticket closed').setDescription(`<#${interaction.channel.id}> (${interaction.channel.name}) closed by ${interaction.user.tag}`));
+        setTimeout(() => { interaction.channel.delete(`tag ticket closed by ${interaction.user.tag}`).catch(() => {}); }, 3000);
+        return;
+      }
+
+      // Inline / DM panel: just edit the message.
       try {
         await interaction.update({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Tag Ticket Closed').setDescription(`closed by <@${interaction.user.id}>`)], components: [] });
       } catch {
@@ -4206,7 +4221,7 @@ async function dispatchSlash(interaction) {
     return;
   }
 
-  // ── /tagticket — open a tag ticket panel (works in DMs and servers) ────────
+  // ── /tagticket — open a tag ticket (real channel when possible) ────────────
   if (commandName === 'tagticket') {
     const vData = loadVerify();
     const linked = vData?.verified?.[interaction.user.id];
@@ -4218,18 +4233,85 @@ async function dispatchSlash(interaction) {
     }
 
     const robloxLink = `https://www.roblox.com/users/${linked.robloxId}/profile`;
-    const e = baseEmbed().setColor(0x2C2F33)
+    const panelEmbed = baseEmbed().setColor(0x2C2F33)
       .setTitle('Tag Ticket')
       .setDescription(`tag ticket opened by <@${interaction.user.id}>\n\nstaff: click **Tag** to pick a tag from the list — it will be applied to the linked Roblox account below.`)
       .addFields({ name: 'username', value: `[\`${linked.robloxName}\`](${robloxLink})`, inline: true })
       .setTimestamp();
 
-    const row = new ActionRowBuilder().addComponents(
+    const panelRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`tagticket_tag:${interaction.user.id}`).setLabel('Tag').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`tagticket_close:${interaction.user.id}`).setLabel('Close').setStyle(ButtonStyle.Secondary)
     );
 
-    return interaction.reply({ embeds: [e], components: [row] });
+    // Try to create a real ticket channel in the current guild (only works
+    // when the bot itself is a member with Manage Channels — i.e. the home
+    // server, not a foreign server where this is just user-installed).
+    const guild = interaction.guild;
+    const me = guild ? (guild.members.me ?? await guild.members.fetchMe().catch(() => null)) : null;
+    const canCreate = !!(guild && me && me.permissions.has(PermissionsBitField.Flags.ManageChannels));
+
+    if (canCreate) {
+      const tickets = loadTickets();
+      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
+      if (existing) {
+        return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
+      }
+      await interaction.deferReply({ ephemeral: true });
+
+      const support = loadTicketSupport();
+      const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
+      const staffIds = new Set([...loadWlManagers(), ...envMgrs, ...loadTempOwners(), ...loadWhitelist()]);
+      staffIds.delete(interaction.user.id);
+
+      const overwrites = [
+        { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
+        { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
+      ];
+      for (const rid of support) {
+        if (guild.roles.cache.has(rid)) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+      }
+      for (const uid of staffIds) {
+        const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
+        if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+      }
+      let parentId = interaction.channel?.parentId || undefined;
+      if (parentId) {
+        const parent = guild.channels.cache.get(parentId);
+        if (!parent || !parent.permissionsFor(me)?.has(PermissionsBitField.Flags.ManageChannels)) parentId = undefined;
+      }
+
+      let ch;
+      try {
+        ch = await guild.channels.create({
+          name: `tag-${linked.robloxName || interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90) || `tag-${interaction.user.id}`,
+          type: ChannelType.GuildText,
+          parent: parentId,
+          permissionOverwrites: overwrites,
+          reason: `tag ticket opened by ${interaction.user.tag}`
+        });
+      } catch (err) {
+        console.error('tagticket create failed:', err);
+        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`could not create ticket channel — ${err?.rawError?.message || err.message}`)] });
+      }
+
+      tickets[ch.id] = { userId: interaction.user.id, openedAt: Date.now(), robloxUsername: linked.robloxName, kind: 'tagticket' };
+      saveTickets(tickets);
+
+      const supportPing = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
+      await ch.send({
+        content: `${interaction.user} ${supportPing}`.trim(),
+        embeds: [panelEmbed],
+        components: [panelRow],
+        allowedMentions: { users: [interaction.user.id], roles: support }
+      });
+      sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('tag ticket opened').setDescription(`${interaction.user.tag} opened ${ch} (roblox: \`${linked.robloxName}\`)`));
+      return interaction.editReply({ embeds: [successEmbed('tag ticket created').setDescription(`your tag ticket: ${ch}`)] });
+    }
+
+    // Fallback (DMs / foreign servers / missing perms): post the panel inline.
+    return interaction.reply({ embeds: [panelEmbed], components: [panelRow] });
   }
 
   // ── /taglog — recent tag-log entries ────────────────────────────────────────
