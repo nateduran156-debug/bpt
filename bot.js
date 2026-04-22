@@ -1613,6 +1613,12 @@ const slashCommands = [
     .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
     .addStringOption(o => o.setName('description').setDescription('panel description').setRequired(false)),
 
+  new SlashCommandBuilder().setName('setuptagtickets').setDescription('Send a tag-ticket panel embed to a channel')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addChannelOption(o => o.setName('channel').setDescription('channel for the panel').setRequired(true))
+    .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
+    .addStringOption(o => o.setName('description').setDescription('panel description').setRequired(false)),
+
   new SlashCommandBuilder().setName('closeticket').setDescription('Close and delete the current ticket channel')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
@@ -1726,24 +1732,18 @@ client.once('clientReady', async () => {
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    // Always register globally so user-install + DM + foreign-server use works.
-    // Clear any stale per-guild registrations to avoid duplicates everywhere
-    // EXCEPT the optional GUILD_ID, which gets a duplicate guild-scoped copy
-    // for instant updates during development.
-    const guildId = process.env.GUILD_ID;
+    // Always register globally so the bot works in any server (guild-install
+    // or user-install) and in DMs. Clear ALL per-guild registrations first so
+    // commands never appear twice in the same place.
     for (const [gid] of client.guilds.cache) {
-      if (gid === guildId) continue;
       try { await rest.put(Routes.applicationGuildCommands(client.user.id, gid), { body: [] }); } catch {}
     }
-    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
-    if (guildId) {
-      try {
-        await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: slashCommands });
-        console.log('slash commands registered globally + dev guild (instant updates in GUILD_ID)');
-      } catch (e) { console.error('dev guild register failed:', e.message); }
-    } else {
-      console.log('slash commands registered globally (works in any server + DMs)');
+    const guildId = process.env.GUILD_ID;
+    if (guildId && !client.guilds.cache.has(guildId)) {
+      try { await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: [] }); } catch {}
     }
+    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
+    console.log('slash commands registered globally (any server + DMs, no duplicates)');
   } catch (err) { console.error('failed to register slash commands:', err.message); }
 
   const startupChannelId = process.env.STARTUP_CHANNEL_ID;
@@ -2457,28 +2457,39 @@ async function dispatchSlash(interaction) {
 
       // Acknowledge the select interaction quickly and then post the approval prompt.
       await interaction.update({
-        content: `tag pending approval — waiting on <@${ownerId}> to reply \`approve\` or \`deny\` in this ticket.`,
+        content: `tag pending approval — a different whitelisted user must reply \`approve\` or \`deny\` in this ticket.`,
         components: []
       });
 
+      // Whitelisted approvers = bot whitelist + wl managers + temp owners + env mgrs,
+      // EXCLUDING the staff member who picked the tag (so they can't self-approve)
+      // and the ticket opener.
+      const envMgrs2 = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
+      const approverPool = new Set([...loadWhitelist(), ...loadWlManagers(), ...loadTempOwners(), ...envMgrs2]);
+      approverPool.delete(interaction.user.id);
+      approverPool.delete(ownerId);
+      const isApprover = (uid) => approverPool.has(uid);
+
       const channel = interaction.channel;
       const promptEmbed = baseEmbed().setColor(0x2C2F33).setTitle('tag pending approval')
-        .setDescription(`<@${ownerId}>, **${interaction.user.tag}** wants to tag you as **${lookup.name}** on roblox account **${robloxName}**.\n\nreply with \`approve\` to accept or \`deny\` to reject (60 seconds).`)
+        .setDescription(`**${interaction.user.tag}** wants to tag <@${ownerId}> as **${lookup.name}** on roblox account **${robloxName}**.\n\na **whitelisted user** (other than the requester or the opener) must reply \`approve\` or \`deny\` within 5 minutes.`)
         .addFields(
           { name: 'tag', value: `${lookup.name} \`${lookup.id}\``, inline: true },
           { name: 'roblox', value: `\`${robloxName}\``, inline: true },
           { name: 'requested by', value: `<@${interaction.user.id}>`, inline: true }
         ).setTimestamp();
-      const promptMsg = await channel.send({ content: `<@${ownerId}>`, embeds: [promptEmbed], allowedMentions: { users: [ownerId] } });
+      const promptMsg = await channel.send({ embeds: [promptEmbed] });
 
       try {
         const collected = await channel.awaitMessages({
-          filter: m => m.author.id === ownerId && /^(approve|deny)$/i.test(m.content.trim()),
-          max: 1, time: 60_000, errors: ['time']
+          filter: m => isApprover(m.author.id) && /^(approve|deny)$/i.test(m.content.trim()),
+          max: 1, time: 5 * 60_000, errors: ['time']
         });
-        const decision = collected.first().content.trim().toLowerCase();
+        const decisionMsg = collected.first();
+        const decision = decisionMsg.content.trim().toLowerCase();
+        const approverId = decisionMsg.author.id;
         if (decision === 'deny') {
-          await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('tag denied').setDescription(`<@${ownerId}> denied the **${lookup.name}** tag.`)] });
+          await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('tag denied').setDescription(`<@${approverId}> denied the **${lookup.name}** tag for <@${ownerId}>.`)] });
           return;
         }
         // Approved — apply the tag.
@@ -2491,7 +2502,7 @@ async function dispatchSlash(interaction) {
             targetDiscordId: ownerId, guildId: interaction.guildId
           });
           const e = baseEmbed().setColor(0x2C2F33).setTitle('tag given')
-            .setDescription(`tagged **${result.displayName}** as **${lookup.name}** (approved by <@${ownerId}>)`)
+            .setDescription(`tagged **${result.displayName}** as **${lookup.name}** (approved by <@${approverId}>)`)
             .addFields(
               { name: 'discord', value: `<@${ownerId}>`, inline: true },
               { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
@@ -2582,6 +2593,24 @@ async function dispatchSlash(interaction) {
         return interaction.reply({ content: 'closed', ephemeral: true });
       }
       return;
+    }
+
+    // ── tag ticket panel: open a tag ticket (shows roblox username modal) ────
+    if (interaction.customId === 'tagticket_open') {
+      const tickets = loadTickets();
+      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
+      if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
+      const modal = new ModalBuilder().setCustomId('tagticket_open_modal').setTitle('Open a Tag Ticket')
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('tagticket_roblox_username')
+            .setLabel('Roblox Username')
+            .setPlaceholder('Enter your Roblox username...')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(20)
+        ));
+      return interaction.showModal(modal);
     }
 
     // ── ticket panel: open a ticket (shows roblox username modal) ────────────
@@ -4228,6 +4257,27 @@ async function dispatchSlash(interaction) {
     try {
       await ch.send({ embeds: [panel], components: [row] });
       return interaction.reply({ embeds: [successEmbed('ticket panel sent').setDescription(`sent to ${ch}`)], ephemeral: true });
+    } catch {
+      return interaction.reply({ embeds: [errorEmbed('failed').setDescription('couldn\'t send to that channel — check my permissions')], ephemeral: true });
+    }
+  }
+
+  // ── /setuptagtickets ────────────────────────────────────────────────────────
+  if (commandName === 'setuptagtickets') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setuptagtickets`')], ephemeral: true });
+    const ch = interaction.options.getChannel('channel');
+    const title = interaction.options.getString('title') || 'Open a Tag Ticket';
+    const description = interaction.options.getString('description') || 'click the button below to open a tag ticket. a private channel will be created where staff can pick a tag for you — you\'ll have to **approve** it before it\'s applied to your roblox account.';
+    if (ch.type !== ChannelType.GuildText) return interaction.reply({ embeds: [errorEmbed('bad channel').setDescription('pick a text channel')], ephemeral: true });
+    const panel = baseEmbed().setColor(0x2C2F33).setTitle(title).setDescription(description);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('tagticket_open').setLabel('Open Tag Ticket').setStyle(ButtonStyle.Secondary)
+    );
+    try {
+      await ch.send({ embeds: [panel], components: [row] });
+      return interaction.reply({ embeds: [successEmbed('tag ticket panel sent').setDescription(`sent to ${ch}`)], ephemeral: true });
     } catch {
       return interaction.reply({ embeds: [errorEmbed('failed').setDescription('couldn\'t send to that channel — check my permissions')], ephemeral: true });
     }
