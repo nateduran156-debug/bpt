@@ -2344,10 +2344,96 @@ async function dispatchSlash(interaction) {
     return interaction.editReply({ embeds: [successEmbed('ticket created').setDescription(`your ticket: ${ch}`)] });
   }
 
+  // ── tag-ticket modal submit: create a real ticket channel ──────────────────
+  if (interaction.isModalSubmit() && interaction.customId === 'tagticket_open_modal') {
+    const robloxUsername = interaction.fields.getTextInputValue('tagticket_roblox_username').trim();
+    const tickets = loadTickets();
+    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
+    if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
+
+    const guild = interaction.guild;
+    const me = guild ? (guild.members.me ?? await guild.members.fetchMe().catch(() => null)) : null;
+    const canCreate = !!(guild && me && me.permissions.has(PermissionsBitField.Flags.ManageChannels));
+
+    const robloxLink = `https://www.roblox.com/users/?username=${encodeURIComponent(robloxUsername)}`;
+    const panelEmbed = baseEmbed().setColor(0x2C2F33)
+      .setTitle('Tag Ticket')
+      .setDescription(`tag ticket opened by <@${interaction.user.id}>\n\nstaff: click **Tag** to pick a tag — the opener will then have to **approve** or **deny** it in this ticket before it's applied.`)
+      .addFields({ name: 'roblox username', value: `[\`${robloxUsername}\`](${robloxLink})`, inline: true })
+      .setTimestamp();
+    const panelRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tagticket_tag:${interaction.user.id}:${encodeURIComponent(robloxUsername)}`).setLabel('Tag').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`tagticket_close:${interaction.user.id}`).setLabel('Close').setStyle(ButtonStyle.Secondary)
+    );
+
+    if (!canCreate) {
+      // Fallback for DMs / foreign servers — post the panel inline (no real channel possible).
+      return interaction.reply({ embeds: [panelEmbed], components: [panelRow] });
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const support = loadTicketSupport();
+    const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
+    const staffIds = new Set([...loadWlManagers(), ...envMgrs, ...loadTempOwners(), ...loadWhitelist()]);
+    staffIds.delete(interaction.user.id);
+
+    const overwrites = [
+      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+      { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
+      { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
+    ];
+    for (const rid of support) {
+      if (guild.roles.cache.has(rid)) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+    }
+    for (const uid of staffIds) {
+      const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
+      if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
+    }
+    let parentId = interaction.channel?.parentId || undefined;
+    if (parentId) {
+      const parent = guild.channels.cache.get(parentId);
+      if (!parent || !parent.permissionsFor(me)?.has(PermissionsBitField.Flags.ManageChannels)) parentId = undefined;
+    }
+
+    let ch;
+    try {
+      ch = await guild.channels.create({
+        name: `tag-${robloxUsername || interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90) || `tag-${interaction.user.id}`,
+        type: ChannelType.GuildText,
+        parent: parentId,
+        permissionOverwrites: overwrites,
+        reason: `tag ticket opened by ${interaction.user.tag}`
+      });
+    } catch (err) {
+      console.error('tagticket create failed:', err);
+      return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`could not create ticket channel — ${err?.rawError?.message || err.message}`)] });
+    }
+
+    tickets[ch.id] = { userId: interaction.user.id, openedAt: Date.now(), robloxUsername, kind: 'tagticket' };
+    saveTickets(tickets);
+
+    const supportPing = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
+    await ch.send({
+      content: `${interaction.user} ${supportPing}`.trim(),
+      embeds: [panelEmbed],
+      components: [panelRow],
+      allowedMentions: { users: [interaction.user.id], roles: support }
+    });
+    sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('tag ticket opened').setDescription(`${interaction.user.tag} opened ${ch} (roblox: \`${robloxUsername}\`)`));
+    return interaction.editReply({ embeds: [successEmbed('tag ticket created').setDescription(`your tag ticket: ${ch}`)] });
+  }
+
   // ── Select menus ────────────────────────────────────────────────────────────
   if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
     if (interaction.customId.startsWith('tagticket_select:')) {
-      const ownerId = interaction.customId.split(':')[1];
+      const parts = interaction.customId.split(':');
+      const ownerId = parts[1];
+      const robloxFromBtn = parts[2] ? decodeURIComponent(parts[2]) : '';
+
+      if (interaction.user.id === ownerId)
+        return interaction.reply({ embeds: [errorEmbed('not allowed').setDescription('you cannot tag yourself.')], ephemeral: true });
+
       const allowedDm = !interaction.guild && isWlManager(interaction.user.id);
       const allowedGuild = !!interaction.guild && canUseRole(interaction.member);
       if (!allowedDm && !allowedGuild)
@@ -2359,34 +2445,67 @@ async function dispatchSlash(interaction) {
       if (!lookup)
         return interaction.reply({ embeds: [errorEmbed('unknown tag').setDescription('that tag is no longer registered.')], ephemeral: true });
 
-      const vData = loadVerify();
-      const linked = vData?.verified?.[ownerId];
-      if (!linked || !linked.robloxName)
-        return interaction.reply({ embeds: [errorEmbed('not registered').setDescription(`<@${ownerId}> hasn't linked a Roblox account.`)], ephemeral: true });
+      // Resolve the target's Roblox username: prefer the one supplied when the
+      // ticket was opened; fall back to a registered link if any.
+      let robloxName = robloxFromBtn;
+      if (!robloxName) {
+        const linked = loadVerify()?.verified?.[ownerId];
+        if (linked?.robloxName) robloxName = linked.robloxName;
+      }
+      if (!robloxName)
+        return interaction.reply({ embeds: [errorEmbed('no roblox username').setDescription(`<@${ownerId}> didn't supply a Roblox username when opening the ticket.`)], ephemeral: true });
 
-      await interaction.deferReply({ ephemeral: true });
+      // Acknowledge the select interaction quickly and then post the approval prompt.
+      await interaction.update({
+        content: `tag pending approval — waiting on <@${ownerId}> to reply \`approve\` or \`deny\` in this ticket.`,
+        components: []
+      });
+
+      const channel = interaction.channel;
+      const promptEmbed = baseEmbed().setColor(0x2C2F33).setTitle('tag pending approval')
+        .setDescription(`<@${ownerId}>, **${interaction.user.tag}** wants to tag you as **${lookup.name}** on roblox account **${robloxName}**.\n\nreply with \`approve\` to accept or \`deny\` to reject (60 seconds).`)
+        .addFields(
+          { name: 'tag', value: `${lookup.name} \`${lookup.id}\``, inline: true },
+          { name: 'roblox', value: `\`${robloxName}\``, inline: true },
+          { name: 'requested by', value: `<@${interaction.user.id}>`, inline: true }
+        ).setTimestamp();
+      const promptMsg = await channel.send({ content: `<@${ownerId}>`, embeds: [promptEmbed], allowedMentions: { users: [ownerId] } });
+
       try {
-        const result = await rankRobloxUser(linked.robloxName, lookup.id);
-        appendTagLog({
-          action: 'tagticket', tag: lookup.name, roblox: result.displayName,
-          robloxId: result.userId, giverId: interaction.user.id, giverTag: interaction.user.tag,
-          targetDiscordId: ownerId, guildId: interaction.guildId
+        const collected = await channel.awaitMessages({
+          filter: m => m.author.id === ownerId && /^(approve|deny)$/i.test(m.content.trim()),
+          max: 1, time: 60_000, errors: ['time']
         });
-        const e = baseEmbed().setColor(0x2C2F33).setTitle('tag given')
-          .setDescription(`tagged **${result.displayName}** as **${lookup.name}**`)
-          .addFields(
-            { name: 'discord', value: `<@${ownerId}>`, inline: true },
-            { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
-            { name: 'tag', value: `${lookup.name} \`${lookup.id}\``, inline: true },
-            { name: 'given by', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: false }
-          ).setTimestamp();
-        if (result.avatarUrl) e.setThumbnail(result.avatarUrl);
-        await interaction.editReply({ embeds: [e] });
-        // also drop a public confirmation in the same channel (best effort)
-        try { await interaction.channel?.send({ embeds: [e] }); } catch {}
-        if (interaction.guild) sendBotLog(interaction.guild, e);
-      } catch (err) {
-        await interaction.editReply({ embeds: [errorEmbed('failed').setDescription(err.message)] });
+        const decision = collected.first().content.trim().toLowerCase();
+        if (decision === 'deny') {
+          await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('tag denied').setDescription(`<@${ownerId}> denied the **${lookup.name}** tag.`)] });
+          return;
+        }
+        // Approved — apply the tag.
+        const pending = await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('applying tag').setDescription(`approved — ranking **${robloxName}** as **${lookup.name}**…`)] });
+        try {
+          const result = await rankRobloxUser(robloxName, lookup.id);
+          appendTagLog({
+            action: 'tagticket', tag: lookup.name, roblox: result.displayName,
+            robloxId: result.userId, giverId: interaction.user.id, giverTag: interaction.user.tag,
+            targetDiscordId: ownerId, guildId: interaction.guildId
+          });
+          const e = baseEmbed().setColor(0x2C2F33).setTitle('tag given')
+            .setDescription(`tagged **${result.displayName}** as **${lookup.name}** (approved by <@${ownerId}>)`)
+            .addFields(
+              { name: 'discord', value: `<@${ownerId}>`, inline: true },
+              { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
+              { name: 'tag', value: `${lookup.name} \`${lookup.id}\``, inline: true },
+              { name: 'given by', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: false }
+            ).setTimestamp();
+          if (result.avatarUrl) e.setThumbnail(result.avatarUrl);
+          await pending.edit({ embeds: [e] }).catch(() => channel.send({ embeds: [e] }));
+          if (interaction.guild) sendBotLog(interaction.guild, e);
+        } catch (err) {
+          await pending.edit({ embeds: [errorEmbed('failed').setDescription(err.message)] }).catch(() => channel.send({ embeds: [errorEmbed('failed').setDescription(err.message)] }));
+        }
+      } catch {
+        await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('approval timed out').setDescription(`no reply from <@${ownerId}> in 60s — tag was not applied.`)] }).catch(() => {});
       }
       return;
     }
@@ -2401,7 +2520,13 @@ async function dispatchSlash(interaction) {
 
     // ── tagticket: Tag button → ephemeral select menu of all registered tags ──
     if (interaction.customId.startsWith('tagticket_tag:')) {
-      const ownerId = interaction.customId.split(':')[1];
+      const parts = interaction.customId.split(':');
+      const ownerId = parts[1];
+      const robloxFromBtn = parts[2] ? decodeURIComponent(parts[2]) : '';
+      // anyone except the opener can pick a tag — the opener must approve it later
+      if (interaction.user.id === ownerId)
+        return interaction.reply({ embeds: [errorEmbed('not allowed').setDescription('you cannot tag yourself — wait for someone else to pick a tag for you.')], ephemeral: true });
+
       // permission: in DMs only WL managers; in guilds anyone with role perms
       const allowedDm = !interaction.guild && isWlManager(interaction.user.id);
       const allowedGuild = !!interaction.guild && canUseRole(interaction.member);
@@ -2421,7 +2546,7 @@ async function dispatchSlash(interaction) {
       }));
 
       const menu = new StringSelectMenuBuilder()
-        .setCustomId(`tagticket_select:${ownerId}`)
+        .setCustomId(`tagticket_select:${ownerId}:${encodeURIComponent(robloxFromBtn)}`)
         .setPlaceholder('pick a tag to give')
         .addOptions(options);
 
@@ -4221,97 +4346,23 @@ async function dispatchSlash(interaction) {
     return;
   }
 
-  // ── /tagticket — open a tag ticket (real channel when possible) ────────────
+  // ── /tagticket — anyone can open one; shows roblox-username modal ─────────
   if (commandName === 'tagticket') {
-    const vData = loadVerify();
-    const linked = vData?.verified?.[interaction.user.id];
-    if (!linked || !linked.robloxName) {
-      return interaction.reply({
-        embeds: [errorEmbed('not registered').setDescription('you need to link your Roblox account first — run `/register` (or `.register YourRobloxUsername`) before opening a tag ticket.')],
-        ephemeral: true
-      });
-    }
+    const tickets = loadTickets();
+    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
+    if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
 
-    const robloxLink = `https://www.roblox.com/users/${linked.robloxId}/profile`;
-    const panelEmbed = baseEmbed().setColor(0x2C2F33)
-      .setTitle('Tag Ticket')
-      .setDescription(`tag ticket opened by <@${interaction.user.id}>\n\nstaff: click **Tag** to pick a tag from the list — it will be applied to the linked Roblox account below.`)
-      .addFields({ name: 'username', value: `[\`${linked.robloxName}\`](${robloxLink})`, inline: true })
-      .setTimestamp();
-
-    const panelRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`tagticket_tag:${interaction.user.id}`).setLabel('Tag').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`tagticket_close:${interaction.user.id}`).setLabel('Close').setStyle(ButtonStyle.Secondary)
-    );
-
-    // Try to create a real ticket channel in the current guild (only works
-    // when the bot itself is a member with Manage Channels — i.e. the home
-    // server, not a foreign server where this is just user-installed).
-    const guild = interaction.guild;
-    const me = guild ? (guild.members.me ?? await guild.members.fetchMe().catch(() => null)) : null;
-    const canCreate = !!(guild && me && me.permissions.has(PermissionsBitField.Flags.ManageChannels));
-
-    if (canCreate) {
-      const tickets = loadTickets();
-      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
-      if (existing) {
-        return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
-      }
-      await interaction.deferReply({ ephemeral: true });
-
-      const support = loadTicketSupport();
-      const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
-      const staffIds = new Set([...loadWlManagers(), ...envMgrs, ...loadTempOwners(), ...loadWhitelist()]);
-      staffIds.delete(interaction.user.id);
-
-      const overwrites = [
-        { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
-        { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
-      ];
-      for (const rid of support) {
-        if (guild.roles.cache.has(rid)) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-      }
-      for (const uid of staffIds) {
-        const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
-        if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-      }
-      let parentId = interaction.channel?.parentId || undefined;
-      if (parentId) {
-        const parent = guild.channels.cache.get(parentId);
-        if (!parent || !parent.permissionsFor(me)?.has(PermissionsBitField.Flags.ManageChannels)) parentId = undefined;
-      }
-
-      let ch;
-      try {
-        ch = await guild.channels.create({
-          name: `tag-${linked.robloxName || interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90) || `tag-${interaction.user.id}`,
-          type: ChannelType.GuildText,
-          parent: parentId,
-          permissionOverwrites: overwrites,
-          reason: `tag ticket opened by ${interaction.user.tag}`
-        });
-      } catch (err) {
-        console.error('tagticket create failed:', err);
-        return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`could not create ticket channel — ${err?.rawError?.message || err.message}`)] });
-      }
-
-      tickets[ch.id] = { userId: interaction.user.id, openedAt: Date.now(), robloxUsername: linked.robloxName, kind: 'tagticket' };
-      saveTickets(tickets);
-
-      const supportPing = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
-      await ch.send({
-        content: `${interaction.user} ${supportPing}`.trim(),
-        embeds: [panelEmbed],
-        components: [panelRow],
-        allowedMentions: { users: [interaction.user.id], roles: support }
-      });
-      sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('tag ticket opened').setDescription(`${interaction.user.tag} opened ${ch} (roblox: \`${linked.robloxName}\`)`));
-      return interaction.editReply({ embeds: [successEmbed('tag ticket created').setDescription(`your tag ticket: ${ch}`)] });
-    }
-
-    // Fallback (DMs / foreign servers / missing perms): post the panel inline.
-    return interaction.reply({ embeds: [panelEmbed], components: [panelRow] });
+    const modal = new ModalBuilder().setCustomId('tagticket_open_modal').setTitle('Open a Tag Ticket')
+      .addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('tagticket_roblox_username')
+          .setLabel('Roblox Username')
+          .setPlaceholder('Enter your Roblox username...')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(20)
+      ));
+    return interaction.showModal(modal);
   }
 
   // ── /taglog — recent tag-log entries ────────────────────────────────────────
