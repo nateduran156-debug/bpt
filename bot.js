@@ -1613,7 +1613,7 @@ const slashCommands = [
     .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
     .addStringOption(o => o.setName('description').setDescription('panel description').setRequired(false)),
 
-  new SlashCommandBuilder().setName('setuptagtickets').setDescription('Send a tag-ticket panel embed to a channel')
+  new SlashCommandBuilder().setName('setuptagticket').setDescription('Send a tag-ticket panel embed to a channel')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addChannelOption(o => o.setName('channel').setDescription('channel for the panel').setRequired(true))
     .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
@@ -4262,14 +4262,14 @@ async function dispatchSlash(interaction) {
     }
   }
 
-  // ── /setuptagtickets ────────────────────────────────────────────────────────
-  if (commandName === 'setuptagtickets') {
+  // ── /setuptagticket ────────────────────────────────────────────────────────
+  if (commandName === 'setuptagticket') {
     if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
     if (!isWlManager(interaction.user.id))
-      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setuptagtickets`')], ephemeral: true });
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setuptagticket`')], ephemeral: true });
     const ch = interaction.options.getChannel('channel');
     const title = interaction.options.getString('title') || 'Open a Tag Ticket';
-    const description = interaction.options.getString('description') || 'click the button below to open a tag ticket. a private channel will be created where staff can pick a tag for you — you\'ll have to **approve** it before it\'s applied to your roblox account.';
+    const description = interaction.options.getString('description') || 'click the button below to open a tag ticket. a private channel will be created for you and the support team.';
     if (ch.type !== ChannelType.GuildText) return interaction.reply({ embeds: [errorEmbed('bad channel').setDescription('pick a text channel')], ephemeral: true });
     const panel = baseEmbed().setColor(0x2C2F33).setTitle(title).setDescription(description);
     const row = new ActionRowBuilder().addComponents(
