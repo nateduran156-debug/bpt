@@ -1,7 +1,8 @@
 import { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder,
   TextInputStyle, PermissionsBitField, ActivityType, ChannelType, REST, Routes,
-  SlashCommandBuilder, ApplicationIntegrationType, InteractionContextType } from 'discord.js'
+  SlashCommandBuilder, ApplicationIntegrationType, InteractionContextType,
+  StringSelectMenuBuilder } from 'discord.js'
 import fs from 'fs'
 import http from 'http'
 import path from 'path'
@@ -1634,6 +1635,9 @@ const slashCommands = [
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addIntegerOption(o => o.setName('limit').setDescription('how many entries to show (default 10)').setRequired(false).setMinValue(1).setMaxValue(50)),
 
+  new SlashCommandBuilder().setName('tagticket').setDescription('Open a tag ticket — staff can give you a registered tag with a single click')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+
   new SlashCommandBuilder().setName('r').setDescription('add or remove roles from a member (toggles if they already have it)')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('member').setDescription('member to give/remove roles').setRequired(true))
@@ -2338,11 +2342,106 @@ async function dispatchSlash(interaction) {
     return interaction.editReply({ embeds: [successEmbed('ticket created').setDescription(`your ticket: ${ch}`)] });
   }
 
+  // ── Select menus ────────────────────────────────────────────────────────────
+  if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
+    if (interaction.customId.startsWith('tagticket_select:')) {
+      const ownerId = interaction.customId.split(':')[1];
+      const allowedDm = !interaction.guild && isWlManager(interaction.user.id);
+      const allowedGuild = !!interaction.guild && canUseRole(interaction.member);
+      if (!allowedDm && !allowedGuild)
+        return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('you no longer have permission to apply tags.')], ephemeral: true });
+
+      const roleId = interaction.values[0];
+      const roles = loadRobloxRoles();
+      const lookup = Object.values(roles).find(r => String(r.id) === String(roleId));
+      if (!lookup)
+        return interaction.reply({ embeds: [errorEmbed('unknown tag').setDescription('that tag is no longer registered.')], ephemeral: true });
+
+      const vData = loadVerify();
+      const linked = vData?.verified?.[ownerId];
+      if (!linked || !linked.robloxName)
+        return interaction.reply({ embeds: [errorEmbed('not registered').setDescription(`<@${ownerId}> hasn't linked a Roblox account.`)], ephemeral: true });
+
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const result = await rankRobloxUser(linked.robloxName, lookup.id);
+        appendTagLog({
+          action: 'tagticket', tag: lookup.name, roblox: result.displayName,
+          robloxId: result.userId, giverId: interaction.user.id, giverTag: interaction.user.tag,
+          targetDiscordId: ownerId, guildId: interaction.guildId
+        });
+        const e = baseEmbed().setColor(0x2C2F33).setTitle('tag given')
+          .setDescription(`tagged **${result.displayName}** as **${lookup.name}**`)
+          .addFields(
+            { name: 'discord', value: `<@${ownerId}>`, inline: true },
+            { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
+            { name: 'tag', value: `${lookup.name} \`${lookup.id}\``, inline: true },
+            { name: 'given by', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: false }
+          ).setTimestamp();
+        if (result.avatarUrl) e.setThumbnail(result.avatarUrl);
+        await interaction.editReply({ embeds: [e] });
+        // also drop a public confirmation in the same channel (best effort)
+        try { await interaction.channel?.send({ embeds: [e] }); } catch {}
+        if (interaction.guild) sendBotLog(interaction.guild, e);
+      } catch (err) {
+        await interaction.editReply({ embeds: [errorEmbed('failed').setDescription(err.message)] });
+      }
+      return;
+    }
+  }
+
   // ── Buttons ─────────────────────────────────────────────────────────────────
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('help_')) {
       const page = parseInt(interaction.customId.split('_')[1]);
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
+    }
+
+    // ── tagticket: Tag button → ephemeral select menu of all registered tags ──
+    if (interaction.customId.startsWith('tagticket_tag:')) {
+      const ownerId = interaction.customId.split(':')[1];
+      // permission: in DMs only WL managers; in guilds anyone with role perms
+      const allowedDm = !interaction.guild && isWlManager(interaction.user.id);
+      const allowedGuild = !!interaction.guild && canUseRole(interaction.member);
+      if (!allowedDm && !allowedGuild)
+        return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only staff (whitelist managers or members allowed via `/setroleperms`) can apply tags.')], ephemeral: true });
+
+      const roles = loadRobloxRoles();
+      const entries = Object.values(roles).filter(r => r && r.id);
+      if (!entries.length)
+        return interaction.reply({ embeds: [errorEmbed('no tags').setDescription('no roblox group roles are registered. a wl manager must add some with `/setrole name:<name> id:<id>`.')], ephemeral: true });
+
+      // Discord limits select menus to 25 options
+      const options = entries.slice(0, 25).map(r => ({
+        label: String(r.name).slice(0, 100),
+        value: String(r.id),
+        description: `roblox role id ${r.id}`.slice(0, 100)
+      }));
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId(`tagticket_select:${ownerId}`)
+        .setPlaceholder('pick a tag to give')
+        .addOptions(options);
+
+      return interaction.reply({
+        content: `pick the tag to give to <@${ownerId}>:`,
+        components: [new ActionRowBuilder().addComponents(menu)],
+        ephemeral: true
+      });
+    }
+
+    if (interaction.customId.startsWith('tagticket_close:')) {
+      const ownerId = interaction.customId.split(':')[1];
+      const allowedDm = !interaction.guild && (isWlManager(interaction.user.id) || interaction.user.id === ownerId);
+      const allowedGuild = !!interaction.guild && (canUseRole(interaction.member) || interaction.user.id === ownerId);
+      if (!allowedDm && !allowedGuild)
+        return interaction.reply({ content: 'only the ticket owner or staff can close this', ephemeral: true });
+      try {
+        await interaction.update({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Tag Ticket Closed').setDescription(`closed by <@${interaction.user.id}>`)], components: [] });
+      } catch {
+        return interaction.reply({ content: 'closed', ephemeral: true });
+      }
+      return;
     }
 
     // ── ticket panel: open a ticket (shows roblox username modal) ────────────
@@ -4069,9 +4168,11 @@ async function dispatchSlash(interaction) {
 
   // ── /tag — same as /role (rank a roblox user) but logged to the tag log ────
   if (commandName === 'tag') {
-    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
-    if (!canUseRole(interaction.member))
-      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('you don\'t have permission to use `/tag`. ask a wl manager to allow your role with `/setroleperms add`.')], ephemeral: true });
+    // works in DMs and guilds — guild requires role perms; DMs require WL manager
+    const allowedDm = !guild && isWlManager(interaction.user.id);
+    const allowedGuild = !!guild && canUseRole(interaction.member);
+    if (!allowedDm && !allowedGuild)
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('you don\'t have permission to use `/tag`. in a server: ask a wl manager to allow your role with `/setroleperms add`. in DMs: only whitelist managers can tag.')], ephemeral: true });
 
     const robloxUsername = (interaction.options.getString('roblox') || '').trim();
     const roleName = (interaction.options.getString('role') || '').trim();
@@ -4103,6 +4204,32 @@ async function dispatchSlash(interaction) {
       await interaction.editReply({ embeds: [errorEmbed('failed').setDescription(err.message)] });
     }
     return;
+  }
+
+  // ── /tagticket — open a tag ticket panel (works in DMs and servers) ────────
+  if (commandName === 'tagticket') {
+    const vData = loadVerify();
+    const linked = vData?.verified?.[interaction.user.id];
+    if (!linked || !linked.robloxName) {
+      return interaction.reply({
+        embeds: [errorEmbed('not registered').setDescription('you need to link your Roblox account first — run `/register` (or `.register YourRobloxUsername`) before opening a tag ticket.')],
+        ephemeral: true
+      });
+    }
+
+    const robloxLink = `https://www.roblox.com/users/${linked.robloxId}/profile`;
+    const e = baseEmbed().setColor(0x2C2F33)
+      .setTitle('Tag Ticket')
+      .setDescription(`tag ticket opened by <@${interaction.user.id}>\n\nstaff: click **Tag** to pick a tag from the list — it will be applied to the linked Roblox account below.`)
+      .addFields({ name: 'username', value: `[\`${linked.robloxName}\`](${robloxLink})`, inline: true })
+      .setTimestamp();
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tagticket_tag:${interaction.user.id}`).setLabel('Tag').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`tagticket_close:${interaction.user.id}`).setLabel('Close').setStyle(ButtonStyle.Secondary)
+    );
+
+    return interaction.reply({ embeds: [e], components: [row] });
   }
 
   // ── /taglog — recent tag-log entries ────────────────────────────────────────
@@ -6560,7 +6687,6 @@ async function dispatchPrefix(message) {
   // Usage: .register RobloxUsername
   // Self-service: links the calling Discord user to a Roblox account.
   if (command === 'register') {
-    if (!message.guild) return;
     const robloxInput = args[0]?.trim();
     if (!robloxInput) return message.reply(`usage: \`${prefix}register YourRobloxUsername\``);
 
@@ -7003,6 +7129,12 @@ async function dispatchPrefix(message) {
       return message.reply('you need to be whitelisted to use this');
     const all = loadAtLog();
     const sessions = all[message.guild.id] || [];
+    // helper: render a discord id as "<@id> (`robloxName`)" if they're registered via .register
+    const _vForLog = loadVerify();
+    const renderUser = (id) => {
+      const r = _vForLog?.verified?.[id]?.robloxName;
+      return r ? `<@${id}> (\`${r}\`)` : `<@${id}>`;
+    };
 
     if (args[0]?.toLowerCase() === 'clear') {
       if (!isWlManager(message.author.id)) return message.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can clear attendance logs')] });
@@ -7024,16 +7156,16 @@ async function dispatchPrefix(message) {
       const lines = s.logged.length
         ? s.logged.map(e => `• <@${e.discordId}> — \`${e.robloxName}\``).join('\n')
         : '_no registered users logged_';
-      const skipLine = s.skipped?.length ? `\n\n**Skipped (${s.skipped.length}):** ${s.skipped.map(id => `<@${id}>`).join(', ')}` : '';
+      const skipLine = s.skipped?.length ? `\n\n**Skipped (${s.skipped.length}):** ${s.skipped.map(id => renderUser(id)).join(', ')}` : '';
       const embed = baseEmbed().setColor(0x2C2F33)
         .setTitle(`Attendance Log — Session #${idx + 1}`)
-        .setDescription(`<t:${Math.floor(s.ts / 1000)}:F> (<t:${Math.floor(s.ts / 1000)}:R>)\nclosed by <@${s.by}>${s.queueChannelId ? ` • posted to <#${s.queueChannelId}>` : ''}\n\n**Logged (${s.logged.length}):**\n${lines}${skipLine}`);
+        .setDescription(`<t:${Math.floor(s.ts / 1000)}:F> (<t:${Math.floor(s.ts / 1000)}:R>)\nclosed by ${renderUser(s.by)}${s.queueChannelId ? ` • posted to <#${s.queueChannelId}>` : ''}\n\n**Logged (${s.logged.length}):**\n${lines}${skipLine}`);
       return message.reply({ embeds: [embed] });
     }
 
     // List view (last 10)
     const top = recent.slice(0, 10);
-    const listLines = top.map((s, i) => `**${i + 1}.** <t:${Math.floor(s.ts / 1000)}:R> — **${s.logged.length}** logged${s.skipped?.length ? `, ${s.skipped.length} skipped` : ''} • by <@${s.by}>`);
+    const listLines = top.map((s, i) => `**${i + 1}.** <t:${Math.floor(s.ts / 1000)}:R> — **${s.logged.length}** logged${s.skipped?.length ? `, ${s.skipped.length} skipped` : ''} • by ${renderUser(s.by)}`);
     const embed = baseEmbed().setColor(0x2C2F33)
       .setTitle('Attendance Log')
       .setDescription(`${listLines.join('\n')}\n\n_use \`${prefix}atlog <number>\` to view a session's details_`)
