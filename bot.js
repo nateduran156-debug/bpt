@@ -1619,6 +1619,12 @@ const slashCommands = [
     .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
     .addStringOption(o => o.setName('description').setDescription('panel description').setRequired(false)),
 
+  new SlashCommandBuilder().setName('setuptag').setDescription('Send a self-tag panel — opener picks their own tag and a whitelisted user approves')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addChannelOption(o => o.setName('channel').setDescription('channel for the panel').setRequired(true))
+    .addStringOption(o => o.setName('title').setDescription('panel title').setRequired(false))
+    .addStringOption(o => o.setName('description').setDescription('panel description').setRequired(false)),
+
   new SlashCommandBuilder().setName('closeticket').setDescription('Close and delete the current ticket channel')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
@@ -2344,6 +2350,83 @@ async function dispatchSlash(interaction) {
     return interaction.editReply({ embeds: [successEmbed('ticket created').setDescription(`your ticket: ${ch}`)] });
   }
 
+  // ── /setuptag modal submit: create a locked self-tag channel ──────────────
+  if (interaction.isModalSubmit() && interaction.customId === 'tag_open_modal') {
+    const robloxUsername = interaction.fields.getTextInputValue('tag_roblox_username').trim();
+    const tickets = loadTickets();
+    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tag');
+    if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
+
+    const guild = interaction.guild;
+    const me = guild ? (guild.members.me ?? await guild.members.fetchMe().catch(() => null)) : null;
+    if (!guild || !me || !me.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
+      return interaction.reply({ embeds: [errorEmbed('failed').setDescription('this command needs to run in a server where i have **Manage Channels**.')], ephemeral: true });
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const support = loadTicketSupport();
+    const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
+    const staffIds = new Set([...loadWhitelist(), ...loadWlManagers(), ...envMgrs, ...loadTempOwners()]);
+    staffIds.delete(interaction.user.id);
+
+    // Locked channel — only opener, bot, support roles, and whitelisted users can see/talk.
+    const overwrites = [
+      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+      { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+      { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
+    ];
+    for (const rid of support) {
+      if (guild.roles.cache.has(rid)) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
+    }
+    for (const uid of staffIds) {
+      const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
+      if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
+    }
+    let parentId = interaction.channel?.parentId || undefined;
+    if (parentId) {
+      const parent = guild.channels.cache.get(parentId);
+      if (!parent || !parent.permissionsFor(me)?.has(PermissionsBitField.Flags.ManageChannels)) parentId = undefined;
+    }
+
+    let ch;
+    try {
+      ch = await guild.channels.create({
+        name: `tag-${robloxUsername || interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90) || `tag-${interaction.user.id}`,
+        type: ChannelType.GuildText,
+        parent: parentId,
+        permissionOverwrites: overwrites,
+        reason: `self-tag ticket opened by ${interaction.user.tag}`
+      });
+    } catch (err) {
+      console.error('tag ticket create failed:', err);
+      return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`could not create channel — ${err?.rawError?.message || err.message}`)] });
+    }
+
+    tickets[ch.id] = { userId: interaction.user.id, openedAt: Date.now(), robloxUsername, kind: 'tag' };
+    saveTickets(tickets);
+
+    const robloxLink = `https://www.roblox.com/users/?username=${encodeURIComponent(robloxUsername)}`;
+    const panelEmbed = baseEmbed().setColor(0x2C2F33)
+      .setTitle('Tag Ticket')
+      .setDescription(`tag ticket opened by <@${interaction.user.id}>\n\nclick **Tag** to pick the tag you want — a **whitelisted user** will then have to reply \`approve\` or \`deny\` here before it's applied to your roblox account.`)
+      .addFields({ name: 'roblox username', value: `[\`${robloxUsername}\`](${robloxLink})`, inline: true })
+      .setTimestamp();
+    const panelRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`tag_pick:${interaction.user.id}:${encodeURIComponent(robloxUsername)}`).setLabel('Tag').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`tag_close:${interaction.user.id}`).setLabel('Close').setStyle(ButtonStyle.Secondary)
+    );
+
+    await ch.send({
+      content: `${interaction.user}`,
+      embeds: [panelEmbed],
+      components: [panelRow],
+      allowedMentions: { users: [interaction.user.id] }
+    });
+    sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('tag ticket opened').setDescription(`${interaction.user.tag} opened ${ch} (roblox: \`${robloxUsername}\`)`));
+    return interaction.editReply({ embeds: [successEmbed('tag ticket created').setDescription(`your tag ticket: ${ch}`)] });
+  }
+
   // ── tag-ticket modal submit: create a real ticket channel ──────────────────
   if (interaction.isModalSubmit() && interaction.customId === 'tagticket_open_modal') {
     const robloxUsername = interaction.fields.getTextInputValue('tagticket_roblox_username').trim();
@@ -2426,6 +2509,83 @@ async function dispatchSlash(interaction) {
 
   // ── Select menus ────────────────────────────────────────────────────────────
   if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
+    // /setuptag self-tag select → opener picked their own tag, await whitelist approval
+    if (interaction.customId.startsWith('tag_select:')) {
+      const parts = interaction.customId.split(':');
+      const ownerId = parts[1];
+      const robloxFromBtn = parts[2] ? decodeURIComponent(parts[2]) : '';
+      if (interaction.user.id !== ownerId)
+        return interaction.reply({ embeds: [errorEmbed('not your ticket').setDescription('only the ticket opener picks here.')], ephemeral: true });
+
+      const roleId = interaction.values[0];
+      const roles = loadRobloxRoles();
+      const lookup = Object.values(roles).find(r => String(r.id) === String(roleId));
+      if (!lookup)
+        return interaction.reply({ embeds: [errorEmbed('unknown tag').setDescription('that tag is no longer registered.')], ephemeral: true });
+
+      const robloxName = robloxFromBtn || (loadVerify()?.verified?.[ownerId]?.robloxName);
+      if (!robloxName)
+        return interaction.reply({ embeds: [errorEmbed('no roblox username').setDescription('couldn\'t find your roblox username — reopen the ticket.')], ephemeral: true });
+
+      await interaction.update({
+        content: `tag pending approval — a whitelisted user must reply \`approve\` or \`deny\` in this ticket.`,
+        components: []
+      });
+
+      const envMgrs2 = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
+      const approverPool = new Set([...loadWhitelist(), ...loadWlManagers(), ...loadTempOwners(), ...envMgrs2]);
+      approverPool.delete(ownerId);
+      const isApprover = (uid) => approverPool.has(uid);
+
+      const channel = interaction.channel;
+      const promptEmbed = baseEmbed().setColor(0x2C2F33).setTitle('tag pending approval')
+        .setDescription(`<@${ownerId}> wants the **${lookup.name}** tag on roblox account **${robloxName}**.\n\na **whitelisted user** (not the opener) must reply \`approve\` or \`deny\` within 5 minutes.`)
+        .addFields(
+          { name: 'tag', value: `${lookup.name} \`${lookup.id}\``, inline: true },
+          { name: 'roblox', value: `\`${robloxName}\``, inline: true },
+          { name: 'requested by', value: `<@${ownerId}>`, inline: true }
+        ).setTimestamp();
+      await channel.send({ embeds: [promptEmbed] });
+
+      try {
+        const collected = await channel.awaitMessages({
+          filter: m => isApprover(m.author.id) && /^(approve|deny)$/i.test(m.content.trim()),
+          max: 1, time: 5 * 60_000, errors: ['time']
+        });
+        const decisionMsg = collected.first();
+        const decision = decisionMsg.content.trim().toLowerCase();
+        const approverId = decisionMsg.author.id;
+        if (decision === 'deny') {
+          await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('tag denied').setDescription(`<@${approverId}> denied the **${lookup.name}** tag for <@${ownerId}>.`)] });
+          return;
+        }
+        const pending = await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('applying tag').setDescription(`approved — ranking **${robloxName}** as **${lookup.name}**…`)] });
+        try {
+          const result = await rankRobloxUser(robloxName, lookup.id);
+          appendTagLog({
+            action: 'tag', tag: lookup.name, roblox: result.displayName,
+            robloxId: result.userId, giverId: approverId, giverTag: decisionMsg.author.tag,
+            targetDiscordId: ownerId, guildId: interaction.guildId
+          });
+          const e = baseEmbed().setColor(0x2C2F33).setTitle('tag given')
+            .setDescription(`tagged **${result.displayName}** as **${lookup.name}** (approved by <@${approverId}>)`)
+            .addFields(
+              { name: 'discord', value: `<@${ownerId}>`, inline: true },
+              { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
+              { name: 'tag', value: `${lookup.name} \`${lookup.id}\``, inline: true }
+            ).setTimestamp();
+          if (result.avatarUrl) e.setThumbnail(result.avatarUrl);
+          await pending.edit({ embeds: [e] }).catch(() => channel.send({ embeds: [e] }));
+          if (interaction.guild) sendBotLog(interaction.guild, e);
+        } catch (err) {
+          await pending.edit({ embeds: [errorEmbed('failed').setDescription(err.message)] }).catch(() => channel.send({ embeds: [errorEmbed('failed').setDescription(err.message)] }));
+        }
+      } catch {
+        await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('approval timed out').setDescription('no whitelisted user replied in 5 minutes — tag was not applied.')] }).catch(() => {});
+      }
+      return;
+    }
+
     if (interaction.customId.startsWith('tagticket_select:')) {
       const parts = interaction.customId.split(':');
       const ownerId = parts[1];
@@ -2587,6 +2747,81 @@ async function dispatchSlash(interaction) {
       }
 
       // Inline / DM panel: just edit the message.
+      try {
+        await interaction.update({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Tag Ticket Closed').setDescription(`closed by <@${interaction.user.id}>`)], components: [] });
+      } catch {
+        return interaction.reply({ content: 'closed', ephemeral: true });
+      }
+      return;
+    }
+
+    // ── /setuptag panel: open a self-tag ticket (shows roblox username modal) ─
+    if (interaction.customId === 'tag_open') {
+      const tickets = loadTickets();
+      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tag');
+      if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}>`)], ephemeral: true });
+      const modal = new ModalBuilder().setCustomId('tag_open_modal').setTitle('Open a Tag Ticket')
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('tag_roblox_username')
+            .setLabel('Roblox Username')
+            .setPlaceholder('Enter your Roblox username...')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(20)
+        ));
+      return interaction.showModal(modal);
+    }
+
+    // ── /setuptag: Tag button → ephemeral select menu (opener picks own tag) ──
+    if (interaction.customId.startsWith('tag_pick:')) {
+      const parts = interaction.customId.split(':');
+      const ownerId = parts[1];
+      const robloxFromBtn = parts[2] ? decodeURIComponent(parts[2]) : '';
+      // Only the opener may pick (this is a self-tag flow).
+      if (interaction.user.id !== ownerId)
+        return interaction.reply({ embeds: [errorEmbed('not your ticket').setDescription('only the ticket opener can pick a tag here.')], ephemeral: true });
+
+      const roles = loadRobloxRoles();
+      const entries = Object.values(roles).filter(r => r && r.id);
+      if (!entries.length)
+        return interaction.reply({ embeds: [errorEmbed('no tags').setDescription('no roblox group roles are registered. a wl manager must add some with `/setrole name:<name> id:<id>`.')], ephemeral: true });
+
+      const options = entries.slice(0, 25).map(r => ({
+        label: String(r.name).slice(0, 100),
+        value: String(r.id),
+        description: `roblox role id ${r.id}`.slice(0, 100)
+      }));
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId(`tag_select:${ownerId}:${encodeURIComponent(robloxFromBtn)}`)
+        .setPlaceholder('pick the tag you want')
+        .addOptions(options);
+
+      return interaction.reply({
+        content: 'pick the tag you want — a whitelisted user will then have to approve it:',
+        components: [new ActionRowBuilder().addComponents(menu)],
+        ephemeral: true
+      });
+    }
+
+    // ── /setuptag: Close button — closes the self-tag ticket channel ──────────
+    if (interaction.customId.startsWith('tag_close:')) {
+      const ownerId = interaction.customId.split(':')[1];
+      const allowedDm = !interaction.guild && (isWlManager(interaction.user.id) || interaction.user.id === ownerId);
+      const allowedGuild = !!interaction.guild && (canUseRole(interaction.member) || interaction.user.id === ownerId);
+      if (!allowedDm && !allowedGuild)
+        return interaction.reply({ content: 'only the ticket owner or staff can close this', ephemeral: true });
+
+      const tickets = loadTickets();
+      const t = interaction.channel ? tickets[interaction.channel.id] : null;
+      if (t && t.kind === 'tag' && interaction.guild) {
+        await interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('closing tag ticket').setDescription(`closed by <@${interaction.user.id}> — channel will be deleted in 3s`)] });
+        delete tickets[interaction.channel.id]; saveTickets(tickets);
+        sendBotLog(interaction.guild, baseEmbed().setColor(0x2C2F33).setTitle('tag ticket closed').setDescription(`<#${interaction.channel.id}> (${interaction.channel.name}) closed by ${interaction.user.tag}`));
+        setTimeout(() => { interaction.channel.delete(`tag ticket closed by ${interaction.user.tag}`).catch(() => {}); }, 3000);
+        return;
+      }
       try {
         await interaction.update({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Tag Ticket Closed').setDescription(`closed by <@${interaction.user.id}>`)], components: [] });
       } catch {
@@ -4278,6 +4513,27 @@ async function dispatchSlash(interaction) {
     try {
       await ch.send({ embeds: [panel], components: [row] });
       return interaction.reply({ embeds: [successEmbed('tag ticket panel sent').setDescription(`sent to ${ch}`)], ephemeral: true });
+    } catch {
+      return interaction.reply({ embeds: [errorEmbed('failed').setDescription('couldn\'t send to that channel — check my permissions')], ephemeral: true });
+    }
+  }
+
+  // ── /setuptag ───────────────────────────────────────────────────────────────
+  if (commandName === 'setuptag') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `/setuptag`')], ephemeral: true });
+    const ch = interaction.options.getChannel('channel');
+    const title = interaction.options.getString('title') || 'Open a Tag Ticket';
+    const description = interaction.options.getString('description') || 'click the button below to open a tag ticket. a private channel will be created for you and the support team.';
+    if (ch.type !== ChannelType.GuildText) return interaction.reply({ embeds: [errorEmbed('bad channel').setDescription('pick a text channel')], ephemeral: true });
+    const panel = baseEmbed().setColor(0x2C2F33).setTitle(title).setDescription(description);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('tag_open').setLabel('Open Tag Ticket').setStyle(ButtonStyle.Secondary)
+    );
+    try {
+      await ch.send({ embeds: [panel], components: [row] });
+      return interaction.reply({ embeds: [successEmbed('tag panel sent').setDescription(`sent to ${ch}`)], ephemeral: true });
     } catch {
       return interaction.reply({ embeds: [errorEmbed('failed').setDescription('couldn\'t send to that channel — check my permissions')], ephemeral: true });
     }
