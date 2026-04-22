@@ -1289,13 +1289,13 @@ function buildGcNotInGroupEmbed(displayName, userGroupIds) {
   if (matchedFlagged.length > 0) {
     const lines = matchedFlagged.map(g => {
       const label = g.name ? `**[${g.name}](https://www.roblox.com/communities/${g.id}/about)**` : `**[Group ${g.id}](https://www.roblox.com/communities/${g.id}/about)**`;
-      return `⚠️ ${label} \`${g.id}\``;
+      return `${label} \`${g.id}\``;
     });
-    desc += `\n\n**🚩 Flagged Groups (${matchedFlagged.length}):**\n${lines.join('\n')}`;
+    desc += `\n\n**Flagged Groups (${matchedFlagged.length}):**\n${lines.join('\n')}`;
   }
   return new EmbedBuilder()
     .setColor(0x2C2F33)
-    .setTitle('⛔  Not In Group')
+    .setTitle('Not In Group')
     .setDescription(desc)
     .setFooter({ text: `${getBotName()} • ${getBotName()}`, iconURL: getLogoUrl() })
     .setTimestamp()
@@ -1307,13 +1307,13 @@ function buildGcInGroupEmbed(displayName, userGroupIds) {
   if (matchedFlagged.length > 0) {
     const lines = matchedFlagged.map(g => {
       const label = g.name ? `**[${g.name}](https://www.roblox.com/communities/${g.id}/about)**` : `**[Group ${g.id}](https://www.roblox.com/communities/${g.id}/about)**`;
-      return `⚠️ ${label} \`${g.id}\``;
+      return `${label} \`${g.id}\``;
     });
-    desc += `\n\n**🚩 Flagged Groups (${matchedFlagged.length}):**\n${lines.join('\n')}`;
+    desc += `\n\n**Flagged Groups (${matchedFlagged.length}):**\n${lines.join('\n')}`;
   }
   return new EmbedBuilder()
     .setColor(0x2C2F33)
-    .setTitle('✅  In Group')
+    .setTitle('In Group')
     .setDescription(desc)
     .setFooter({ text: `${getBotName()} • ${getBotName()}`, iconURL: getLogoUrl() })
     .setTimestamp()
@@ -1322,8 +1322,8 @@ function buildGcInGroupEmbed(displayName, userGroupIds) {
 function buildGcRow(username, groups, page) {
   const totalPages = Math.ceil(groups.length / GC_PER_PAGE);
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`gc_${page - 1}_${username}`).setLabel('‹ Back').setStyle(ButtonStyle.Primary).setDisabled(page === 0),
-    new ButtonBuilder().setCustomId(`gc_${page + 1}_${username}`).setLabel('Next ›').setStyle(ButtonStyle.Primary).setDisabled(page === totalPages - 1)
+    new ButtonBuilder().setCustomId(`gc_${page - 1}_${username}`).setLabel('<').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+    new ButtonBuilder().setCustomId(`gc_${page + 1}_${username}`).setLabel('>').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
   );
 }
 
@@ -2333,9 +2333,9 @@ async function dispatchSlash(interaction) {
         const inGroup = groupsData.some(g => String(g.group.id) === getGroupId());
         const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
         const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
-        gcCache.set(robloxUsername.toLowerCase(), { displayName, groups, avatarUrl });
-        setTimeout(() => gcCache.delete(robloxUsername.toLowerCase()), 10 * 60 * 1000);
         const userGroupIds = new Set(groups.map(g => String(g.group.id)));
+        gcCache.set(robloxUsername.toLowerCase(), { displayName, groups, avatarUrl, userGroupIds, inGroup });
+        setTimeout(() => gcCache.delete(robloxUsername.toLowerCase()), 10 * 60 * 1000);
         const statusEmbed = inGroup ? buildGcInGroupEmbed(displayName, userGroupIds) : buildGcNotInGroupEmbed(displayName, userGroupIds);
         await ch.send({
           embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), statusEmbed],
@@ -3118,8 +3118,14 @@ async function dispatchSlash(interaction) {
       const username = parts.slice(2).join('_');
       const cached = gcCache.get(username.toLowerCase());
       if (!cached) return interaction.reply({ content: 'that expired, run it again', ephemeral: true });
+      const embeds = [buildGcEmbed(cached.displayName, cached.groups, cached.avatarUrl, page)];
+      if (cached.userGroupIds) {
+        embeds.push(cached.inGroup
+          ? buildGcInGroupEmbed(cached.displayName, cached.userGroupIds)
+          : buildGcNotInGroupEmbed(cached.displayName, cached.userGroupIds));
+      }
       return interaction.update({
-        embeds: [buildGcEmbed(cached.displayName, cached.groups, cached.avatarUrl, page)],
+        embeds,
         components: cached.groups.length > GC_PER_PAGE ? [buildGcRow(username, cached.groups, page)] : []
       });
     }
@@ -3366,9 +3372,9 @@ async function dispatchSlash(interaction) {
       const inFraidGroup = groupsData.some(g => String(g.group.id) === getGroupId());
       const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
-      gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
-      setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
       const userGroupIds = new Set(groups.map(g => String(g.group.id)));
+      gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl, userGroupIds, inGroup: inFraidGroup });
+      setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
       if (!inFraidGroup) {
         return interaction.editReply({
           embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName, userGroupIds)],
@@ -5730,9 +5736,9 @@ async function dispatchPrefix(message) {
       const inFraidGroup = groupsData.some(g => String(g.group.id) === getGroupId());
       const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
       const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
-      gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl });
-      setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
       const userGroupIds = new Set(groups.map(g => String(g.group.id)));
+      gcCache.set(username.toLowerCase(), { displayName, groups, avatarUrl, userGroupIds, inGroup: inFraidGroup });
+      setTimeout(() => gcCache.delete(username.toLowerCase()), 10 * 60 * 1000);
       if (!inFraidGroup) {
         return message.reply({
           embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), buildGcNotInGroupEmbed(displayName, userGroupIds)],
