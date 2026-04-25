@@ -1585,7 +1585,7 @@ function buildGcRow(username, groups, page) {
   const totalPages = Math.ceil(groups.length / GC_PER_PAGE);
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`gc ${page - 1} ${username}`).setLabel('<').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
-    new ButtonBuilder().setCustomId(`gc ${page + 1} ${username}`).setLabel(' ').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
+    new ButtonBuilder().setCustomId(`gc ${page + 1} ${username}`).setLabel('>').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages - 1)
   );
 }
 
