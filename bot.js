@@ -4912,7 +4912,7 @@ async function dispatchSlashInner(interaction) {
     const roles = loadRobloxRoles();
     roles[name] = { id, name };
     saveRobloxRoles(roles);
-    return interaction.reply({ embeds: [successEmbed('role registered').setDescription(`saved roblox group role **${name}** → \`${id}\``).addFields({ name: 'usage', value: `\`/role roblox:<username role:${name}\`` })] });
+    return interaction.reply({ embeds: [successEmbed('role registered').setDescription(`saved roblox group role **${name}** → \`${id}\``)] });
   }
 
   // /setroleperms allow discord role to use /role
@@ -5148,7 +5148,7 @@ async function dispatchSlashInner(interaction) {
     if (!robloxUsername || !roleName) {
       try {
         return interaction.reply({
-          content: 'usage: `/tag roblox:<username> role:<rank name>`\nor prefix: `.tag <username> <rank name>`',
+          content: 'not the right format',
           ephemeral: true
         });
       } catch { return; }
