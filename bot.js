@@ -1742,6 +1742,15 @@ const slashCommands = [
     .addStringOption(o => o.setName('type').setDescription('type').setRequired(true)
       .addChoices({ name: 'playing', value: 'playing' }, { name: 'watching', value: 'watching' }, { name: 'listening', value: 'listening' }, { name: 'competing', value: 'competing' }, { name: 'custom', value: 'custom' }))
     .addStringOption(o => o.setName('text').setDescription('status text').setRequired(true)),
+  new SlashCommandBuilder().setName('presence').setDescription('change the bot online status')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addStringOption(o => o.setName('state').setDescription('online state').setRequired(true)
+      .addChoices(
+        { name: 'online', value: 'online' },
+        { name: 'idle', value: 'idle' },
+        { name: 'do not disturb', value: 'dnd' },
+        { name: 'invisible', value: 'invisible' }
+      )),
   new SlashCommandBuilder().setName('whitelist').setDescription('manage the whitelist')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
@@ -1991,6 +2000,13 @@ function applyStatus(statusData) {
   client.user.setActivity({ name: statusData.text, type: typeMap[statusData.type] ?? ActivityType.Playing });
 }
 
+// changes the green/yellow/red dot next to the bots name
+function applyPresence(state) {
+  const okStates = ['online', 'idle', 'dnd', 'invisible'];
+  if (!okStates.includes(state)) state = 'online';
+  try { client.user.setStatus(state); } catch (e) {}
+}
+
 // Ready
 client.once('clientReady', async () => {
   console.log(`logged in as ${client.user.tag}`);
@@ -2082,6 +2098,7 @@ client.once('clientReady', async () => {
 
   const cfg = loadConfig();
   if (cfg.status) applyStatus(cfg.status);
+  if (cfg.presence) applyPresence(cfg.presence);
 
   if (fs.existsSync(REBOOT_FILE)) {
     const { channelId, messageId } = loadJSON(REBOOT_FILE);
@@ -4149,6 +4166,15 @@ async function dispatchSlashInner(interaction) {
     applyStatus(statusData);
     const cfg = loadConfig(); cfg.status = statusData; saveConfig(cfg);
     return interaction.reply({ content: `status changed to **${type}** ${text}` });
+  }
+
+  // change the online dot (online / idle / dnd / invisible)
+  if (commandName === 'presence') {
+    if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "only whitelist managers can do this", ephemeral: true });
+    const state = interaction.options.getString('state');
+    applyPresence(state);
+    const cfg = loadConfig(); cfg.presence = state; saveConfig(cfg);
+    return interaction.reply({ content: `presence changed to **${state}**` });
   }
 
   if (commandName === 'wlmanager') {
@@ -6662,11 +6688,22 @@ async function dispatchPrefixInner(message) {
     const validTypes = ['playing', 'watching', 'listening', 'competing', 'custom'];
     const type = args[0]?.toLowerCase();
     const text = args.slice(1).join(' ');
-    if (!type || !validTypes.includes(type) || !text) return message.reply('do it like: status [playing/watching/listening/competing/custom] [text]');
+    if (!type || !validTypes.includes(type) || !text) return message.reply('not the right format');
     const statusData = { type, text };
     applyStatus(statusData);
     const cfg = loadConfig(); cfg.status = statusData; saveConfig(cfg);
     return message.reply({ content: `status changed to **${type}** ${text}`, allowedMentions: { repliedUser: false } });
+  }
+
+  // .presence online / idle / dnd / invisible
+  if (command === 'presence') {
+    if (!isWlManager(message.author.id)) return message.reply('only whitelist managers can do this');
+    const okStates = ['online', 'idle', 'dnd', 'invisible'];
+    const state = args[0]?.toLowerCase();
+    if (!state || !okStates.includes(state)) return message.reply('not the right format');
+    applyPresence(state);
+    const cfg = loadConfig(); cfg.presence = state; saveConfig(cfg);
+    return message.reply({ content: `presence changed to **${state}**`, allowedMentions: { repliedUser: false } });
   }
 
   if (command === 'afk') {
