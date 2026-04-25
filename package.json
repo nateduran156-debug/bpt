@@ -1,8 +1,8 @@
 {
-  "name": "discord-bot",
-  "version": "1.0.0",
+  "name": "@workspace/bot",
+  "version": "0.0.0",
+  "private": true,
   "type": "module",
-  "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
@@ -11,8 +11,5 @@
     "pg": "^8.13.3",
     "sharp": "^0.33.5",
     "tesseract.js": "^5.1.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
