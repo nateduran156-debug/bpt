@@ -11,13 +11,8 @@ import pg from 'pg'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// Universal embed image (auto applied to every embed)
-const EMBED_IMAGE_URL = 'https://www.image2url.com/r2/default/images/1777091483935-5c5cebeb-adfc-47c7-a7ee-f5c6437f1ddc.jpeg'
-const _origEmbedToJSON = EmbedBuilder.prototype.toJSON
-EmbedBuilder.prototype.toJSON = function () {
-  if (!this.data?.image) { try { this.setImage(EMBED_IMAGE_URL) } catch {} }
-  return _origEmbedToJSON.call(this)
-}
+// (Removed) global embed image — embeds now only show the small thumbnail
+// in the top right via baseEmbed().setThumbnail(...).
 
 // IDs that can never be added to whitelist or wl manager lists
 const BLOCKED_WL_IDS = new Set(['794724800097681428', '1472482602215538779'])
@@ -70,27 +65,27 @@ async function initDbSchema() {
     'autoresponder', 'activity check', 'tickets', 'ticket support', 'tag log',
   ]
   for (const table of tables) {
-    await dbQuery(` CREATE TABLE IF NOT EXISTS ${table} ( key TEXT PRIMARY KEY, data JSONB NOT NULL DEFAULT '{}' ) `)
+    await dbQuery(`CREATE TABLE IF NOT EXISTS "${table}" ( key TEXT PRIMARY KEY, data JSONB NOT NULL DEFAULT '{}' )`)
   }
   // bot status table: written by the controller bot, read by this bot
-  await dbQuery(` CREATE TABLE IF NOT EXISTS bot status ( id TEXT PRIMARY KEY DEFAULT 'main', status TEXT NOT NULL DEFAULT 'running', updated at TIMESTAMPTZ DEFAULT NOW() ) `)
+  await dbQuery(`CREATE TABLE IF NOT EXISTS "bot status" ( id TEXT PRIMARY KEY DEFAULT 'main', status TEXT NOT NULL DEFAULT 'running', "updated at" TIMESTAMPTZ DEFAULT NOW() )`)
   // Ensure a default row exists so SELECT always returns something
-  await dbQuery(` INSERT INTO bot status (id, status) VALUES ('main', 'running') ON CONFLICT (id) DO NOTHING `)
+  await dbQuery(`INSERT INTO "bot status" (id, status) VALUES ('main', 'running') ON CONFLICT (id) DO NOTHING`)
   console.log('[pg] schema ready')
 }
 
 // Generic DB load/save (keyed JSONB store)
-// Each "file" maps to a row in its table with key=' root'. This keeps the
+// Each "file" maps to a row in its table with key='_root'. This keeps the
 // interface identical to loadJSON/saveJSON so callers need no changes.
 async function dbLoad(table) {
-  const res = await dbQuery(`SELECT data FROM ${table} WHERE key = ' root'`)
+  const res = await dbQuery(`SELECT data FROM "${table}" WHERE key = '_root'`)
   if (!res || !res.rows.length) return null
   return res.rows[0].data
 }
 
 async function dbSave(table, data) {
   await dbQuery(
-    `INSERT INTO ${table} (key, data) VALUES (' root', $1) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data`,
+    `INSERT INTO "${table}" (key, data) VALUES ('_root', $1) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data`,
     [JSON.stringify(data)]
   )
 }
@@ -102,7 +97,7 @@ async function dbSave(table, data) {
 async function migrateJsonToDb(table, filePath) {
   if (!dbPool) return
   // Only migrate if the DB row is empty
-  const existing = await dbQuery(`SELECT 1 FROM ${table} WHERE key = ' root'`)
+  const existing = await dbQuery(`SELECT 1 FROM "${table}" WHERE key = '_root'`)
   if (existing && existing.rows.length > 0) return
   if (!fs.existsSync(filePath)) return
   try {
@@ -122,7 +117,7 @@ async function migrateJsonToDb(table, filePath) {
 async function checkBotStatus() {
   if (!dbPool) return
   try {
-    const res = await dbQuery(`SELECT status FROM bot status WHERE id = 'main'`)
+    const res = await dbQuery(`SELECT status FROM "bot status" WHERE id = 'main'`)
     if (!res || !res.rows.length) return
     const status = res.rows[0].status
     if (status === 'stopped') {
@@ -277,7 +272,7 @@ const REBOOT_FILE = path.join(__dirname, 'reboot msg.json')
 const VM_CONFIG_FILE = path.join(__dirname, 'vm config.json')
 const VM_CHANNELS_FILE = path.join(__dirname, 'vm channels.json')
 const JAIL_FILE = path.join(__dirname, 'jail.json')
-const WL_MANAGERS_FILE = path.join(__dirname, 'wl managers.json')
+const WL_MANAGERS_FILE = path.join(__dirname, 'wl_managers.json')
 const AUTOREACT_FILE = path.join(__dirname, 'autoreact.json')
 const HARDBANS_FILE = path.join(__dirname, 'hardbans.json')
 const FLAGGED_GROUPS_FILE = path.join(__dirname, 'flagged groups.json')
@@ -868,7 +863,7 @@ function formatEstTime(ts) {
   const d = new Date(ts)
   const opts = { timeZone: 'America/New York', month: '2 digit', day: '2 digit', year: 'numeric',
     hour: '2 digit', minute: '2 digit', hour12: true }
-  const parts = new Intl.DateTimeFormat('en US', opts).formatToParts(d)
+  const parts = new Intl.DateTimeFormat('en-US', opts).formatToParts(d)
   const get = t => parts.find(p => p.type === t)?.value ?? ''
   return `${get('month')}/${get('day')}/${get('year')} at ${get('hour')}:${get('minute')} ${get('dayPeriod')} (EST)`
 }
@@ -1020,7 +1015,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
   for (let i = 0; i < allNames.length; i += 100) {
     try {
       const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: allNames.slice(i, i + 100), excludeBannedUsers: false })
       })).json()
       if (res.data) verifiedUsers.push(...res.data)
@@ -1110,7 +1105,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
     const robloxUsername = input.trim()
     await editFn(`looking up **${robloxUsername}** on Roblox...`)
     const userLookup = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-      method: 'POST', headers: { 'Content Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false })
     })).json()
     const targetUser = userLookup.data?.[0]
@@ -1119,7 +1114,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
     // The cookie is required for the API to return gameId reliably even on public profiles
     await editFn(`found **${targetUser.name}**, checking their presence...`)
     const cookie = process.env.ROBLOX_COOKIE
-    const presenceHeaders = { 'Content Type': 'application/json' }
+    const presenceHeaders = { 'Content-Type': 'application/json' }
     if (cookie) presenceHeaders['Cookie'] = `.ROBLOSECURITY=${cookie}`
     const presenceRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
       method: 'POST', headers: presenceHeaders,
@@ -1180,7 +1175,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
         requestId: `${i + idx}`, token, type: 'AvatarHeadShot', size: '150x150', format: 'png', isCircular: false
       }))
       const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', {
-        method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify(batch)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch)
       })).json()
       for (const item of (res.data || [])) { if (item.targetId && item.targetId !== 0) resolvedIds.add(item.targetId) }
     } catch {}
@@ -1267,7 +1262,7 @@ async function rankRobloxUser(robloxUsername, roleId) {
   if (!cookie || !groupId) throw new Error('ROBLOX COOKIE or ROBLOX GROUP ID is not configured.');
 
   const lookupRes  = await fetch('https://users.roblox.com/v1/usernames/users', {
-    method: 'POST', headers: { 'Content Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false })
   });
   const userBasic = (await lookupRes.json()).data?.[0];
@@ -1286,7 +1281,7 @@ async function rankRobloxUser(robloxUsername, roleId) {
 
   const rankRes = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/users/${userId}`, {
     method: 'PATCH',
-    headers: { 'Content Type': 'application/json', 'Cookie': `.ROBLOSECURITY=${cookie}`, 'X CSRF TOKEN': csrfToken },
+    headers: { 'Content-Type': 'application/json', 'Cookie': `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken },
     body: JSON.stringify({ roleId: Number(roleId) })
   });
   if (!rankRes.ok) {
@@ -1313,7 +1308,7 @@ async function acceptRobloxJoinRequest(robloxUserId, groupId) {
   if (!csrfToken) throw new Error('could not get CSRF token check ROBLOX COOKIE');
   const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/join requests/users/${robloxUserId}`, {
     method: 'POST',
-    headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X CSRF TOKEN': csrfToken }
+    headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -1328,7 +1323,7 @@ async function acceptRobloxJoinRequest(robloxUserId, groupId) {
 async function buildJoinButton(userId) {
   try {
     const cookie = process.env.ROBLOX_COOKIE;
-    const headers = { 'Content Type': 'application/json' };
+    const headers = { 'Content-Type': 'application/json' };
     if (cookie) headers['Cookie'] = `.ROBLOSECURITY=${cookie}`;
     const presData = await (await fetch('https://presence.roblox.com/v1/presence/users', {
       method: 'POST', headers, body: JSON.stringify({ userIds: [userId] })
@@ -2702,7 +2697,7 @@ async function dispatchSlashInner(interaction) {
 
     // auto group check
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) {
         await ch.send({ embeds: [errorEmbed('roblox user not found').setDescription(`could not find a roblox user named **${robloxUsername}**`)] });
       } else {
@@ -3366,7 +3361,7 @@ async function dispatchSlashInner(interaction) {
         if (!username) return interaction.reply({ embeds: [errorEmbed('no username').setDescription('no roblox username is attached to this ticket')], ephemeral: true });
         await interaction.deferReply();
         try {
-          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
           if (!userBasic) return interaction.editReply({ embeds: [errorEmbed('not found').setDescription(`could not find a roblox user named **${username}**`)] });
           await acceptRobloxJoinRequest(userBasic.id, getGroupId());
           // optionally also give the verify role if one is configured
@@ -3392,7 +3387,7 @@ async function dispatchSlashInner(interaction) {
         if (!username) return interaction.reply({ embeds: [errorEmbed('no username').setDescription('no roblox username is attached to this ticket')], ephemeral: true });
         await interaction.deferReply();
         try {
-          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+          const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
           if (!userBasic) return interaction.editReply({ embeds: [errorEmbed('not found').setDescription(`could not find a roblox user named **${username}**`)] });
 
           const discordId = t.userId;
@@ -3673,7 +3668,7 @@ async function dispatchSlashInner(interaction) {
 
     async function isRobloxAvailable(username) {
       try {
-        const res = await fetch(`https://auth.roblox.com/v1/usernames/validate?request.username=${encodeURIComponent(username)}&request.birthday=2000 01 01&request.context=Username`)
+        const res = await fetch(`https://auth.roblox.com/v1/usernames/validate?request.username=${encodeURIComponent(username)}&request.birthday=2000-01-01&request.context=Username`)
         const data = await res.json()
         return data.code === 0
       } catch { return false }
@@ -3724,19 +3719,19 @@ async function dispatchSlashInner(interaction) {
     await interaction.deferReply();
     const username = interaction.options.getString('username');
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return interaction.editReply("could not find that user");
       const userId = userBasic.id;
       const [user, avatarRes, friendsRes, pastNamesRes, groupsRes] = await Promise.all([
         fetch(`https://users.roblox.com/v1/users/${userId}`).then(r => r.json()),
         fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`).then(r => r.json()),
         fetch(`https://friends.roblox.com/v1/users/${userId}/friends/count`).then(r => r.json()).catch(() => ({ count: 'n/a' })),
-        fetch(`https://users.roblox.com/v1/users/${userId}/username history?limit=10&sortOrder=Asc`).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`https://users.roblox.com/v1/users/${userId}/username-history?limit=10&sortOrder=Asc`).then(r => r.json()).catch(() => ({ data: [] })),
         fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
       const avatarUrl  = avatarRes.data?.[0]?.imageUrl;
       const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
-      const created    = new Date(user.created).toLocaleDateString('en US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const created    = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const friends    = friendsRes.count ?? 'n/a';
       const pastNames  = (pastNamesRes.data ?? []).map(u => u.name);
       const groupsRaw  = (groupsRes.data ?? []);
@@ -3788,7 +3783,7 @@ async function dispatchSlashInner(interaction) {
     await interaction.deferReply();
     const username = interaction.options.getString('username');
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return interaction.editReply("could not find that user")
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
@@ -4161,9 +4156,24 @@ async function dispatchSlashInner(interaction) {
     const mgrs = loadWlManagers();
     if (sub === 'list') {
       if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "only whitelist managers can view the manager list", ephemeral: true });
-      const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)])];
+      // only show ids from the json file (no env stuff so the list stays clean)
+      const all = [...new Set(mgrs)];
       if (!all.length) return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x2C2F33).setDescription('no managers set')] });
-      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x2C2F33).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()} (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
+      // go grab the usernames so it doesnt just say a bunch of numbers
+      const lines = [];
+      let n = 1;
+      for (const id of all) {
+        let name = id;
+        try {
+          const u = await client.users.fetch(id);
+          name = u.username;
+        } catch (e) {
+          name = 'unknown user';
+        }
+        lines.push(n + '. ' + name);
+        n = n + 1;
+      }
+      return interaction.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x2C2F33).setDescription(lines.join('\n')).setTimestamp()] });
     }
     if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "ur not a whitelist manager", ephemeral: true });
     if (sub === 'add') {
@@ -4236,9 +4246,9 @@ async function dispatchSlashInner(interaction) {
       return interaction.reply({ embeds: [errorCode('E INV 001', 'bot client id not available yet try again in a few seconds')], ephemeral: true });
     }
     // server invite (bot perms = administrator) and roblox account add link
-    const serverInvite = `https://discord.com/oauth2/authorize?client_id=${clientId}&permissions=8&integration type=0&scope=bot+applications.commands`;
-    const userInstall = `https://discord.com/oauth2/authorize?client_id=${clientId}&integration type=1&scope=applications.commands`;
-    const robloxOauth = `https://apis.roblox.com/oauth/v1/authorize?client_id=${clientId}&redirect uri=https%3A%2F%2Fwww.roblox.com%2Fhome&scope=openid%20profile%20group%3Aread%20group%3Awrite%20user.advanced.add friends%3Awrite&response type=code&prompt=login`;
+    const serverInvite = `https://discord.com/oauth2/authorize?client_id=${clientId}&permissions=8&integration_type=0&scope=bot+applications.commands`;
+    const userInstall = `https://discord.com/oauth2/authorize?client_id=${clientId}&integration_type=1&scope=applications.commands`;
+    const robloxOauth = `https://apis.roblox.com/oauth/v1/authorize?client_id=${clientId}&redirect_uri=https%3A%2F%2Fwww.roblox.com%2Fhome&scope=openid%20profile%20group%3Aread%20group%3Awrite%20user.advanced.add_friends%3Awrite&response_type=code&prompt=login`;
     const embed = baseEmbed().setColor(0x2C2F33).setTitle(`Invite ${getBotName()}`)
       .setDescription([
         `**Server invite (bot)** adds the bot to your server`,
@@ -4362,7 +4372,7 @@ async function dispatchSlashInner(interaction) {
     const action = interaction.options.getString('action');
     const value = interaction.options.getString('value');
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return interaction.editReply("could not find that user");
       const groupId = process.env.ROBLOX_GROUP_ID;
       if (action === 'check') {
@@ -4387,7 +4397,7 @@ async function dispatchSlashInner(interaction) {
         const csrfRes = await fetch('https://auth.roblox.com/v2/logout', { method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` } });
         const csrfToken = csrfRes.headers.get('x csrf token');
         const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/users/${userBasic.id}`, {
-          method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X CSRF TOKEN': csrfToken }
+          method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
         });
         if (!res.ok) return interaction.editReply(`couldn't exile HTTP ${res.status}`);
         return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Exiled')
@@ -4701,7 +4711,7 @@ async function dispatchSlashInner(interaction) {
   if (commandName === 'convert') {
     const username = interaction.options.getString('username');
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return interaction.reply({ content: "could not find that user", ephemeral: true });
       return interaction.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roblox ID Lookup')
         .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
@@ -5125,19 +5135,20 @@ async function dispatchSlashInner(interaction) {
 
 
   // /tag same as /role (rank a roblox user) but logged to the tag log
+  // Plain text only — no embed, no logo.
   if (commandName === 'tag') {
     // works in DMs and guilds guild requires role perms; DMs require WL manager
     const allowedDm = !guild && isWlManager(interaction.user.id);
     const allowedGuild = !!guild && canUseRole(interaction.member);
     if (!allowedDm && !allowedGuild)
-      return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('you don\'t have permission to use `/tag`. in a server: ask a wl manager to allow your role with `/setroleperms add`. in DMs: only whitelist managers can tag.')], ephemeral: true });
+      return interaction.reply({ content: 'you don\'t have permission to use `/tag`. in a server: ask a wl manager to allow your role with `/setroleperms add`. in DMs: only whitelist managers can tag.', ephemeral: true });
 
     const robloxUsername = (interaction.options.getString('roblox') || '').trim();
     const roleName = (interaction.options.getString('role') || '').trim();
     if (!robloxUsername || !roleName) {
       try {
         return interaction.reply({
-          embeds: [errorCode('TAG01', 'usage: `/tag roblox:<username role:<rank name `\nor prefix: `.tag <username <rank name `')],
+          content: 'usage: `/tag roblox:<username> role:<rank name>`\nor prefix: `.tag <username> <rank name>`',
           ephemeral: true
         });
       } catch { return; }
@@ -5145,27 +5156,20 @@ async function dispatchSlashInner(interaction) {
 
     const roles = loadRobloxRoles();
     const lookup = roles[roleName] || roles[roleName.toLowerCase()];
-    if (!lookup) return interaction.reply({ embeds: [errorEmbed('unknown role').setDescription(`no roblox group role named **${roleName}** is registered. use \`/setrole\` first.`)], ephemeral: true });
+    if (!lookup) return interaction.reply({ content: `no roblox group role named **${roleName}** is registered. use \`/setrole\` first.`, ephemeral: true });
 
     await interaction.deferReply();
     try {
       const result = await rankRobloxUser(robloxUsername, lookup.id);
       appendTagLog({
         action: 'tag', tag: lookup.name || roleName, roblox: result.displayName,
-        robloxId: result.userId, giverId: interaction.user.id, giverTag: interaction.user.tag, guildId: guild.id
+        robloxId: result.userId, giverId: interaction.user.id, giverTag: interaction.user.tag, guildId: guild?.id
       });
-      const e = baseEmbed().setColor(0x2C2F33).setTitle('tag given')
-        .setDescription(`tagged **${result.displayName}** as **${lookup.name || roleName}**`)
-        .addFields(
-          { name: 'roblox', value: `[${result.displayName}](https://www.roblox.com/users/${result.userId}/profile)`, inline: true },
-          { name: 'tag', value: `${lookup.name || roleName} \`${lookup.id}\``, inline: true },
-          { name: 'given by', value: `${interaction.user.tag} (<@${interaction.user.id} )`, inline: false }
-        ).setTimestamp();
-      if (result.avatarUrl) e.setThumbnail(result.avatarUrl);
-      await interaction.editReply({ embeds: [e] });
-      sendBotLog(guild, e);
+      const text = `tagged **${result.displayName}** as **${lookup.name || roleName}**\nroblox: <https://www.roblox.com/users/${result.userId}/profile>\ngiven by: ${interaction.user.tag} (<@${interaction.user.id}>)`;
+      await interaction.editReply({ content: text, allowedMentions: { parse: [] } });
+      try { if (guild) sendBotLog(guild, baseEmbed().setColor(0x2C2F33).setTitle('tag given').setDescription(text)); } catch {}
     } catch (err) {
-      await interaction.editReply({ embeds: [errorEmbed('failed').setDescription(err.message)] });
+      await interaction.editReply({ content: `failed: ${err.message}` });
     }
     return;
   }
@@ -5346,7 +5350,7 @@ async function dispatchSlashInner(interaction) {
       for (let i = 0; i < allTokens.length; i += 100) {
         try {
           const batch = allTokens.slice(i, i + 100).map((token, idx) => ({ requestId: `${i + idx}`, token, type: 'AvatarHeadShot', size: '150x150', format: 'png', isCircular: false }));
-          const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify(batch) })).json();
+          const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch) })).json();
           for (const item of (res.data || [])) { if (item.targetId && item.targetId !== 0) resolvedIds.add(item.targetId); }
         } catch {}
       }
@@ -5378,7 +5382,7 @@ async function dispatchSlashInner(interaction) {
     let attendAvatarUrl = null;
     try {
       const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: [roblox], excludeBannedUsers: false })
       })).json();
       const robloxUserId = robloxRes.data?.[0]?.id;
@@ -5519,7 +5523,7 @@ async function dispatchSlashInner(interaction) {
     await interaction.deferReply();
     try {
       const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
       })).json();
       const robloxUser = res.data?.[0];
@@ -5631,7 +5635,7 @@ async function dispatchSlashInner(interaction) {
       return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Linked Account').addFields({ name: 'Discord', value: `<@${targetUser.id} `, inline: true }, { name: 'Roblox', value: `[\`${linked.robloxName}\`](https://www.roblox.com/users/${linked.robloxId}/profile)`, inline: true }).setTimestamp(new Date(linked.verifiedAt))] });
     }
     let robloxUser;
-    try { const res = await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false }) })).json(); robloxUser = res.data?.[0]; } catch {}
+    try { const res = await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false }) })).json(); robloxUser = res.data?.[0]; } catch {}
     if (!robloxUser) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find Roblox user \`${robloxInput}\``)] });
     const discordId = vData.robloxToDiscord?.[String(robloxUser.id)];
     if (!discordId) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`\`${robloxUser.name}\` has no linked Discord account`)] });
@@ -5697,14 +5701,14 @@ async function dispatchSlashInner(interaction) {
     await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`looking up **${inputUsername}** on Roblox...`)] });
     try {
       const userRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: [inputUsername], excludeBannedUsers: false })
       })).json();
       const targetUser = userRes.data?.[0];
       if (!targetUser) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`could not find a Roblox user named \`${inputUsername}\``)] });
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`checking **${targetUser.name}**'s current game...`)] });
       const presRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userIds: [targetUser.id] })
       })).json();
       const targetPresence = presRes.userPresences?.[0];
@@ -5739,7 +5743,7 @@ async function dispatchSlashInner(interaction) {
         try {
           const batch = allGroupIds.slice(i, i + 50);
           const bRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
-            method: 'POST', headers: { 'Content Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userIds: batch })
           })).json();
           for (const p of (bRes.userPresences || [])) {
@@ -5761,7 +5765,7 @@ async function dispatchSlashInner(interaction) {
       if (needsName.length) {
         try {
           const nameRes = await (await fetch('https://users.roblox.com/v1/users', {
-            method: 'POST', headers: { 'Content Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userIds: needsName.map(m => m.robloxId), excludeBannedUsers: false })
           })).json();
           for (const u of (nameRes.data || [])) {
@@ -5884,7 +5888,7 @@ async function dispatchSlashInner(interaction) {
       if (user.errors || !user.name) return interaction.editReply({ content: "could not find a Roblox user with that ID" });
       const profileUrl = `https://www.roblox.com/users/${input}/profile`;
       const avatarUrl = avatarRes.data?.[0]?.imageUrl;
-      const created = new Date(user.created).toLocaleDateString('en US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const created = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const e = baseEmbed().setColor(0x2C2F33).setTitle(`${user.displayName} (@${user.name})`).setURL(profileUrl).setThumbnail(avatarUrl).setDescription(`[View Profile](${profileUrl})`).addFields({ name: '🆔 User ID', value: `\`${input}\``, inline: true }, { name: '👤 Username', value: user.name, inline: true }, { name: '📅 Created', value: created, inline: true }).setTimestamp();
       const joinBtn = await buildJoinButton(input);
       return interaction.editReply({ embeds: [e], components: [new ActionRowBuilder().addComponents(joinBtn)] });
@@ -6144,19 +6148,19 @@ async function dispatchPrefixInner(message) {
     const username = args[0];
     if (!username) return message.reply('provide a Roblox username');
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return message.reply("could not find that user");
       const userId = userBasic.id;
       const [user, avatarRes, friendsRes, pastNamesRes, groupsRes] = await Promise.all([
         fetch(`https://users.roblox.com/v1/users/${userId}`).then(r => r.json()),
         fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`).then(r => r.json()),
         fetch(`https://friends.roblox.com/v1/users/${userId}/friends/count`).then(r => r.json()).catch(() => ({ count: 'n/a' })),
-        fetch(`https://users.roblox.com/v1/users/${userId}/username history?limit=10&sortOrder=Asc`).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`https://users.roblox.com/v1/users/${userId}/username-history?limit=10&sortOrder=Asc`).then(r => r.json()).catch(() => ({ data: [] })),
         fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
       const avatarUrl  = avatarRes.data?.[0]?.imageUrl;
       const profileUrl = `https://www.roblox.com/users/${userId}/profile`;
-      const created    = new Date(user.created).toLocaleDateString('en US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const created    = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const friends    = friendsRes.count ?? 'n/a';
       const pastNames  = (pastNamesRes.data ?? []).map(u => u.name);
       const groupsRaw  = (groupsRes.data ?? []);
@@ -6211,7 +6215,7 @@ async function dispatchPrefixInner(message) {
     const username = args[0];
     if (!username) return message.reply('provide a Roblox username')
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return message.reply("could not find that user")
       const userId = userBasic.id;
       const groupsData = (await (await fetch(`https://groups.roblox.com/v1/users/${userId}/groups/roles`)).json()).data ?? [];
@@ -6260,7 +6264,7 @@ async function dispatchPrefixInner(message) {
     const username = args[0];
     if (!username) return message.reply('provide a Roblox username');
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return message.reply("could not find that user");
       return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roblox ID Lookup')
         .addFields({ name: 'username', value: userBasic.name, inline: true }, { name: 'display name', value: userBasic.displayName || userBasic.name, inline: true }, { name: 'user id', value: `\`${userBasic.id}\``, inline: true })
@@ -6771,7 +6775,7 @@ async function dispatchPrefixInner(message) {
     const value = args[2];
     if (!username || !action) return;
     try {
-      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
+      const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
       if (!userBasic) return message.reply("could not find that user");
       const groupId = process.env.ROBLOX_GROUP_ID;
       if (action === 'check') {
@@ -6796,7 +6800,7 @@ async function dispatchPrefixInner(message) {
         const csrfRes = await fetch('https://auth.roblox.com/v2/logout', { method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` } });
         const csrfToken = csrfRes.headers.get('x csrf token');
         const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/users/${userBasic.id}`, {
-          method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X CSRF TOKEN': csrfToken }
+          method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
         });
         if (!res.ok) return message.reply(`couldn't exile HTTP ${res.status}`);
         return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Exiled')
@@ -6811,9 +6815,24 @@ async function dispatchPrefixInner(message) {
     const mgrs = loadWlManagers();
     if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers can use this')] });
     if (sub === 'list') {
-      const all = [...new Set([...mgrs, ...(process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)])];
+      // only the json file ids no env vars or anything
+      const all = [...new Set(mgrs)];
       if (!all.length) return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x2C2F33).setDescription('no managers set')] });
-      return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x2C2F33).setDescription(all.map((id, i) => `${i + 1}. <@${id.trim()} (\`${id.trim()}\`)`).join('\n')).setTimestamp()] });
+      // grab usernames so its not a wall of numbers
+      const lines = [];
+      let n = 1;
+      for (const id of all) {
+        let name = id;
+        try {
+          const u = await client.users.fetch(id);
+          name = u.username;
+        } catch (e) {
+          name = 'unknown user';
+        }
+        lines.push(n + '. ' + name);
+        n = n + 1;
+      }
+      return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x2C2F33).setDescription(lines.join('\n')).setTimestamp()] });
     }
     if (sub === 'add') {
       const target = message.mentions.users?.first();
@@ -7282,7 +7301,7 @@ async function dispatchPrefixInner(message) {
       if (user.errors || !user.name) return message.reply("could not find a Roblox user with that ID");
       const profileUrl = `https://www.roblox.com/users/${input}/profile`;
       const avatarUrl = avatarRes.data?.[0]?.imageUrl;
-      const created = new Date(user.created).toLocaleDateString('en US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const created = new Date(user.created).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const e = baseEmbed()
         .setColor(0x2C2F33)
         .setTitle(`${user.displayName} (@${user.name})`)
@@ -7661,7 +7680,7 @@ async function dispatchPrefixInner(message) {
 
     try {
       const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
       })).json();
       const robloxUser = res.data?.[0];
@@ -7720,7 +7739,7 @@ async function dispatchPrefixInner(message) {
 
     try {
       const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: [robloxInput], excludeBannedUsers: false })
       })).json();
       const robloxUser = res.data?.[0];
@@ -7886,7 +7905,7 @@ async function dispatchPrefixInner(message) {
     try {
       const res = await (await fetch('https://users.roblox.com/v1/usernames/users', {
         method: 'POST',
-        headers: { 'Content Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: [inputName], excludeBannedUsers: false })
       })).json();
       robloxUser = res.data?.[0];
@@ -7973,7 +7992,7 @@ async function dispatchPrefixInner(message) {
       let prefixAttendAvatarUrl = null;
       try {
         const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-          method: 'POST', headers: { 'Content Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ usernames: [roblox], excludeBannedUsers: false })
         })).json();
         const robloxUserId = robloxRes.data?.[0]?.id;
@@ -8207,7 +8226,7 @@ async function dispatchPrefixInner(message) {
       for (let i = 0; i < allTokens.length; i += 100) {
         try {
           const batch = allTokens.slice(i, i + 100).map((token, idx) => ({ requestId: `${i + idx}`, token, type: 'AvatarHeadShot', size: '150x150', format: 'png', isCircular: false }));
-          const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', { method: 'POST', headers: { 'Content Type': 'application/json' }, body: JSON.stringify(batch) })).json();
+          const res = await (await fetch('https://thumbnails.roblox.com/v1/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch) })).json();
           for (const item of (res.data || [])) { if (item.targetId && item.targetId !== 0) resolvedIds.add(item.targetId); }
         } catch {}
       }
@@ -8236,14 +8255,14 @@ async function dispatchPrefixInner(message) {
     const status = await message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`looking up **${inputUsername}** on Roblox...`)] });
     try {
       const userRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ usernames: [inputUsername], excludeBannedUsers: false })
       })).json();
       const targetUser = userRes.data?.[0];
       if (!targetUser) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`could not find a Roblox user named \`${inputUsername}\``)] });
       await status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`checking **${targetUser.name}**'s current game...`)] });
       const presRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
-        method: 'POST', headers: { 'Content Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userIds: [targetUser.id] })
       })).json();
       const targetPresence = presRes.userPresences?.[0];
@@ -8278,7 +8297,7 @@ async function dispatchPrefixInner(message) {
         try {
           const batch = allGroupIds.slice(i, i + 50);
           const bRes = await (await fetch('https://presence.roblox.com/v1/presence/users', {
-            method: 'POST', headers: { 'Content Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userIds: batch })
           })).json();
           for (const p of (bRes.userPresences || [])) {
@@ -8300,7 +8319,7 @@ async function dispatchPrefixInner(message) {
       if (needsName.length) {
         try {
           const nameRes = await (await fetch('https://users.roblox.com/v1/users', {
-            method: 'POST', headers: { 'Content Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userIds: needsName.map(m => m.robloxId), excludeBannedUsers: false })
           })).json();
           for (const u of (nameRes.data || [])) {
@@ -8443,7 +8462,7 @@ const ATTEND_SECRET = process.env.ATTEND_SECRET || '';
 http.createServer(async (req, res) => {
   // Health check
   if (req.method === 'GET' && req.url === '/') {
-    res.writeHead(200, { 'Content Type': 'text/plain' });
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('attend server ok');
     return;
   }
@@ -8475,7 +8494,7 @@ http.createServer(async (req, res) => {
       const vData = loadVerify();
       const registeredEntry = Object.entries(vData.verified || {}).find(([, v]) => v.robloxName?.toLowerCase() === robloxUsername?.toLowerCase());
       if (!registeredEntry) {
-        res.writeHead(200, { 'Content Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, skipped: true, reason: 'not a registered member' }));
         return;
       }
@@ -8494,7 +8513,7 @@ http.createServer(async (req, res) => {
       let httpAvatarUrl = null;
       try {
         const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
-          method: 'POST', headers: { 'Content Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ usernames: [robloxUsername], excludeBannedUsers: false })
         })).json();
         const robloxUserId = robloxRes.data?.[0]?.id;
@@ -8517,7 +8536,7 @@ http.createServer(async (req, res) => {
       if (httpAvatarUrl) attendEmbed.setThumbnail(httpAvatarUrl);
 
       await queueChannel.send({ embeds: [attendEmbed] });
-      res.writeHead(200, { 'Content Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       console.error('attend server error:', err.message);
