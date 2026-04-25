@@ -157,8 +157,46 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 })
 
+// ─── members.fetch() throttle ─────────────────────────────────────────────
+// gateway opcode 8 (request guild members) gets rate limited HARD if u spam it,
+// so we cache the result per guild for a lil while. fixes the
+// "Request with opcode 8 was rate limited" spam in console.
+const _membersFetchCache = new Map() // guildId -> last fetch ms
+const _membersFetchInflight = new Map() // guildId -> Promise
+const MEMBERS_FETCH_TTL = 60_000 // a fresh fetch is good for 1 min
+
+async function fetchMembersCached(guild) {
+  if (!guild) return null
+  const id = guild.id
+  const last = _membersFetchCache.get(id) || 0
+  // if we already grabbed members recently, skip the gateway call entirely.
+  // the cache on the guild already has em from the GuildMembers intent.
+  if (Date.now() - last < MEMBERS_FETCH_TTL && guild.members.cache.size > 0) {
+    return guild.members.cache
+  }
+  // dont let two fetches go out at the same time, just wait on the one already going
+  if (_membersFetchInflight.has(id)) return _membersFetchInflight.get(id)
+  const p = (async () => {
+    try {
+      const res = await guild.members.fetch()
+      _membersFetchCache.set(id, Date.now())
+      return res
+    } catch (err) {
+      // dont blow up if discord rate limits us, just use whatever we already cached
+      if (err?.message?.includes('rate limited') || err?.code === 'GuildMembersTimeout') {
+        return guild.members.cache
+      }
+      throw err
+    } finally {
+      _membersFetchInflight.delete(id)
+    }
+  })()
+  _membersFetchInflight.set(id, p)
+  return p
+}
+
 // logo and stuff
-const DEFAULT_LOGO_URL = 'https://www.image2url.com/r2/default/images/1777080171407-3d2cb58f-561a-40b2-930a-b4881ab9fe3d.jpeg'
+const DEFAULT_LOGO_URL = 'https://www.image2url.com/r2/default/images/1777154226842-53e96998-1068-4ea3-89ab-11b04970e503.png'
 const getLogoUrl = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.logoUrl || DEFAULT_LOGO_URL }
 const MOD_IMAGE_URL = 'https://i.imgur.com/CBDoIWa.png'
 // this is the group id and link, changeable with the .id command
@@ -563,6 +601,16 @@ function isWlManager(userId) {
   const mgrs = loadWlManagers()
   if (mgrs.includes(userId)) return true
   // also check the env var ones
+  const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)
+  return envMgrs.includes(userId)
+}
+
+// stricter check — ONLY real whitelist managers (no temp owner bypass).
+// used to gate the wlmanager add/remove subcommands so temp owners can use
+// every wl manager command EXCEPT promoting/demoting wl managers themselves.
+function isRealWlManager(userId) {
+  const mgrs = loadWlManagers()
+  if (mgrs.includes(userId)) return true
   const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean)
   return envMgrs.includes(userId)
 }
@@ -1466,7 +1514,20 @@ const HELP_SECTIONS = [
     commands: [
       '{p}tempowner [user] grant access to every command',
       '{p}untempowner [user] revoke temp owner access',
-      'note: temp owners bypass every permission check on the bot.',
+      'note: temp owners bypass every permission check on the bot EXCEPT promoting/demoting whitelist managers — they can only hand out regular whitelist.',
+    ]
+  },
+  {
+    title: 'rollcalls & raid leaderboard (whitelist only)',
+    commands: [
+      '{p}rollcall start a roll call (members react to confirm theyre in)',
+      '{p}endrollcall close the roll call & log everyone who reacted',
+      '{p}setrollcallchannel [channel] where the rollcall summary gets posted',
+      '{p}lb show the raid leaderboard (10 per page, < / > to flip)',
+      '{p}lbreset wipe the raid leaderboard for this server',
+      '{p}atlog browse past rollcall sessions',
+      '{p}whoisin [game URL/place id] check which group members are in a game',
+      'note: every prefix command also works as a slash command (e.g. /lb, /lbreset).',
     ]
   },
 ];
@@ -1485,12 +1546,15 @@ function buildHelpEmbed(page) {
     const args = full.slice(spaceIdx + 1)
     return `**\`${cmd}\`** ${args}`
   })
+  // header showing the current prefix + slash equivalency, sits right above the command list
+  const header = `**Prefix:** \`${p}\`  •  **Slash:** \`/\`\nevery command works as both a prefix command (\`${p}cmd\`) and a slash command (\`/cmd\`).\n\n`
   return new EmbedBuilder()
     .setColor(0x2C2F33)
     .setAuthor({ name: `${getBotName()} Help`, iconURL: getLogoUrl() })
+    .setThumbnail(getLogoUrl())
     .setTitle(section.title)
-    .setDescription(lines.join('\n'))
-    .setFooter({ text: `Page ${page + 1} of ${totalPages}`, iconURL: getLogoUrl() })
+    .setDescription(header + lines.join('\n'))
+    .setFooter({ text: `Page ${page + 1} of ${totalPages}  •  prefix: ${p}`, iconURL: getLogoUrl() })
     .setTimestamp()
 }
 
@@ -1986,7 +2050,12 @@ const slashCommands = [
     'snipe', 'editsnipe', 'reactsnipe', 'afk', 'drag', 'cleanup', 'activitycheck',
     'cs', 'group', 'flag', 'unflag', 'flagged', 'roleinfo', 'config', 'id', 'rfile', 'lvfile',
     'import', 'register', 'pregister', 'verify', 'registeredlist', 'linked',
-    'attend', 'setraidvc', 'rollcall', 'endrollcall', 'whoisin', 'ingame'
+    'attend', 'setraidvc', 'rollcall', 'endrollcall', 'whoisin', 'ingame',
+    // pick the channel where the rollcall summary gets dropped + the raid leaderboard
+    'setrollcallchannel', 'lb',
+    // wipes the raid leaderboard, plus aliases & extra prefix only commands so EVERY
+    // prefix command is also reachable via slash. the slash → prefix bridge handles dispatch.
+    'lbreset', 'atlog', 'whois', 'warns', 'c', 'rs', 'es'
   ].map(name =>
     new SlashCommandBuilder().setName(name).setDescription(`${name} command (use args for arguments)`)
       .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
@@ -3157,6 +3226,53 @@ async function dispatchSlashInner(interaction) {
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
     }
 
+    // .lb pagination — < / > buttons. customId = `lb <page> <ownerId>`
+    if (interaction.customId.startsWith('lb ')) {
+      const parts = interaction.customId.split(' ');
+      const page = parseInt(parts[1], 10);
+      const ownerId = parts[2];
+      if (interaction.user.id !== ownerId) {
+        return interaction.reply({ content: 'only the person who ran `.lb` can flip pages', ephemeral: true });
+      }
+      const stats = loadRaidStats()[interaction.guild?.id] || {};
+      const verify = loadVerify();
+      const rows = Object.entries(stats)
+        .map(([discordId, s]) => ({ discordId, count: s?.totalRaids || 0 }))
+        .filter(r => r.count > 0)
+        .sort((a, b) => b.count - a.count);
+      const PER_PAGE = 10;
+      const totalPages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+      const safePage = Math.max(0, Math.min(page, totalPages - 1));
+      const start = safePage * PER_PAGE;
+      const slice = rows.slice(start, start + PER_PAGE);
+      const medals = ['🥇', '🥈', '🥉'];
+      const lines = await Promise.all(slice.map(async (r, i) => {
+        const overall = start + i;
+        const v = verify.verified?.[r.discordId];
+        let discordName = null;
+        try {
+          const u = interaction.client.users.cache.get(r.discordId) || await interaction.client.users.fetch(r.discordId).catch(() => null);
+          if (u) discordName = u.username;
+        } catch {}
+        const discordLink = `[${discordName || `user-${r.discordId.slice(-4)}`}](https://discord.com/users/${r.discordId})`;
+        const robloxLink = v
+          ? `[${v.robloxName}](https://www.roblox.com/users/${v.robloxId}/profile)`
+          : '`not registered`';
+        const rank = overall < 3 ? medals[overall] : `**#${overall + 1}**`;
+        return `${rank} ${discordLink} • Roblox: ${robloxLink} — **${r.count}** raid${r.count !== 1 ? 's' : ''}`;
+      }));
+      const lbEmbed = baseEmbed().setColor(0x2C2F33)
+        .setTitle('Raid Leaderboard')
+        .setDescription(lines.join('\n') || 'no entries')
+        .setFooter({ text: `page ${safePage + 1}/${totalPages} • ${rows.length} member${rows.length !== 1 ? 's' : ''} • counted from rollcall logs • ${getBotName()}`, iconURL: getLogoUrl() })
+        .setTimestamp();
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`lb ${safePage - 1} ${ownerId}`).setLabel('<').setStyle(ButtonStyle.Secondary).setDisabled(safePage <= 0),
+        new ButtonBuilder().setCustomId(`lb ${safePage + 1} ${ownerId}`).setLabel('>').setStyle(ButtonStyle.Secondary).setDisabled(safePage >= totalPages - 1)
+      );
+      return interaction.update({ embeds: [lbEmbed], components: totalPages > 1 ? [row] : [] });
+    }
+
     // tagticket: Tag button → ephemeral select menu of all registered tags
     if (interaction.customId.startsWith('tagticket tag:')) {
       const parts = interaction.customId.split(':');
@@ -4203,6 +4319,8 @@ async function dispatchSlashInner(interaction) {
     }
     if (!isWlManager(interaction.user.id)) return interaction.reply({ content: "ur not a whitelist manager", ephemeral: true });
     if (sub === 'add') {
+      // temp owners can use every wl manager command EXCEPT promoting other wl managers
+      if (!isRealWlManager(interaction.user.id)) return interaction.reply({ content: "temp owners can't add whitelist managers — only real whitelist managers can do that", ephemeral: true });
       const target = interaction.options.getUser('user');
       if (!target) return interaction.reply({ content: "provide a user", ephemeral: true })
       if (isBlockedFromWhitelist(target.id)) return interaction.reply({ content: `**${target.tag}** can't be added to the whitelist managers.`, ephemeral: true });
@@ -4212,6 +4330,8 @@ async function dispatchSlashInner(interaction) {
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: interaction.user.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'remove') {
+      // temp owners are explicitly NOT allowed to remove wl managers
+      if (!isRealWlManager(interaction.user.id)) return interaction.reply({ content: "temp owners can't remove whitelist managers — only real whitelist managers can do that", ephemeral: true });
       const target = interaction.options.getUser('user');
       if (!target) return interaction.reply({ content: "provide a user", ephemeral: true })
       if (!mgrs.includes(target.id)) return interaction.reply({ content: `**${target.tag}** isn't a whitelist manager`, ephemeral: true });
@@ -4755,7 +4875,7 @@ async function dispatchSlashInner(interaction) {
     if (dmRole) {
       if (!guild) return interaction.reply({ content: "can't DM a role outside a server", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
-      await guild.members.fetch();
+      await fetchMembersCached(guild);
       const members = dmRole.members;
       if (!members.size) return interaction.editReply('no members have that role');
       let sent = 0, failed = 0;
@@ -5239,7 +5359,7 @@ async function dispatchSlashInner(interaction) {
     if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
     await interaction.deferReply();
     const role = interaction.options.getRole('role');
-    await guild.members.fetch();
+    await fetchMembersCached(guild);
     const members = guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(role.id));
 
     if (!members.size) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
@@ -5499,7 +5619,11 @@ async function dispatchSlashInner(interaction) {
       const vData = loadVerify();
       const queueChannelId = qData[guild.id]?.channelId;
       const queueChannel = queueChannelId ? guild.channels.cache.get(queueChannelId) : null;
+      // new rollcall summary channel
+      const rollCallChannelId = qData[guild.id]?.rollCallChannelId;
+      const rollCallChannel = rollCallChannelId ? guild.channels.cache.get(rollCallChannelId) : null;
       let logged = 0; const skipped = []; const loggedEntries = [];
+      const summaryRows = [];
       for (const user of reactors) {
         const userVerify = vData.verified?.[user.id];
         if (!userVerify) { skipped.push(user); continue; }
@@ -5514,15 +5638,31 @@ async function dispatchSlashInner(interaction) {
           .setTimestamp().setFooter({ text: `roll call • ${getBotName()}`, iconURL: getLogoUrl() });
         if (avatarUrl) rcAttendEmbed.setThumbnail(avatarUrl);
         if (queueChannel) { await queueChannel.send({ embeds: [rcAttendEmbed] }); addRaidStat(guild.id, user.id); }
+        else if (rollCallChannel) { addRaidStat(guild.id, user.id); }
         loggedEntries.push({ discordId: user.id, robloxName: userVerify.robloxName });
+        summaryRows.push({ discordId: user.id, discordName: user.username, robloxId: userVerify.robloxId, robloxName: userVerify.robloxName });
         logged++;
         await new Promise(r => setTimeout(r, 300));
+      }
+      // big summary in the rollcall channel — clickable discord + roblox names
+      if (rollCallChannel && summaryRows.length) {
+        const lines = summaryRows.map((r, i) =>
+          `**${i + 1}.** [${r.discordName}](https://discord.com/users/${r.discordId}) — Roblox: [${r.robloxName}](https://www.roblox.com/users/${r.robloxId}/profile)`
+        );
+        const skippedLine = skipped.length ? `\n\n*${skipped.length} skipped (not registered)*` : '';
+        const summaryEmbed = baseEmbed().setColor(0x2C2F33)
+          .setTitle('Rollcall — Who Was In')
+          .setDescription(lines.join('\n') + skippedLine)
+          .setFooter({ text: `${summaryRows.length} member${summaryRows.length !== 1 ? 's' : ''} • closed by ${interaction.user.username} • ${getBotName()}`, iconURL: getLogoUrl() })
+          .setTimestamp();
+        try { await rollCallChannel.send({ embeds: [summaryEmbed] }); } catch (e) { console.error('rollcall summary post failed:', e.message); }
       }
       appendAtLog(guild.id, { ts: Date.now(), by: interaction.user.id, channelId: rc.channelId, queueChannelId: queueChannel?.id || null, logged: loggedEntries, skipped: skipped.map(u => u.id) });
       delete qData[guild.id].rollCall;
       saveQueue(qData);
       const skipNote = skipped.length ? `\n${skipped.length} skipped (not registered)` : '';
-      return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roll Call Closed').setDescription(`logged **${logged}** member${logged !== 1 ? 's' : ''}${queueChannel ? ` to ${queueChannel}` : ''}${skipNote}`).setTimestamp()] });
+      const summaryNote = rollCallChannel ? `\nsummary posted to ${rollCallChannel}` : (rollCallChannelId ? '\n(rollcall channel set but couldnt find it, check perms)' : `\nset a summary channel with \`/setrollcallchannel\``);
+      return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roll Call Closed').setDescription(`logged **${logged}** member${logged !== 1 ? 's' : ''}${queueChannel ? ` to ${queueChannel}` : ''}${skipNote}${summaryNote}`).setTimestamp()] });
     } catch (err) {
       return interaction.editReply({ content: `failed to close roll call ${err.message}` });
     }
@@ -5929,7 +6069,7 @@ async function dispatchSlashInner(interaction) {
     const guildRanks = rankupData[guild.id]?.roles || [];
     if (!guildRanks.length) return interaction.editReply({ content: 'no rank roles set use `/setrankroles set` to configure the rank ladder' });
     const levels = interaction.options.getInteger('levels') || 1;
-    await guild.members.fetch();
+    await fetchMembersCached(guild);
     await guild.roles.fetch();
     const targets = []; const seenIds = new Set();
     for (let i = 1; i <= 5; i++) { const m = interaction.options.getMember(`user${i}`); if (m && !seenIds.has(m.id)) { targets.push(m); seenIds.add(m.id); } }
@@ -6770,7 +6910,7 @@ async function dispatchPrefixInner(message) {
     if (roleMention) {
       // DM everyone with the role (guild only)
       if (!message.guild) return message.reply("can't DM a role outside of a server");
-      await message.guild.members.fetch();
+      await fetchMembersCached(message.guild);
       const members = roleMention.members;
       if (!members.size) return message.reply("no members have that role");
       let sent = 0, failed = 0;
@@ -6872,6 +7012,8 @@ async function dispatchPrefixInner(message) {
       return message.reply({ embeds: [baseEmbed().setTitle('whitelist managers').setColor(0x2C2F33).setDescription(lines.join('\n')).setTimestamp()] });
     }
     if (sub === 'add') {
+      // temp owners can use every wl manager command EXCEPT promoting other wl managers
+      if (!isRealWlManager(message.author.id)) return message.reply({ embeds: [errorEmbed('no permission').setDescription("temp owners can't add whitelist managers — only real whitelist managers can do that. you can still hand out regular whitelist with `.whitelist add @user`")] });
       const target = message.mentions.users?.first();
       if (!target) return message.reply('mention a user to add');
       if (isBlockedFromWhitelist(target.id)) return message.reply(`**${target.tag}** can't be added to the whitelist managers.`);
@@ -6881,6 +7023,8 @@ async function dispatchPrefixInner(message) {
         .addFields({ name: 'user', value: target.tag, inline: true }, { name: 'added by', value: message.author.tag, inline: true }).setTimestamp()] });
     }
     if (sub === 'remove') {
+      // temp owners are explicitly NOT allowed to remove wl managers
+      if (!isRealWlManager(message.author.id)) return message.reply({ embeds: [errorEmbed('no permission').setDescription("temp owners can't remove whitelist managers — only real whitelist managers can do that")] });
       const target = message.mentions.users?.first();
       if (!target) return message.reply('mention a user to remove');
       if (!mgrs.includes(target.id)) return message.reply(`**${target.tag}** isn't a whitelist manager`);
@@ -7059,8 +7203,8 @@ async function dispatchPrefixInner(message) {
     } catch { return message.reply('missing **Manage Guild** permission to fetch invites'); }
   }
 
-  // .purge
-  if (command === 'purge') {
+  // .purge (also .c which is just a shortcut so u dont gotta type the whole word)
+  if (command === 'purge' || command === 'c') {
     if (!message.guild) return;
     const amount = parseInt(args[0], 10);
     if (isNaN(amount) || amount < 1 || amount > 100) return message.reply('provide a number between 1 and 100');
@@ -7301,7 +7445,7 @@ async function dispatchPrefixInner(message) {
     }
     if (!role) return;
 
-    await message.guild.members.fetch();
+    await fetchMembersCached(message.guild);
     const members = message.guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(role.id));
 
     if (!members.size) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle(`Members with ${role.name}`).setDescription('nobody has this role')] });
@@ -7435,13 +7579,16 @@ async function dispatchPrefixInner(message) {
   if (command === 'rankup') {
     if (!message.guild) return;
 
-    // optional first arg like "3x" to jump N ranks
+    // optional "3x" anywhere in args to jump N ranks at once
+    // (so .rankup @user 3x works the same as .rankup 3x @user, ppl type both ways)
     let levels = 1;
-    let startArgIdx = 0;
-    const firstArg = args[0]?.toLowerCase();
-    if (firstArg && /^\d+x$/.test(firstArg)) {
-      levels = Math.min(Math.max(parseInt(firstArg, 10), 1), 20);
-      startArgIdx = 1;
+    const argsCleaned = [];
+    for (const a of args) {
+      if (a && /^\d+x$/i.test(a)) {
+        levels = Math.min(Math.max(parseInt(a, 10), 1), 20);
+      } else if (a) {
+        argsCleaned.push(a);
+      }
     }
 
     const rankup = loadRankup();
@@ -7449,10 +7596,10 @@ async function dispatchPrefixInner(message) {
     if (!guildRanks.length)
       return message.reply(`no rank roles set use \`${prefix}setrankroles @role1 @role2 ...\` to configure the rank ladder`);
 
-    const rawTokens = args.slice(startArgIdx);
+    const rawTokens = argsCleaned;
     if (!rawTokens.length) return;
 
-    await message.guild.members.fetch();
+    await fetchMembersCached(message.guild);
 
     // collect unique members from mentions + any bare username/ID tokens
     const mentionedMembers = [...(message.mentions.members?.values() ?? [])];
@@ -7978,7 +8125,7 @@ async function dispatchPrefixInner(message) {
 
     // Pair up args: could be interleaved mentions + roblox names
     // Simple approach: pair each mention/id with the next non mention arg as roblox name
-    await message.guild.members.fetch();
+    await fetchMembersCached(message.guild);
 
     const pairs = [];
     const tokens = [...args];
@@ -8073,6 +8220,89 @@ async function dispatchPrefixInner(message) {
     return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Raid Voice Channel Set').setDescription(`attendance will now be auto logged when verified group members join ${vc}\n\nThe logged list resets whenever you set a new channel.`).setTimestamp()] });
   }
 
+  // .setrollcallchannel — sets where the big summary embed (everyone in the rollcall) gets posted
+  // when u run .endrollcall. usage: .setrollcallchannel #channel
+  if (command === 'setrollcallchannel') {
+    if (!message.guild) return;
+    if (!loadWhitelist().includes(message.author.id) && !isWlManager(message.author.id))
+      return message.reply('you need to be whitelisted to use this');
+    const ch = message.mentions.channels.first() || message.guild.channels.cache.get(args[0]);
+    if (!ch || !ch.isTextBased?.()) return message.reply(`provide a text channel like \`${prefix}setrollcallchannel #channel\``);
+    const qData = loadQueue();
+    if (!qData[message.guild.id]) qData[message.guild.id] = {};
+    qData[message.guild.id].rollCallChannelId = ch.id;
+    saveQueue(qData);
+    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Rollcall Channel Set').setDescription(`when u run \`${prefix}endrollcall\` the full list of who reacted (with clickable Discord + Roblox names) will get posted in ${ch}`).setTimestamp()] });
+  }
+
+  // .lb — raid leaderboard. shows who has been in the most rollcalls/raids
+  // (uses the same raid stats that .endrollcall already updates so the count = how many rollcalls they were in)
+  // paginated 10 per page with transparent < / > buttons (Secondary style).
+  if (command === 'lb') {
+    if (!message.guild) return;
+    const stats = loadRaidStats()[message.guild.id] || {};
+    const verify = loadVerify();
+    const rows = Object.entries(stats)
+      .map(([discordId, s]) => ({ discordId, count: s?.totalRaids || 0 }))
+      .filter(r => r.count > 0)
+      .sort((a, b) => b.count - a.count);
+    if (!rows.length) {
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Raid Leaderboard').setDescription('nobody has joined a raid yet (no rollcalls have been logged)')] });
+    }
+    const PER_PAGE = 10;
+    const totalPages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+    const medals = ['🥇', '🥈', '🥉'];
+    // build a single page (10 rows). resolves discord usernames lazily so big leaderboards dont stall.
+    const buildPage = async (page) => {
+      const start = page * PER_PAGE;
+      const slice = rows.slice(start, start + PER_PAGE);
+      const lines = await Promise.all(slice.map(async (r, i) => {
+        const overall = start + i;
+        const v = verify.verified?.[r.discordId];
+        let discordName = null;
+        try {
+          const u = message.client.users.cache.get(r.discordId) || await message.client.users.fetch(r.discordId).catch(() => null);
+          if (u) discordName = u.username;
+        } catch {}
+        const discordLink = `[${discordName || `user-${r.discordId.slice(-4)}`}](https://discord.com/users/${r.discordId})`;
+        const robloxLink = v
+          ? `[${v.robloxName}](https://www.roblox.com/users/${v.robloxId}/profile)`
+          : '`not registered`';
+        const rank = overall < 3 ? medals[overall] : `**#${overall + 1}**`;
+        return `${rank} ${discordLink} • Roblox: ${robloxLink} — **${r.count}** raid${r.count !== 1 ? 's' : ''}`;
+      }));
+      return baseEmbed().setColor(0x2C2F33)
+        .setTitle('Raid Leaderboard')
+        .setDescription(lines.join('\n') || 'no entries')
+        .setFooter({ text: `page ${page + 1}/${totalPages} • ${rows.length} member${rows.length !== 1 ? 's' : ''} • counted from rollcall logs • ${getBotName()}`, iconURL: getLogoUrl() })
+        .setTimestamp();
+    };
+    // < / > buttons. Secondary style is the transparent/grey one in discord
+    // customId encodes the requesting user so randoms can't flip pages on someone else's leaderboard
+    const buildRow = (page) => new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`lb ${page - 1} ${message.author.id}`).setLabel('<').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+      new ButtonBuilder().setCustomId(`lb ${page + 1} ${message.author.id}`).setLabel('>').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1)
+    );
+    const initialEmbed = await buildPage(0);
+    const components = totalPages > 1 ? [buildRow(0)] : [];
+    return message.reply({ embeds: [initialEmbed], components });
+  }
+
+  // .lbreset — wipe the raid leaderboard for this server.
+  // wl managers + temp owners can run it (anyone isWlManager() returns true for).
+  if (command === 'lbreset') {
+    if (!message.guild) return;
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers and temp owners can wipe the raid leaderboard')] });
+    const all = loadRaidStats();
+    const had = Object.keys(all[message.guild.id] || {}).length;
+    delete all[message.guild.id];
+    saveRaidStats(all);
+    return message.reply({ embeds: [successEmbed('Raid Leaderboard Wiped')
+      .setDescription(`cleared **${had}** member${had !== 1 ? 's' : ''} from the raid leaderboard for this server`)
+      .addFields({ name: 'wiped by', value: message.author.tag })] });
+  }
+
   // .rollcall
   if (command === 'rollcall') {
     if (!message.guild) return;
@@ -8114,7 +8344,12 @@ async function dispatchPrefixInner(message) {
       const vData = loadVerify();
       const queueChannelId = qData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? message.guild.channels.cache.get(queueChannelId) : null;
+      // the new rollcall summary channel — set with .setrollcallchannel
+      const rollCallChannelId = qData[message.guild.id]?.rollCallChannelId;
+      const rollCallChannel = rollCallChannelId ? message.guild.channels.cache.get(rollCallChannelId) : null;
       let logged = 0; const skipped = []; const loggedEntries = [];
+      // for the summary embed — keep both names so we can build clickable links
+      const summaryRows = [];
       for (const user of reactors) {
         const userVerify = vData.verified?.[user.id];
         if (!userVerify) { skipped.push(user); continue; }
@@ -8129,15 +8364,31 @@ async function dispatchPrefixInner(message) {
           .setTimestamp().setFooter({ text: `roll call • ${getBotName()}`, iconURL: getLogoUrl() });
         if (avatarUrl) rcAttendEmbed.setThumbnail(avatarUrl);
         if (queueChannel) { await queueChannel.send({ embeds: [rcAttendEmbed] }); addRaidStat(message.guild.id, user.id); }
+        else if (rollCallChannel) { addRaidStat(message.guild.id, user.id); } // still credit the raid stat even if no queue channel
         loggedEntries.push({ discordId: user.id, robloxName: userVerify.robloxName });
+        summaryRows.push({ discordId: user.id, discordName: user.username, robloxId: userVerify.robloxId, robloxName: userVerify.robloxName });
         logged++;
         await new Promise(r => setTimeout(r, 300));
+      }
+      // post the big summary embed in the rollcall channel — every1 in the rollcall, with clickable names
+      if (rollCallChannel && summaryRows.length) {
+        const lines = summaryRows.map((r, i) =>
+          `**${i + 1}.** [${r.discordName}](https://discord.com/users/${r.discordId}) — Roblox: [${r.robloxName}](https://www.roblox.com/users/${r.robloxId}/profile)`
+        );
+        const skippedLine = skipped.length ? `\n\n*${skipped.length} skipped (not registered)*` : '';
+        const summaryEmbed = baseEmbed().setColor(0x2C2F33)
+          .setTitle('Rollcall — Who Was In')
+          .setDescription(lines.join('\n') + skippedLine)
+          .setFooter({ text: `${summaryRows.length} member${summaryRows.length !== 1 ? 's' : ''} • closed by ${message.author.username} • ${getBotName()}`, iconURL: getLogoUrl() })
+          .setTimestamp();
+        try { await rollCallChannel.send({ embeds: [summaryEmbed] }); } catch (e) { console.error('rollcall summary post failed:', e.message); }
       }
       appendAtLog(message.guild.id, { ts: Date.now(), by: message.author.id, channelId: rc.channelId, queueChannelId: queueChannel?.id || null, logged: loggedEntries, skipped: skipped.map(u => u.id) });
       delete qData[message.guild.id].rollCall;
       saveQueue(qData);
       const skipNote = skipped.length ? `\n${skipped.length} skipped (not registered)` : '';
-      return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roll Call Closed').setDescription(`logged **${logged}** member${logged !== 1 ? 's' : ''}${queueChannel ? ` to ${queueChannel}` : ''}${skipNote}`).setTimestamp()] });
+      const summaryNote = rollCallChannel ? `\nsummary posted to ${rollCallChannel}` : (rollCallChannelId ? '\n(rollcall channel set but couldnt find it, check perms)' : `\nset a summary channel with \`${prefix}setrollcallchannel #channel\``);
+      return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Roll Call Closed').setDescription(`logged **${logged}** member${logged !== 1 ? 's' : ''}${queueChannel ? ` to ${queueChannel}` : ''}${skipNote}${summaryNote}`).setTimestamp()] });
     } catch (err) {
       return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`failed to close roll call ${err.message}`)] });
     }
