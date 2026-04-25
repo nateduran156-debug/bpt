@@ -7,8 +7,139 @@ import fs from 'fs'
 import http from 'http'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import pg from 'pg'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// ─── Postgres connection pool ─────────────────────────────────────────────────
+// Uses DATABASE_URL env var. If not set, all DB operations are no-ops and the
+// bot falls back to JSON files transparently.
+const { Pool } = pg
+let dbPool = null
+if (process.env.DATABASE_URL) {
+  dbPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false },
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+  })
+  dbPool.on('error', (err) => console.error('[pg] pool error:', err.message))
+}
+
+// Safe query helper — returns null on error so callers can fall back to JSON
+async function dbQuery(sql, params = []) {
+  if (!dbPool) return null
+  try {
+    return await dbPool.query(sql, params)
+  } catch (err) {
+    console.error('[pg] query error:', err.message, '|', sql.slice(0, 80))
+    return null
+  }
+}
+
+// ─── Database schema initialisation ──────────────────────────────────────────
+// Creates all tables on startup if they don't already exist. Each table stores
+// its data as a JSONB `data` column keyed by a text `key` so the schema is
+// flexible and mirrors the existing JSON file structure exactly.
+async function initDbSchema() {
+  if (!dbPool) return
+  const tables = [
+    'bot_config', 'tags', 'tagged_members', 'whitelist', 'verify',
+    'rankup', 'queue', 'attendance_log', 'raid_stats', 'warns', 'vanity',
+    'autorole', 'welcome', 'antiinvite', 'altdentifier', 'joindm', 'logs',
+    'autoresponder', 'activity_check', 'tickets', 'ticket_support', 'tag_log',
+  ]
+  for (const table of tables) {
+    await dbQuery(`
+      CREATE TABLE IF NOT EXISTS ${table} (
+        key  TEXT PRIMARY KEY,
+        data JSONB NOT NULL DEFAULT '{}'
+      )
+    `)
+  }
+  // bot_status table: written by the controller bot, read by this bot
+  await dbQuery(`
+    CREATE TABLE IF NOT EXISTS bot_status (
+      id     TEXT PRIMARY KEY DEFAULT 'main',
+      status TEXT NOT NULL DEFAULT 'running',
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `)
+  // Ensure a default row exists so SELECT always returns something
+  await dbQuery(`
+    INSERT INTO bot_status (id, status) VALUES ('main', 'running')
+    ON CONFLICT (id) DO NOTHING
+  `)
+  console.log('[pg] schema ready')
+}
+
+// ─── Generic DB load/save (keyed JSONB store) ─────────────────────────────────
+// Each "file" maps to a row in its table with key='_root'. This keeps the
+// interface identical to loadJSON/saveJSON so callers need no changes.
+async function dbLoad(table) {
+  const res = await dbQuery(`SELECT data FROM ${table} WHERE key = '_root'`)
+  if (!res || !res.rows.length) return null
+  return res.rows[0].data
+}
+
+async function dbSave(table, data) {
+  await dbQuery(
+    `INSERT INTO ${table} (key, data) VALUES ('_root', $1)
+     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data`,
+    [JSON.stringify(data)]
+  )
+}
+
+// ─── Data migration: JSON → Postgres ─────────────────────────────────────────
+// On first run (when the DB row doesn't exist yet) we read the JSON file and
+// insert its contents into Postgres. Subsequent runs skip this because the row
+// already exists. JSON files are kept as-is for backup purposes.
+async function migrateJsonToDb(table, filePath) {
+  if (!dbPool) return
+  // Only migrate if the DB row is empty
+  const existing = await dbQuery(`SELECT 1 FROM ${table} WHERE key = '_root'`)
+  if (existing && existing.rows.length > 0) return
+  if (!fs.existsSync(filePath)) return
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8').trim()
+    if (!raw) return
+    const data = JSON.parse(raw)
+    await dbSave(table, data)
+    console.log(`[pg] migrated ${path.basename(filePath)} → ${table}`)
+  } catch (err) {
+    console.error(`[pg] migration failed for ${filePath}: ${err.message}`)
+  }
+}
+
+// ─── Control signal: check bot_status table ───────────────────────────────────
+// The controller bot writes status='stopped' or 'restarting' to this table.
+// We check on startup and every 30 s. If stopped, we shut down gracefully.
+async function checkBotStatus() {
+  if (!dbPool) return
+  try {
+    const res = await dbQuery(`SELECT status FROM bot_status WHERE id = 'main'`)
+    if (!res || !res.rows.length) return
+    const status = res.rows[0].status
+    if (status === 'stopped') {
+      console.log('[control] bot_status = stopped — shutting down')
+      await gracefulShutdown('control-signal')
+    } else if (status === 'restarting') {
+      console.log('[control] bot_status = restarting — controller will restart the service')
+    }
+  } catch (err) {
+    console.error('[control] status check error:', err.message)
+  }
+}
+
+// ─── Whitelisted user IDs (env-based, hard enforcement) ──────────────────────
+// WHITELISTED_USER_IDS is a comma-separated list of Discord user IDs that are
+// always treated as whitelisted regardless of the whitelist.json / DB contents.
+// This is separate from the in-bot whitelist management system.
+const ENV_WHITELISTED_IDS = new Set(
+  (process.env.WHITELISTED_USER_IDS || '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+)
 
 // bot client setup - need all these intents for dms and stuff to work
 const client = new Client({
@@ -217,6 +348,7 @@ function loadJSON(file) {
 // existing file), keep a .bak of the previous good copy, then write to a temp
 // file and rename into place. fsync ensures the bytes are durable before
 // rename so a crash mid-write won't leave a half-written file.
+// Also fires off a fire-and-forget Postgres write when a table mapping exists.
 function saveJSON(file, data) {
   const json = JSON.stringify(data, null, 2)
   const dir = path.dirname(file)
@@ -233,6 +365,12 @@ function saveJSON(file, data) {
     fs.closeSync(fd)
   }
   fs.renameSync(tmp, file)
+  // Mirror write to Postgres (fire-and-forget — never blocks the caller)
+  if (dbPool && FILE_TO_TABLE && FILE_TO_TABLE[file]) {
+    dbSave(FILE_TO_TABLE[file], data).catch(err =>
+      console.error(`[pg] saveJSON mirror failed for ${FILE_TO_TABLE[file]}: ${err.message}`)
+    )
+  }
 }
 
 // shortcut load/save functions for each file
@@ -348,6 +486,72 @@ const saveJoindm = j => saveJSON(JOINDM_FILE, j)
 const loadLogs = () => loadJSON(LOGS_FILE)
 const saveLogs = l => saveJSON(LOGS_FILE, l)
 
+// ─── DB-backed async load/save helpers ───────────────────────────────────────
+// These async variants read from Postgres first (falling back to the JSON file
+// if the DB has no data yet) and write to both Postgres and the JSON file so
+// data is always durable even if the DB is temporarily unavailable.
+//
+// FILE → TABLE mapping (only the tables defined in initDbSchema):
+const FILE_TO_TABLE = {
+  [path.join(__dirname, 'config.json')]:          'bot_config',
+  [path.join(__dirname, 'tags.json')]:             'tags',
+  [path.join(__dirname, 'tagged_members.json')]:   'tagged_members',
+  [path.join(__dirname, 'whitelist.json')]:        'whitelist',
+  [path.join(__dirname, 'verify.json')]:           'verify',
+  [path.join(__dirname, 'rankup.json')]:           'rankup',
+  [path.join(__dirname, 'queue.json')]:            'queue',
+  [path.join(__dirname, 'attendance_log.json')]:   'attendance_log',
+  [path.join(__dirname, 'raid_stats.json')]:       'raid_stats',
+  [path.join(__dirname, 'warns.json')]:            'warns',
+  [path.join(__dirname, 'vanity.json')]:           'vanity',
+  [path.join(__dirname, 'autorole.json')]:         'autorole',
+  [path.join(__dirname, 'welcome.json')]:          'welcome',
+  [path.join(__dirname, 'antiinvite.json')]:       'antiinvite',
+  [path.join(__dirname, 'altdentifier.json')]:     'altdentifier',
+  [path.join(__dirname, 'joindm.json')]:           'joindm',
+  [path.join(__dirname, 'logs.json')]:             'logs',
+  [path.join(__dirname, 'autoresponder.json')]:    'autoresponder',
+  [path.join(__dirname, 'activity_check.json')]:   'activity_check',
+  [path.join(__dirname, 'tickets.json')]:          'tickets',
+  [path.join(__dirname, 'ticket_support.json')]:   'ticket_support',
+  [path.join(__dirname, 'tag_log.json')]:          'tag_log',
+}
+
+// In-memory write-through cache so synchronous callers (loadJSON) always see
+// the latest data that was written via saveJSONAsync, even before the next
+// DB read. Keyed by absolute file path.
+const _dbCache = new Map()
+
+// Async load: DB first, JSON fallback, populates cache
+async function loadJSONAsync(file) {
+  const table = FILE_TO_TABLE[file]
+  if (table && dbPool) {
+    const dbData = await dbLoad(table)
+    if (dbData !== null) {
+      _dbCache.set(file, dbData)
+      return dbData
+    }
+  }
+  // Fall back to JSON file
+  const jsonData = loadJSON(file)
+  _dbCache.set(file, jsonData)
+  return jsonData
+}
+
+// Async save: writes to JSON file AND Postgres (fire-and-forget for DB part)
+async function saveJSONAsync(file, data) {
+  _dbCache.set(file, data)
+  // Always write JSON for backward compat / crash recovery
+  saveJSON(file, data)
+  // Also persist to Postgres if we have a table for this file
+  const table = FILE_TO_TABLE[file]
+  if (table && dbPool) {
+    dbSave(table, data).catch(err =>
+      console.error(`[pg] saveJSONAsync failed for ${table}: ${err.message}`)
+    )
+  }
+}
+
 // check if someone is a temp owner (full-access bypass)
 function isTempOwner(userId) {
   return loadTempOwners().includes(userId)
@@ -367,7 +571,9 @@ function isWlManager(userId) {
 // fresh check - is this user actually on the whitelist file right now
 // reads the file every call so it never goes stale. wl managers + tempowners
 // also count as whitelisted so they always have access even if not in the file.
+// ENV_WHITELISTED_IDS (from WHITELISTED_USER_IDS env var) always bypass too.
 function isWhitelisted(userId) {
+  if (ENV_WHITELISTED_IDS.has(userId)) return true
   if (isWlManager(userId)) return true
   return loadWhitelist().includes(userId)
 }
@@ -1756,6 +1962,92 @@ function applyStatus(statusData) {
 // ─── Ready ────────────────────────────────────────────────────────────────────
 client.once('clientReady', async () => {
   console.log(`logged in as ${client.user.tag}`);
+
+  // ── 1. Initialise Postgres schema ─────────────────────────────────────────
+  if (dbPool) {
+    await initDbSchema();
+
+    // ── 2. Migrate existing JSON files into Postgres (first run only) ────────
+    const migrations = [
+      ['bot_config',      CONFIG_FILE],
+      ['tags',            TAGS_FILE],
+      ['tagged_members',  TAGGED_MEMBERS_FILE],
+      ['whitelist',       WHITELIST_FILE],
+      ['verify',          VERIFY_FILE],
+      ['rankup',          RANKUP_FILE],
+      ['queue',           QUEUE_FILE],
+      ['attendance_log',  ATLOG_FILE],
+      ['raid_stats',      RAID_STATS_FILE],
+      ['warns',           WARNS_FILE],
+      ['vanity',          VANITY_FILE],
+      ['autorole',        AUTOROLE_FILE],
+      ['welcome',         WELCOME_FILE],
+      ['antiinvite',      ANTIINVITE_FILE],
+      ['altdentifier',    ALTDENTIFIER_FILE],
+      ['joindm',          JOINDM_FILE],
+      ['logs',            LOGS_FILE],
+      ['autoresponder',   AUTORESPONDER_FILE],
+      ['activity_check',  ACTIVITY_CHECK_FILE],
+      ['tickets',         TICKETS_FILE],
+      ['ticket_support',  TICKET_SUPPORT_FILE],
+      ['tag_log',         TAG_LOG_FILE],
+    ];
+    for (const [table, file] of migrations) {
+      await migrateJsonToDb(table, file);
+    }
+
+    // ── 3. Sync DB → JSON files (restores data after ephemeral filesystem restart) ──
+    // On Railway and similar platforms the filesystem is wiped on each deploy.
+    // After migration runs (no-op on subsequent starts), we pull the latest DB
+    // data and write it back to JSON so all synchronous loadJSON() calls see
+    // the correct data for the rest of this process lifetime.
+    const dbToJsonSync = [
+      ['bot_config',      CONFIG_FILE],
+      ['tags',            TAGS_FILE],
+      ['tagged_members',  TAGGED_MEMBERS_FILE],
+      ['whitelist',       WHITELIST_FILE],
+      ['verify',          VERIFY_FILE],
+      ['rankup',          RANKUP_FILE],
+      ['queue',           QUEUE_FILE],
+      ['attendance_log',  ATLOG_FILE],
+      ['raid_stats',      RAID_STATS_FILE],
+      ['warns',           WARNS_FILE],
+      ['vanity',          VANITY_FILE],
+      ['autorole',        AUTOROLE_FILE],
+      ['welcome',         WELCOME_FILE],
+      ['antiinvite',      ANTIINVITE_FILE],
+      ['altdentifier',    ALTDENTIFIER_FILE],
+      ['joindm',          JOINDM_FILE],
+      ['logs',            LOGS_FILE],
+      ['autoresponder',   AUTORESPONDER_FILE],
+      ['activity_check',  ACTIVITY_CHECK_FILE],
+      ['tickets',         TICKETS_FILE],
+      ['ticket_support',  TICKET_SUPPORT_FILE],
+      ['tag_log',         TAG_LOG_FILE],
+    ];
+    for (const [table, file] of dbToJsonSync) {
+      try {
+        const dbData = await dbLoad(table);
+        if (dbData !== null) {
+          // Write JSON without triggering another DB mirror (use fs directly)
+          const json = JSON.stringify(dbData, null, 2);
+          const dir = path.dirname(file);
+          try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+          fs.writeFileSync(file, json, 'utf8');
+        }
+      } catch (err) {
+        console.error(`[pg] db→json sync failed for ${table}: ${err.message}`);
+      }
+    }
+    console.log('[pg] db→json sync complete');
+
+    // ── 4. Check control signal on startup ───────────────────────────────────
+    await checkBotStatus();
+
+    // ── 5. Poll bot_status every 30 s ────────────────────────────────────────
+    setInterval(checkBotStatus, 30_000);
+  }
+
   const cfg = loadConfig();
   if (cfg.status) applyStatus(cfg.status);
 
@@ -8120,6 +8412,8 @@ async function gracefulShutdown(signal) {
   shuttingDown = true;
   console.log(`received ${signal}, shutting down...`);
   try { await client.destroy(); } catch {}
+  // Close the Postgres pool so pending queries can drain
+  if (dbPool) { try { await dbPool.end(); } catch {} }
   process.exit(0);
 }
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
