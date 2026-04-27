@@ -6,27 +6,28 @@ import { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder,
 import fs from 'fs'
 import http from 'http'
 import path from 'path'
+import zlib from 'zlib'
 import { fileURLToPath } from 'url'
 import pg from 'pg'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// (Removed) global embed image — embeds now only show the small thumbnail
-// in the top right via baseEmbed().setThumbnail(...).
+// (removed) global embed image - embeds now only show the small thumbnail
+// in the top right via baseembed().setthumbnail(...).
 
-// IDs that can never be added to whitelist or wl manager lists
+// ids that can never be added to whitelist or wl manager lists
 const BLOCKED_WL_IDS = new Set(['794724800097681428', '1472482602215538779'])
 function isBlockedFromWhitelist(id) { return BLOCKED_WL_IDS.has(String(id)) }
 
-// Short error code helper
-// `errCode()` builds a short numeric/letter code like `E01 A4F` so the user
-// can quote it back. Use it inside catch blocks to surface real errors.
+// short error code helper
+// `errcode()` builds a short numeric/letter code like `E01 A4F` so the user
+// can quote it back. use it inside catch blocks to surface real errors.
 function shortErrCode(prefix = 'E') {
   return `${prefix} ${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 }
 
-// Postgres connection pool
-// Uses DATABASE URL env var. If not set, all DB operations are no ops and the
+// postgres connection pool
+// uses DATABASE URL env var. if not set, all DB operations are no ops and the
 // bot falls back to JSON files transparently.
 const { Pool } = pg
 let dbPool = null
@@ -41,7 +42,7 @@ if (process.env.DATABASE_URL) {
   dbPool.on('error', (err) => console.error('[pg] pool error:', err.message))
 }
 
-// Safe query helper returns null on error so callers can fall back to JSON
+// safe query helper returns null on error so callers can fall back to JSON
 async function dbQuery(sql, params = []) {
   if (!dbPool) return null
   try {
@@ -52,8 +53,8 @@ async function dbQuery(sql, params = []) {
   }
 }
 
-// Database schema initialisation
-// Creates all tables on startup if they don't already exist. Each table stores
+// database schema initialisation
+// creates all tables on startup if they don't already exist. each table stores
 // its data as a JSONB `data` column keyed by a text `key` so the schema is
 // flexible and mirrors the existing JSON file structure exactly.
 async function initDbSchema() {
@@ -69,14 +70,14 @@ async function initDbSchema() {
   }
   // bot status table: written by the controller bot, read by this bot
   await dbQuery(`CREATE TABLE IF NOT EXISTS "bot status" ( id TEXT PRIMARY KEY DEFAULT 'main', status TEXT NOT NULL DEFAULT 'running', "updated at" TIMESTAMPTZ DEFAULT NOW() )`)
-  // Ensure a default row exists so SELECT always returns something
+  // ensure a default row exists so SELECT always returns something
   await dbQuery(`INSERT INTO "bot status" (id, status) VALUES ('main', 'running') ON CONFLICT (id) DO NOTHING`)
   console.log('[pg] schema ready')
 }
 
-// Generic DB load/save (keyed JSONB store)
-// Each "file" maps to a row in its table with key='_root'. This keeps the
-// interface identical to loadJSON/saveJSON so callers need no changes.
+// generic DB load/save (keyed JSONB store)
+// each "file" maps to a row in its table with key='_root'. this keeps the
+// interface identical to loadjson/savejson so callers need no changes.
 async function dbLoad(table) {
   const res = await dbQuery(`SELECT data FROM "${table}" WHERE key = '_root'`)
   if (!res || !res.rows.length) return null
@@ -90,13 +91,13 @@ async function dbSave(table, data) {
   )
 }
 
-// Data migration: JSON → Postgres
-// On first run (when the DB row doesn't exist yet) we read the JSON file and
-// insert its contents into Postgres. Subsequent runs skip this because the row
+// data migration: JSON → postgres
+// on first run (when the DB row doesn't exist yet) we read the JSON file and
+// insert its contents into postgres. subsequent runs skip this because the row
 // already exists. JSON files are kept as is for backup purposes.
 async function migrateJsonToDb(table, filePath) {
   if (!dbPool) return
-  // Only migrate if the DB row is empty
+  // only migrate if the DB row is empty
   const existing = await dbQuery(`SELECT 1 FROM "${table}" WHERE key = '_root'`)
   if (existing && existing.rows.length > 0) return
   if (!fs.existsSync(filePath)) return
@@ -111,9 +112,9 @@ async function migrateJsonToDb(table, filePath) {
   }
 }
 
-// Control signal: check bot status table
-// The controller bot writes status='stopped' or 'restarting' to this table.
-// We check on startup and every 30 s. If stopped, we shut down gracefully.
+// control signal: check bot status table
+// the controller bot writes status='stopped' or 'restarting' to this table.
+// we check on startup and every 30 s. if stopped, we shut down gracefully.
 async function checkBotStatus() {
   if (!dbPool) return
   try {
@@ -131,10 +132,10 @@ async function checkBotStatus() {
   }
 }
 
-// Whitelisted user IDs (env based, hard enforcement)
-// WHITELISTED USER IDS is a comma separated list of Discord user IDs that are
+// whitelisted user ids (env based, hard enforcement)
+// WHITELISTED USER IDS is a comma separated list of discord user ids that are
 // always treated as whitelisted regardless of the whitelist.json / DB contents.
-// This is separate from the in bot whitelist management system.
+// this is separate from the in bot whitelist management system.
 const ENV_WHITELISTED_IDS = new Set(
   (process.env.WHITELISTED_USER_IDS || '')
     .split(',').map(s => s.trim()).filter(Boolean)
@@ -160,9 +161,9 @@ const client = new Client({
 // ─── members.fetch() throttle ─────────────────────────────────────────────
 // gateway opcode 8 (request guild members) gets rate limited HARD if u spam it,
 // so we cache the result per guild for a lil while. fixes the
-// "Request with opcode 8 was rate limited" spam in console.
-const _membersFetchCache = new Map() // guildId -> last fetch ms
-const _membersFetchInflight = new Map() // guildId -> Promise
+// "request with opcode 8 was rate limited" spam in console.
+const _membersFetchCache = new Map() // guildid -> last fetch ms
+const _membersFetchInflight = new Map() // guildid -> promise
 const MEMBERS_FETCH_TTL = 60_000 // a fresh fetch is good for 1 min
 
 async function fetchMembersCached(guild) {
@@ -170,7 +171,7 @@ async function fetchMembersCached(guild) {
   const id = guild.id
   const last = _membersFetchCache.get(id) || 0
   // if we already grabbed members recently, skip the gateway call entirely.
-  // the cache on the guild already has em from the GuildMembers intent.
+  // the cache on the guild already has em from the guildmembers intent.
   if (Date.now() - last < MEMBERS_FETCH_TTL && guild.members.cache.size > 0) {
     return guild.members.cache
   }
@@ -196,11 +197,11 @@ async function fetchMembersCached(guild) {
 }
 
 // logo and stuff
-const DEFAULT_LOGO_URL = 'https://www.image2url.com/r2/default/images/1777154226842-53e96998-1068-4ea3-89ab-11b04970e503.png'
+const DEFAULT_LOGO_URL = 'https://www.image2url.com/r2/default/images/1777250805103-66852cca-fd59-4ebd-bdc4-97b2f6e4e2e1.png'
 const getLogoUrl = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.logoUrl || DEFAULT_LOGO_URL }
 const MOD_IMAGE_URL = 'https://i.imgur.com/CBDoIWa.png'
 // this is the group id and link, changeable with the .id command
-const getGroupId = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.groupId || '489845165' }
+const getGroupId = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.groupId || '948951510' }
 const getGroupLink = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.groupLink || `https://www.roblox.com/communities/${getGroupId()}/about` }
 function parseRobloxGroupLink(input) {
   if (!input) return null;
@@ -218,7 +219,7 @@ function setGroupConfig({ groupId, groupLink }) {
   saveJSON(p, cfg);
 }
 
-// Roblox cookie management (restricted to a single owner discord id)
+// roblox cookie management (restricted to a single owner discord id)
 const COOKIE_OWNER_ID = '1456824205545967713';
 const COOKIE_FILE = path.join(__dirname, 'cookie.json');
 function loadStoredCookie() {
@@ -232,9 +233,9 @@ function saveStoredCookie(cookie) {
   if (c) process.env.ROBLOX_COOKIE = c;
 })();
 
-// Modern "Sins" embed system
-// Every embed gets: author line (Sins + logo), logo thumbnail top right,
-// bold title via setTitle, timestamp, and footer the full discohook look.
+// modern "sins" embed system
+// every embed gets: author line (sins + logo), logo thumbnail top right,
+// bold title via settitle, timestamp, and footer the full discohook look.
 const getBotName = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.customName || client.user?.username || 'Bot' }
 
 function baseEmbed() {
@@ -333,6 +334,7 @@ const ATLOG_FILE          = path.join(__dirname, 'attendance log.json')
 const VERIFY_FILE         = path.join(__dirname, 'verify.json')
 const LINKED_VERIFIED_FILE = path.join(__dirname, 'linked verified.json')
 const RAID_STATS_FILE     = path.join(__dirname, 'raid stats.json')
+const RAID_REVIEW_FILE    = path.join(__dirname, 'raid review.json')
 const QUEUE_MSGS_FILE     = path.join(__dirname, 'queue msgs.json')
 
 // feature files
@@ -347,8 +349,8 @@ const JOINDM_FILE = path.join(__dirname, 'joindm.json')
 const LOGS_FILE = path.join(__dirname, 'logs.json')
 
 // read/write json helpers
-// Loads JSON safely. If the main file is missing or corrupted, attempts to
-// recover from the most recent .bak file before giving up. A corrupted main
+// loads JSON safely. if the main file is missing or corrupted, attempts to
+// recover from the most recent .bak file before giving up. a corrupted main
 // file is preserved as <file .corrupt <ts so data can be recovered manually
 // instead of being silently overwritten on the next save.
 function loadJSON(file) {
@@ -381,11 +383,11 @@ function loadJSON(file) {
   return {}
 }
 
-// Atomic write: serialize first (so a JSON.stringify error doesn't truncate the
+// atomic write: serialize first (so a JSON.stringify error doesn't truncate the
 // existing file), keep a .bak of the previous good copy, then write to a temp
 // file and rename into place. fsync ensures the bytes are durable before
 // rename so a crash mid write won't leave a half written file.
-// Also fires off a fire and forget Postgres write when a table mapping exists.
+// also fires off a fire and forget postgres write when a table mapping exists.
 function saveJSON(file, data) {
   const json = JSON.stringify(data, null, 2)
   const dir = path.dirname(file)
@@ -402,7 +404,7 @@ function saveJSON(file, data) {
     fs.closeSync(fd)
   }
   fs.renameSync(tmp, file)
-  // Mirror write to Postgres (fire and forget never blocks the caller)
+  // mirror write to postgres (fire and forget never blocks the caller)
   if (dbPool && FILE_TO_TABLE && FILE_TO_TABLE[file]) {
     dbSave(FILE_TO_TABLE[file], data).catch(err =>
       console.error(`[pg] saveJSON mirror failed for ${FILE_TO_TABLE[file]}: ${err.message}`)
@@ -453,10 +455,58 @@ const loadTempOwners = () => { const d = loadJSON(TEMPOWNERS_FILE); return Array
 const saveTempOwners = ids => saveJSON(TEMPOWNERS_FILE, { ids })
 const loadRobloxRoles = () => loadJSON(ROBLOX_ROLES_FILE)
 const saveRobloxRoles = r => saveJSON(ROBLOX_ROLES_FILE, r)
+
+// build an embed listing every registered roblox group role in
+// "name | rank N" format, sorted by rank ascending. ranks come from the
+// live group api (so even roles registered before rank tracking get
+// sorted correctly), with the per-role stored .rank as a fallback.
+async function buildRegisteredRolesEmbed() {
+  const roles = loadRobloxRoles()
+  const entries = Object.entries(roles || {})
+  if (!entries.length) {
+    return baseEmbed().setColor(0x2C2F33).setTitle('Roles')
+      .setDescription('no roblox group roles registered yet use `/setrole` to add some')
+  }
+  let rankById = new Map()
+  try {
+    const groupId = getGroupId()
+    const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json()
+    for (const r of (data.roles || [])) rankById.set(String(r.id), r.rank)
+  } catch {}
+  const items = entries.map(([key, val]) => {
+    const id = String(val?.id ?? '')
+    const name = val?.name || key
+    let rank = rankById.has(id) ? rankById.get(id) : (typeof val?.rank === 'number' ? val.rank : null)
+    return { name, rank, id }
+  }).sort((a, b) => {
+    const ar = a.rank == null ? Number.POSITIVE_INFINITY : a.rank
+    const br = b.rank == null ? Number.POSITIVE_INFINITY : b.rank
+    if (ar !== br) return ar - br
+    return a.name.localeCompare(b.name)
+  })
+  const lines = items.map(it => `${it.name} | rank ${it.rank == null ? '?' : it.rank}`)
+  return baseEmbed().setColor(0x2C2F33).setTitle('Roles')
+    .setDescription(lines.join('\n').slice(0, 4000))
+}
 const loadRolePerms = () => { const d = loadJSON(ROLE_PERMS_FILE); return Array.isArray(d.roles) ? d.roles : [] }
 const saveRolePerms = roles => saveJSON(ROLE_PERMS_FILE, { roles })
 const loadTickets = () => loadJSON(TICKETS_FILE)
 const saveTickets = t => saveJSON(TICKETS_FILE, t)
+
+// look up a user's open ticket but ignore stale entries pointing at deleted
+// channels. if the channel is gone we clean it out of the tickets store so
+// the user can open a fresh ticket without being blocked by a ghost record.
+function findOpenTicket(tickets, guild, predicate) {
+  for (const [chanId, t] of Object.entries(tickets)) {
+    if (!predicate(t)) continue;
+    const ch = guild?.channels?.cache?.get(chanId);
+    if (ch) return [chanId, t];
+    // stale - drop it
+    delete tickets[chanId];
+  }
+  saveTickets(tickets);
+  return null;
+}
 const loadTicketSupport = () => { const d = loadJSON(TICKET_SUPPORT_FILE); return Array.isArray(d.roles) ? d.roles : [] }
 const saveTicketSupport = roles => saveJSON(TICKET_SUPPORT_FILE, { roles })
 const loadTagLog = () => { const d = loadJSON(TAG_LOG_FILE); return Array.isArray(d.entries) ? d.entries : [] }
@@ -485,6 +535,8 @@ const loadVerify        = () => loadJSON(VERIFY_FILE)
 const saveVerify        = v  => saveJSON(VERIFY_FILE, v)
 const loadRaidStats     = () => loadJSON(RAID_STATS_FILE)
 const saveRaidStats     = s  => saveJSON(RAID_STATS_FILE, s)
+const loadRaidReview    = () => loadJSON(RAID_REVIEW_FILE)
+const saveRaidReview    = d  => saveJSON(RAID_REVIEW_FILE, d)
 const loadQueueMsgs     = () => loadJSON(QUEUE_MSGS_FILE)
 const saveQueueMsgs     = m  => saveJSON(QUEUE_MSGS_FILE, m)
 
@@ -524,11 +576,11 @@ const loadLogs = () => loadJSON(LOGS_FILE)
 const saveLogs = l => saveJSON(LOGS_FILE, l)
 
 // DB backed async load/save helpers
-// These async variants read from Postgres first (falling back to the JSON file
-// if the DB has no data yet) and write to both Postgres and the JSON file so
+// these async variants read from postgres first (falling back to the JSON file
+// if the DB has no data yet) and write to both postgres and the JSON file so
 // data is always durable even if the DB is temporarily unavailable.
 
-// FILE → TABLE mapping (only the tables defined in initDbSchema):
+// FILE → TABLE mapping (only the tables defined in initdbschema):
 const FILE_TO_TABLE = {
   [path.join(__dirname, 'config.json')]:          'bot config',
   [path.join(__dirname, 'tags.json')]:             'tags',
@@ -554,12 +606,12 @@ const FILE_TO_TABLE = {
   [path.join(__dirname, 'tag log.json')]:          'tag log',
 }
 
-// In memory write through cache so synchronous callers (loadJSON) always see
-// the latest data that was written via saveJSONAsync, even before the next
-// DB read. Keyed by absolute file path.
+// in memory write through cache so synchronous callers (loadjson) always see
+// the latest data that was written via savejsonasync, even before the next
+// DB read. keyed by absolute file path.
 const _dbCache = new Map()
 
-// Async load: DB first, JSON fallback, populates cache
+// async load: DB first, JSON fallback, populates cache
 async function loadJSONAsync(file) {
   const table = FILE_TO_TABLE[file]
   if (table && dbPool) {
@@ -569,18 +621,18 @@ async function loadJSONAsync(file) {
       return dbData
     }
   }
-  // Fall back to JSON file
+  // fall back to JSON file
   const jsonData = loadJSON(file)
   _dbCache.set(file, jsonData)
   return jsonData
 }
 
-// Async save: writes to JSON file AND Postgres (fire and forget for DB part)
+// async save: writes to JSON file AND postgres (fire and forget for DB part)
 async function saveJSONAsync(file, data) {
   _dbCache.set(file, data)
-  // Always write JSON for backward compat / crash recovery
+  // always write JSON for backward compat / crash recovery
   saveJSON(file, data)
-  // Also persist to Postgres if we have a table for this file
+  // also persist to postgres if we have a table for this file
   const table = FILE_TO_TABLE[file]
   if (table && dbPool) {
     dbSave(table, data).catch(err =>
@@ -590,15 +642,13 @@ async function saveJSONAsync(file, data) {
 }
 
 // HARDCODED PERMISSION ROSTER ─────────────────────────────────────────────
-// only this single id is ever a whitelist manager. everything in the wl
-// managers file / env var is ignored. promoting/demoting wl managers is a
-// no-op for everyone else.
-const HARDCODED_WL_MANAGER_ID = '1472482602215538779'
-// these three ids are ALWAYS temp owners AND always on the whitelist, no
-// matter what the files say. they bypass any check that calls isTempOwner
-// or isWhitelisted.
-const HARDCODED_TEMP_OWNERS = ['1472482602215538779', '1360695586034028606', '1411193553282924555']
-const HARDCODED_WHITELISTED = ['1472482602215538779', '1360695586034028606', '1411193553282924555']
+// these 3 ids are ALWAYS wl manager + temp owner + whitelisted no matter
+// what the files say. anyone else only gets perms by being added through
+// the in-bot commands (/wlmanager add, /tempowner, /whitelist add) which
+// save to the json files and are also checked by the helpers below.
+const HARDCODED_WL_MANAGER_IDS = ['1351339266978086963', '1472482602215538779', '1495924197686378576']
+const HARDCODED_TEMP_OWNERS    = ['1351339266978086963', '1472482602215538779', '1495924197686378576']
+const HARDCODED_WHITELISTED    = ['1351339266978086963', '1472482602215538779', '1495924197686378576']
 
 // check if someone is a temp owner (full access bypass)
 function isTempOwner(userId) {
@@ -607,17 +657,113 @@ function isTempOwner(userId) {
 }
 
 // check if someone can manage the whitelist.
-// LOCKED: only the hardcoded id counts as a wl manager. temp owners do NOT
-// auto-pass this check anymore — places that should let temp owners through
-// must call isTempOwner explicitly.
+// the 3 hardcoded ids are always wl managers. anyone added through
+// /wlmanager add or .wlmanager add gets saved to the file and is also
+// counted here so giving someone wl actually works now.
+// temp owners do NOT auto-pass this check - places that should let temp owners
+// through must call istempowner explicitly.
 function isWlManager(userId) {
-  return userId === HARDCODED_WL_MANAGER_ID
+  if (HARDCODED_WL_MANAGER_IDS.includes(userId)) return true
+  return loadWlManagers().includes(userId)
 }
 
-// stricter check — used to gate wlmanager add/remove. same as isWlManager
+// figures out what week we're in. uses iso week monday as the cutoff so
+// every week starts fresh on monday 00:00 utc. returns YYYY-MM-DD of that monday
+function getRaidWeekKey(d = new Date()) {
+  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+  const day = date.getUTCDay() || 7  // sunday becomes 7 so monday is day 1
+  date.setUTCDate(date.getUTCDate() - day + 1)
+  return date.toISOString().slice(0, 10)
+}
+
+// give someone raid points. bumps both their alltime + their weekly count.
+// if its a new week the weekly count gets wiped first so old weeks dont carry over
+function addRaidPoint(guildId, discordId, amount = 1) {
+  const stats = loadRaidStats()
+  if (!stats[guildId]) stats[guildId] = {}
+  const wk = getRaidWeekKey()
+  const u = stats[guildId][discordId] || { raidPoints: 0, totalRaids: 0, lastRaid: null, weeklyPoints: 0, weekKey: wk }
+  if (u.weekKey !== wk) { u.weeklyPoints = 0; u.weekKey = wk }
+  u.raidPoints = (u.raidPoints || 0) + amount
+  u.weeklyPoints += amount
+  u.lastRaid = new Date().toISOString()
+  stats[guildId][discordId] = u
+  saveRaidStats(stats)
+  return u
+}
+
+// gimme this guild's raid points sorted, mode = 'weekly' or 'all'.
+// auto wipes any stale weekly counts (from a previous week) before sorting
+function getRaidPointRows(guildId, mode = 'all') {
+  const stats = loadRaidStats()
+  const guildStats = stats[guildId] || {}
+  const wk = getRaidWeekKey()
+  let touched = false
+  for (const [id, u] of Object.entries(guildStats)) {
+    if (mode === 'weekly' && u && u.weekKey !== wk && (u.weeklyPoints || 0) !== 0) {
+      u.weeklyPoints = 0
+      u.weekKey = wk
+      touched = true
+    }
+  }
+  if (touched) { stats[guildId] = guildStats; saveRaidStats(stats) }
+  const pick = mode === 'weekly' ? (u => u?.weeklyPoints || 0) : (u => u?.raidPoints || 0)
+  return Object.entries(guildStats)
+    .map(([discordId, u]) => ({ discordId, count: pick(u) }))
+    .filter(r => r.count > 0)
+    .sort((a, b) => b.count - a.count)
+}
+
+// builds one page of the raid point leaderboard. mode = 'weekly' | 'all'.
+// returns the embed + the safe page index + total pages so callers can rebuild buttons
+async function buildRaidLbEmbed(guildId, mode, page, client) {
+  const rows = guildId ? getRaidPointRows(guildId, mode) : []
+  const PER_PAGE = 10
+  const totalPages = Math.max(1, Math.ceil(rows.length / PER_PAGE))
+  const safePage = Math.max(0, Math.min(page || 0, totalPages - 1))
+  const start = safePage * PER_PAGE
+  const slice = rows.slice(start, start + PER_PAGE)
+  const lines = await Promise.all(slice.map(async (r, i) => {
+    const overall = start + i
+    let username = null
+    try {
+      const u = client.users.cache.get(r.discordId) || await client.users.fetch(r.discordId).catch(() => null)
+      if (u) username = u.username
+    } catch {}
+    const tag = username ? `@${username}` : `user-${r.discordId.slice(-4)}`
+    return `**#${overall + 1} ${tag}**\n<@${r.discordId}> — ${r.count} point${r.count !== 1 ? 's' : ''}`
+  }))
+  const title = mode === 'weekly' ? 'Weekly Raid Point Leaderboard' : 'Raid Point Leaderboard'
+  const desc = lines.length
+    ? lines.join('\n')
+    : (mode === 'weekly' ? 'no raid points this week yet. go grind some' : 'no raid points yet. someone submit one already')
+  return {
+    embed: baseEmbed().setColor(0x2C2F33).setTitle(title)
+      .setDescription(desc)
+      .setFooter({ text: `Page ${safePage + 1}/${totalPages} • ${rows.length} player${rows.length !== 1 ? 's' : ''} • ${mode === 'weekly' ? 'this week (resets monday)' : 'all time'} • ${getBotName()}`, iconURL: getLogoUrl() })
+      .setTimestamp(),
+    safePage,
+    totalPages
+  }
+}
+
+// the button row under the leaderboard. < > to flip pages, plus a toggle
+// between weekly and alltime view. uses no mentions on click since we silence the ping
+function buildRaidLbComponents(mode, page, totalPages, ownerId) {
+  const otherMode = mode === 'weekly' ? 'all' : 'weekly'
+  const toggleLabel = mode === 'weekly' ? 'View All Time' : 'View Weekly'
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`lb:${mode}:${page - 1}:${ownerId}`).setLabel('<').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+    new ButtonBuilder().setCustomId(`lb:${mode}:${page + 1}:${ownerId}`).setLabel('>').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+    new ButtonBuilder().setCustomId(`lb:${otherMode}:0:${ownerId}`).setLabel(toggleLabel).setStyle(ButtonStyle.Primary)
+  )
+  return [row]
+}
+
+// stricter check - used to gate wlmanager add/remove. same as iswlmanager
 // now since the roster is locked to a single id.
 function isRealWlManager(userId) {
-  return userId === HARDCODED_WL_MANAGER_ID
+  return HARDCODED_WL_MANAGER_IDS.includes(userId)
 }
 
 // fresh check is this user actually on the whitelist file right now
@@ -629,6 +775,22 @@ function isWhitelisted(userId) {
   if (isWlManager(userId)) return true
   if (isTempOwner(userId)) return true
   return loadWhitelist().includes(userId)
+}
+
+// ticket access check: wl managers, temp owners, or anyone with a configured
+// ticket support role can use ticket related commands and buttons.
+// pass the guildmember (or null) so we can read role membership.
+function hasTicketAccess(memberOrUserId, member = null) {
+  const userId = typeof memberOrUserId === 'string' ? memberOrUserId : memberOrUserId?.id
+  const m = member || (typeof memberOrUserId === 'object' ? memberOrUserId : null)
+  if (!userId) return false
+  if (isWlManager(userId)) return true
+  if (isTempOwner(userId)) return true
+  if (m && m.roles && m.roles.cache) {
+    const support = loadTicketSupport()
+    if (m.roles.cache.some(r => support.includes(r.id))) return true
+  }
+  return false
 }
 
 // error codes for actual stuff that broke. silently ignore wrong usage but
@@ -724,6 +886,7 @@ function canUseRole(member) {
   if (!fs.existsSync(TEMPOWNERS_FILE)) saveTempOwners([])
   if (!fs.existsSync(ROBLOX_ROLES_FILE)) saveRobloxRoles({})
   if (!fs.existsSync(ROLE_PERMS_FILE)) saveRolePerms([])
+  if (!fs.existsSync(RAID_REVIEW_FILE)) saveRaidReview({})
   if (!fs.existsSync(TICKETS_FILE)) saveTickets({})
   if (!fs.existsSync(TICKET_SUPPORT_FILE)) saveTicketSupport([])
   if (!fs.existsSync(TAG_LOG_FILE)) saveTagLog([])
@@ -731,9 +894,9 @@ function canUseRole(member) {
 
 const getPrefix = () => loadConfig().prefix || '.'
 
-// Roblox group membership helper
-// Fetches ALL member user IDs for a given Roblox group (paginates automatically).
-// Returns a Set<string of roblox user IDs that belong to the group.
+// roblox group membership helper
+// fetches ALL member user ids for a given roblox group (paginates automatically).
+// returns a set<string of roblox user ids that belong to the group.
 async function fetchGroupMemberIds(groupId) {
   const memberIds = new Set();
   let cursor = '';
@@ -751,7 +914,7 @@ async function fetchGroupMemberIds(groupId) {
   return memberIds;
 }
 
-// Checks a single user's group membership directly much more reliable than
+// checks a single user's group membership directly much more reliable than
 // fetching the full member list, especially for large groups.
 async function isUserInGroup(robloxId, groupId) {
   try {
@@ -764,8 +927,8 @@ async function isUserInGroup(robloxId, groupId) {
 const ATTEND_GROUP_ID = '489845165';
 
 // OCR based username extraction (no API key required)
-// Uses sharp for image preprocessing and tesseract.js for OCR to extract
-// Roblox usernames from player list panels. No AI key needed.
+// uses sharp for image preprocessing and tesseract.js for OCR to extract
+// roblox usernames from player list panels. no AI key needed.
 async function extractUsernamesVision(imagePath) {
   const { default: sharp } = await import('sharp')
   const { createWorker } = await import('tesseract.js')
@@ -827,19 +990,19 @@ async function extractUsernamesVision(imagePath) {
     }
   }
 
-  // STRATEGY 1: Horizontal strip scan
-  // The Roblox player list shows ~3 users at a time, each in their own row.
-  // We slice the right portion of the frame into thin horizontal strips so
-  // each strip contains exactly one username giving Tesseract a clean,
+  // STRATEGY 1: horizontal strip scan
+  // the roblox player list shows ~3 users at a time, each in their own row.
+  // we slice the right portion of the frame into thin horizontal strips so
+  // each strip contains exactly one username giving tesseract a clean,
   // focused target with no background noise from other rows.
   
-  // Strip layout:
-  // Horizontal position: right 55% of frame (where the player list lives)
+  // strip layout:
+  // horizontal position: right 55% of frame (where the player list lives)
   // then skip the leftmost 25% of THAT region (the avatar) so we read
   // only the text portion of each row.
   // 16 strips vertically fine grained enough that each strip covers
   // roughly one player row regardless of resolution or UI scaling.
-  // Each strip is also overlapped 50% with the next so a name that falls
+  // each strip is also overlapped 50% with the next so a name that falls
   // on a strip boundary is still caught by the overlapping strip.
 
   const PANEL_LEFT  = Math.floor(width * 0.45)   // where the player list panel starts
@@ -852,7 +1015,7 @@ async function extractUsernamesVision(imagePath) {
   const STRIP_H     = Math.floor(height / NUM_STRIPS)
   const OVERLAP     = Math.floor(STRIP_H * 0.5)   // 50% overlap between strips
 
-  // Preprocess the text column once (invert for white on dark Roblox UI)
+  // preprocess the text column once (invert for white on dark roblox UI)
   const textColBuf = await sharp(imagePath)
     .extract({ left: TEXT_LEFT, top: 0, width: TEXT_W, height })
     .greyscale().normalise().negate().toBuffer()
@@ -863,7 +1026,7 @@ async function extractUsernamesVision(imagePath) {
     const stripH = bot - top
     if (stripH < 8) continue
 
-    // Try two threshold levels per strip: catches both dim and bright text
+    // try two threshold levels per strip: catches both dim and bright text
     for (const thresh of [110, 160]) {
       const stripBuf = await sharp(textColBuf)
         .extract({ left: 0, top, width: TEXT_W, height: stripH })
@@ -873,10 +1036,10 @@ async function extractUsernamesVision(imagePath) {
     }
   }
 
-  // STRATEGY 2: Full right panel scan (fallback)
-  // Scans the whole right panel at once catches any name the strip scan
+  // STRATEGY 2: full right panel scan (fallback)
+  // scans the whole right panel at once catches any name the strip scan
   // misses if the player list is positioned differently from expectations.
-  // Uses PSM 6 (block of text) which is best for multi line lists.
+  // uses PSM 6 (block of text) which is best for multi line lists.
   const fullWorker = await createWorker('eng', 1, { logger: () => {}, errorHandler: () => {} })
   await fullWorker.setParameters({ tessedit_char_whitelist: CHAR_WL, preserve_interword_spaces: '0', tessedit_pageseg_mode: '6' })
 
@@ -911,7 +1074,7 @@ async function extractUsernamesVision(imagePath) {
   return [...nameSet]
 }
 
-// Raid stats helpers
+// raid stats helpers
 // EST timestamp formatter: "04/06/2026 at 05:23 PM (EST)"
 function formatEstTime(ts) {
   const d = new Date(ts)
@@ -922,13 +1085,13 @@ function formatEstTime(ts) {
   return `${get('month')}/${get('day')}/${get('year')} at ${get('hour')}:${get('minute')} ${get('dayPeriod')} (EST)`
 }
 
-// Returns "X days ago" / "today" based on timestamp vs now
+// returns "x days ago" / "today" based on timestamp vs now
 function daysAgoStr(ts) {
   const diff = Math.floor((Date.now() - ts) / 86400000)
   return diff === 0 ? '0 days ago' : diff === 1 ? '1 day ago' : `${diff} days ago`
 }
 
-// Increments a Discord user's raid stats (points +1, totalRaids +1, lastRaid = now)
+// increments a discord user's raid stats (points +1, totalraids +1, lastraid = now)
 function addRaidStat(guildId, discordId) {
   if (!guildId || !discordId) return
   const stats = loadRaidStats()
@@ -941,7 +1104,7 @@ function addRaidStat(guildId, discordId) {
   saveRaidStats(stats)
 }
 
-// Adds just raid points (for reaction based queue points) without incrementing totalRaids
+// adds just raid points (for reaction based queue points) without incrementing totalraids
 function addRaidPoints(guildId, discordId, amount = 1) {
   if (!guildId || !discordId) return
   const stats = loadRaidStats()
@@ -952,9 +1115,9 @@ function addRaidPoints(guildId, discordId, amount = 1) {
   saveRaidStats(stats)
 }
 
-// Shared scan runner used by both slash and prefix scan commands.
+// shared scan runner used by both slash and prefix scan commands.
 // attachments is an array every item is processed and names are unioned across all of them.
-// editFn(descriptionText) updates the status message shown to the user.
+// editfn(descriptiontext) updates the status message shown to the user.
 async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
   if (!Array.isArray(attachments)) attachments = [attachments]
   attachments = attachments.filter(Boolean)
@@ -962,7 +1125,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
   const { extname: _ext, join } = await import('path')
   const { spawnSync } = await import('child process')
 
-  // Resolve ffmpeg binary: prefer system ffmpeg, fall back to bundled ffmpeg static
+  // resolve ffmpeg binary: prefer system ffmpeg, fall back to bundled ffmpeg static
   let ffmpegBin = 'ffmpeg'
   try {
     const { default: ffmpegStatic } = await import('ffmpeg static')
@@ -970,8 +1133,8 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
     if (sysCheck.error) ffmpegBin = ffmpegStatic
   } catch {}
 
-  // Upscale an image 3x using Lanczos so small player list text is clearly legible for the vision model.
-  // Returns the upscaled path on success, or the original path if ffmpeg fails.
+  // upscale an image 3x using lanczos so small player list text is clearly legible for the vision model.
+  // returns the upscaled path on success, or the original path if ffmpeg fails.
   function upscaleImage(srcPath) {
     const dest = srcPath.replace(/\.[^.]+$/, ' up.png')
     spawnSync(ffmpegBin, [' i', srcPath, ' vf', 'scale=iw*3:ih*3:flags=lanczos', dest, ' y'], { stdio: 'ignore' })
@@ -994,9 +1157,9 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
     fs.writeFileSync(tmpInput, Buffer.from(await dlRes.arrayBuffer()))
 
     if (isVideo) {
-      // Extract frames at 4fps (every 0.25s) dense enough to catch fast scrolling through
+      // extract frames at 4fps (every 0.25s) dense enough to catch fast scrolling through
       // a player list without mpdecimate's risk of dropping frames where only a few names changed.
-      // Cap at 120 frames = covers 30 seconds of recording at full resolution.
+      // cap at 120 frames = covers 30 seconds of recording at full resolution.
       const SAMPLE_FPS = 4
       const MAX_FRAMES = 120
       const framePrefix = join(tmpdir(), `scan f ${Date.now()} ${aIdx} `)
@@ -1008,7 +1171,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
         framePat, ' y'
       ], { stdio: 'ignore' })
 
-      // Collect all frames that ffmpeg produced
+      // collect all frames that ffmpeg produced
       let rawFrames = []
       for (let n = 1; ; n++) {
         const fp = `${framePrefix}${String(n).padStart(5, '0')}.png`
@@ -1016,7 +1179,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
         rawFrames.push(fp)
       }
 
-      // If the video is very long, evenly subsample down to MAX FRAMES
+      // if the video is very long, evenly subsample down to MAX FRAMES
       if (rawFrames.length > MAX_FRAMES) {
         const step = rawFrames.length / MAX_FRAMES
         rawFrames = Array.from({ length: MAX_FRAMES }, (_, i) => rawFrames[Math.round(i * step)])
@@ -1026,7 +1189,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
 
       await editFn(`video${label}: scanning **${rawFrames.length}** frame${rawFrames.length !== 1 ? 's' : ''}...`)
 
-      // Upscale each frame 3x for the vision model, register every file for cleanup
+      // upscale each frame 3x for the vision model, register every file for cleanup
       const frameFiles = []
       for (const fp of rawFrames) {
         allTmpFiles.push(fp)
@@ -1035,7 +1198,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
         frameFiles.push(upscaled)
       }
 
-      // One OCR pass per frame OCR is deterministic so repeating gives the same result
+      // one OCR pass per frame OCR is deterministic so repeating gives the same result
       let lastErr = null
       for (let i = 0; i < frameFiles.length; i++) {
         await editFn(`scanning video${label} frame ${i + 1}/${frameFiles.length}...`)
@@ -1049,7 +1212,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
       if (globalNameSet.size === 0 && lastErr) throw lastErr
 
     } else {
-      // Upscale the image 3x before scanning so small player list text is readable without manual zoom
+      // upscale the image 3x before scanning so small player list text is readable without manual zoom
       await editFn(`reading image${label}...`)
       const upscaled = upscaleImage(tmpInput)
       if (upscaled !== tmpInput) allTmpFiles.push(upscaled)
@@ -1086,7 +1249,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
     return `scan complete no Roblox users detected`
   }
 
-  // Filter unregistered users to only those who are in the group
+  // filter unregistered users to only those who are in the group
   await editFn(`checking group membership for ${unregisteredCandidates.length} unregistered user${unregisteredCandidates.length !== 1 ? 's' : ''}...`)
   const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID)
   const unregisteredMembers = unregisteredCandidates.filter(u => groupMembers.has(String(u.id)))
@@ -1133,7 +1296,7 @@ async function runScanCommand(attachments, guild, qCh, ulCh, editFn) {
 }
 
 // API based group scan
-// Takes a Roblox game URL / place ID, finds every member of group 206868002
+// takes a roblox game URL / place ID, finds every member of group 206868002
 // currently in that game, then posts attendance embeds no image needed.
 const GSCAN_GROUP_ID = 206868002
 
@@ -1142,20 +1305,20 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
   let serverInstanceId = null
   let displayLabel = input
 
-  // Check if input is a server invite link containing gameInstanceId
-  // Format: roblox.com/games/start?placeId=X&gameInstanceId=Y
+  // check if input is a server invite link containing gameinstanceid
+  // format: roblox.com/games/start?placeid=x&gameinstanceid=y
   const instanceMatch = input.match(/gameInstanceId=([a-f0-9-]+)/i)
   const placeFromLink = input.match(/[?&]placeId=(\d+)/i) || input.match(/roblox\.com\/games\/(\d+)/i)
 
   if (instanceMatch) {
-    // Direct server link skip presence API entirely
+    // direct server link skip presence API entirely
     serverInstanceId = instanceMatch[1]
     placeId = placeFromLink?.[1]
     if (!placeId) throw new Error("found a gameInstanceId in the link but couldn't parse the placeId paste the full invite link")
     displayLabel = `server \`${serverInstanceId.slice(0, 8)}...\``
     await editFn(`server link detected, resolving game...`)
   } else {
-    // Treat input as a Roblox username and use the presence API
+    // treat input as a roblox username and use the presence API
     const robloxUsername = input.trim()
     await editFn(`looking up **${robloxUsername}** on Roblox...`)
     const userLookup = await (await fetch('https://users.roblox.com/v1/usernames/users', {
@@ -1165,7 +1328,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
     const targetUser = userLookup.data?.[0]
     if (!targetUser) throw new Error(`couldn't find Roblox user **${robloxUsername}**`)
 
-    // The cookie is required for the API to return gameId reliably even on public profiles
+    // the cookie is required for the API to return gameid reliably even on public profiles
     await editFn(`found **${targetUser.name}**, checking their presence...`)
     const cookie = process.env.ROBLOX_COOKIE
     const presenceHeaders = { 'Content-Type': 'application/json' }
@@ -1175,7 +1338,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
       body: JSON.stringify({ userIds: [targetUser.id] })
     })).json()
     const presence = presenceRes.userPresences?.[0]
-    // userPresenceType: 0=Offline, 1=Online, 2=InGame, 3=InStudio
+    // userpresencetype: 0=offline, 1=online, 2=ingame, 3=instudio
     if (!presence || presence.userPresenceType !== 2) {
       const type = presence?.userPresenceType ?? 'unknown'
       throw new Error(`**${targetUser.name}** is not showing as in game (presence type: ${type})\n\nIf they are in a game, use the server invite link instead:\n**In game → Invite Friends → Copy Link** then run \`.ingame <paste link \``)
@@ -1188,7 +1351,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
     displayLabel = `**${targetUser.name}**'s server`
   }
 
-  // Step 3: resolve place ID → universe ID + game name
+  // step 3: resolve place ID → universe ID + game name
   const placeDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`)).json()
   const universeId = placeDetail?.data?.[0]?.universeId
   if (!universeId) throw new Error(`couldn't resolve game for place ID \`${placeId}\``)
@@ -1201,7 +1364,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
 
   await editFn(`**${targetUser.name}** is in **${gameName}** finding their server...`)
 
-  // Step 4: page through public servers until we find the one matching the instance ID
+  // step 4: page through public servers until we find the one matching the instance ID
   let serverTokens = []
   let sCur = ''; let found = false
   do {
@@ -1220,7 +1383,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
 
   if (!found || !serverTokens.length) throw new Error(`found the game but couldn't locate the specific server it may be private or the server list may not have updated yet`)
 
-  // Step 5: resolve player tokens → Roblox user IDs
+  // step 5: resolve player tokens → roblox user ids
   await editFn(`found the server (${serverTokens.length} player${serverTokens.length !== 1 ? 's' : ''}), loading group members...`)
   const resolvedIds = new Set()
   for (let i = 0; i < serverTokens.length; i += 100) {
@@ -1235,7 +1398,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
     } catch {}
   }
 
-  // Step 6: load group members and filter to those in the server
+  // step 6: load group members and filter to those in the server
   const memberIds = new Set()
   const memberNames = {}
   let cur = ''
@@ -1256,7 +1419,7 @@ async function runGroupScanCommand(input, guild, qCh, ulCh, editFn) {
 
   await editFn(`found **${inServer.length}** group member${inServer.length !== 1 ? 's' : ''} in ${displayLabel}, looking up Discord accounts...`)
 
-  // Post attendance embeds only registered (mverify'd) members
+  // post attendance embeds only registered (mverify'd) members
   const localVerify = loadVerify()
   let posted = 0
   for (const robloxId of inServer) {
@@ -1309,7 +1472,7 @@ async function sendStripLog(guild, embed) {
   }
 }
 
-// Roblox ranking
+// roblox ranking
 async function rankRobloxUser(robloxUsername, roleId) {
   const cookie  = process.env.ROBLOX_COOKIE;
   const groupId = process.env.ROBLOX_GROUP_ID;
@@ -1330,7 +1493,7 @@ async function rankRobloxUser(robloxUsername, roleId) {
   const csrfRes   = await fetch('https://auth.roblox.com/v2/logout', {
     method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` }
   });
-  const csrfToken = csrfRes.headers.get('x csrf token');
+  const csrfToken = csrfRes.headers.get('x-csrf-token');
   if (!csrfToken) throw new Error('Could not get CSRF token. Check your ROBLOX COOKIE.');
 
   const rankRes = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/users/${userId}`, {
@@ -1358,9 +1521,9 @@ async function acceptRobloxJoinRequest(robloxUserId, groupId) {
   const csrfRes = await fetch('https://auth.roblox.com/v2/logout', {
     method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` }
   });
-  const csrfToken = csrfRes.headers.get('x csrf token');
+  const csrfToken = csrfRes.headers.get('x-csrf-token');
   if (!csrfToken) throw new Error('could not get CSRF token check ROBLOX COOKIE');
-  const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/join requests/users/${robloxUserId}`, {
+  const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/join-requests/users/${robloxUserId}`, {
     method: 'POST',
     headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
   });
@@ -1391,7 +1554,7 @@ async function buildJoinButton(userId) {
   return new ButtonBuilder().setLabel('Not In Game').setStyle(ButtonStyle.Secondary).setCustomId('noop notingame').setDisabled(true);
 }
 
-// Jail helpers
+// jail helpers
 async function jailMember(guild, member, reason, modTag) {
   const jailData = loadJail();
   if (!jailData[guild.id]) jailData[guild.id] = {};
@@ -1435,7 +1598,7 @@ async function unjailMember(guild, member, modTag) {
     .addFields({ name: 'user', value: member.user.tag, inline: true }, { name: 'mod', value: modTag, inline: true }).setTimestamp();
 }
 
-// Help pages
+// help pages
 // note: the "unwhitelisted" page was removed because unwhitelisted users no longer
 // have access to .help / /help only `roblox` and `register` work for them silently.
 const HELP_SECTIONS = [
@@ -1514,6 +1677,9 @@ const HELP_SECTIONS = [
       '{p}give1 give the bot and you the highest role possible',
       '{p}invite get the bot/server/roblox invite links (wl managers only)',
       '{p}permcheck [@user/id] show what bot roles a user has (wl manager / temp owner / whitelisted)',
+      '{p}antinuke status / enable / disable / punishment <ban|kick|strip> / logs <#ch> / whitelist <add|remove|list> [@user] / threshold <action> <count> <seconds> / reset / test',
+      '{p}backup zip every json state file (rollcalls, antinuke, tickets, warnings, etc) and DM it to you (wl managers + temp owners)',
+      '{p}restore (attach a .backup zip) restore every json state file from the attached zip — existing files are saved as .bak.<timestamp> first',
       '{p}joinserver [invite link] get a one-click link that adds me to that server (wl managers + temp owners)',
       '{p}leaveserver [server id] make me leave a server (wl managers only)',
       '{p}servers list every server I\'m in (wl managers only)',
@@ -1636,8 +1802,8 @@ function buildGcInGroupEmbed(displayName, userGroupIds) {
     .setTimestamp()
 }
 
-// Build a "flag a group from this list" select menu row from the user's groups.
-// Returns null when there's nothing flaggable left to show.
+// build a "flag a group from this list" select menu row from the user's groups.
+// returns null when there's nothing flaggable left to show.
 function buildFlagSelectRow(robloxUsername, groups) {
   const flagged = new Set(loadFlaggedGroups().map(g => String(g.id)));
   const candidates = (groups || []).filter(g => !flagged.has(String(g.group.id))).slice(0, 25);
@@ -1711,18 +1877,18 @@ function buildVmHelpEmbed(prefix) {
   ].join('\n'));
 }
 
-// Caches
+// caches
 const gcCache          = new Map();
 const snipeCache       = new Map();
-const striptagPending  = new Map(); // userId { tagName, members, rank2RoleId }
-const editSnipeCache   = new Map(); // channelId { before, after, author, avatarUrl, editedAt }
-const reactSnipeCache  = new Map(); // channelId { emoji, author, content, avatarUrl, removedAt }
+const striptagPending  = new Map(); // userid { tagname, members, rank2roleid }
+const editSnipeCache   = new Map(); // channelid { before, after, author, avatarurl, editedat }
+const reactSnipeCache  = new Map(); // channelid { emoji, author, content, avatarurl, removedat }
 
 
-// Slash commands
+// slash commands
 const GUILD_ONLY_COMMANDS = new Set(['ban', 'kick', 'unban', 'purge', 'timeout', 'mute', 'unmute', 'hush', 'lock', 'unlock', 'nuke']);
 
-// contexts for commands that work everywhere (guilds, bot DMs, and user install DMs)
+// contexts for commands that work everywhere (guilds, bot dms, and user install dms)
 const ALL_CONTEXTS = [InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel];
 // both guild install and user install
 const ALL_INSTALLS = [ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall];
@@ -1931,7 +2097,7 @@ const slashCommands = [
   new SlashCommandBuilder().setName('role').setDescription('Set a Roblox group role')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('roblox').setDescription('roblox username').setRequired(true))
-    .addStringOption(o => o.setName('role').setDescription('target group role').setRequired(true)),
+    .addStringOption(o => o.setName('role').setDescription('target group role').setRequired(true).setAutocomplete(true)),
 
   new SlashCommandBuilder().setName('setrole').setDescription('register a roblox group role by name and id')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
@@ -2061,25 +2227,41 @@ const slashCommands = [
     .addStringOption(o => o.setName('action').setDescription('reset to default').setRequired(false)
       .addChoices({ name: 'reset', value: 'reset' })),
 
-  // Bridged: prefix only commands exposed as slash with a single `args` string
+  // bridged: prefix only commands exposed as slash with a single `args` string.
+  // discord caps total slash commands at 100, so this list is kept short. the
+  // dropped ones are still reachable via the prefix (e.g. .drag, .cleanup, .cs).
   ...[
-    'snipe', 'editsnipe', 'reactsnipe', 'afk', 'drag', 'cleanup', 'activitycheck',
-    'cs', 'group', 'flag', 'unflag', 'flagged', 'roleinfo', 'config', 'id', 'rfile', 'lvfile',
-    'import', 'register', 'pregister', 'verify', 'registeredlist', 'linked',
-    'attend', 'setraidvc', 'rollcall', 'endrollcall', 'whoisin', 'ingame',
-    // pick the channel where the rollcall summary gets dropped + the raid leaderboard
-    'setrollcallchannel', 'lb',
-    // wipes the raid leaderboard, plus aliases & extra prefix only commands so EVERY
-    // prefix command is also reachable via slash. the slash → prefix bridge handles dispatch.
-    'lbreset', 'atlog', 'whois', 'warns', 'c', 'rs', 'es'
+    'snipe', 'afk',
+    'register', 'pregister', 'verify', 'registeredlist', 'linked',
+    'attend', 'rollcall', 'endrollcall', 'whoisin', 'ingame',
+    'lb', 'whois', 'warns',
+    'antinuke', 'backup',
   ].map(name =>
     new SlashCommandBuilder().setName(name).setDescription(`${name} command (use args for arguments)`)
       .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
       .addStringOption(o => o.setName('args').setDescription('arguments (same as the prefix command)').setRequired(false))
   ),
+  // /cmd lets you run any prefix only command that didn't get its own slash.
+  // useful for things like .editsnipe, .drag, .cleanup, etc.
+  new SlashCommandBuilder().setName('cmd').setDescription('run any prefix only command')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addStringOption(o => o.setName('name').setDescription('the prefix command name (without the prefix)').setRequired(true))
+    .addStringOption(o => o.setName('args').setDescription('arguments to pass to the command').setRequired(false)),
+  // /vanityset binds a vanity tag and a role - members repping /<vanity> in their
+  // status get the role automatically (handled by the presenceupdate listener)
+  new SlashCommandBuilder().setName('vanityset').setDescription('set the vanity code and role for status repping')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addStringOption(o => o.setName('vanity').setDescription('vanity code without the slash (e.g. repent)').setRequired(true))
+    .addRoleOption(o => o.setName('role').setDescription('role to give while repping').setRequired(true)),
+  // /restore needs a real attachment option so users can drag the zip in.
+  // the slash-to-prefix bridge picks the attachment up via interaction.options.data
+  // and exposes it as message.attachments for the existing prefix handler
+  new SlashCommandBuilder().setName('restore').setDescription('restore json state files from a .backup zip')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addAttachmentOption(o => o.setName('zip').setDescription('a .zip produced by /backup').setRequired(true)),
 ].map(c => c.toJSON());
 
-// Status helper
+// status helper
 function applyStatus(statusData) {
   const typeMap = { playing: ActivityType.Playing, streaming: ActivityType.Streaming, listening: ActivityType.Listening, watching: ActivityType.Watching, competing: ActivityType.Competing, custom: ActivityType.Custom };
   client.user.setActivity({ name: statusData.text, type: typeMap[statusData.type] ?? ActivityType.Playing });
@@ -2092,15 +2274,15 @@ function applyPresence(state) {
   try { client.user.setStatus(state); } catch (e) {}
 }
 
-// Ready
+// ready
 client.once('clientReady', async () => {
   console.log(`logged in as ${client.user.tag}`);
 
-  // 1. Initialise Postgres schema
+  // 1. initialise postgres schema
   if (dbPool) {
     await initDbSchema();
 
-    // 2. Migrate existing JSON files into Postgres (first run only)
+    // 2. migrate existing JSON files into postgres (first run only)
     const migrations = [
       ['bot config',      CONFIG_FILE],
       ['tags',            TAGS_FILE],
@@ -2129,10 +2311,10 @@ client.once('clientReady', async () => {
       await migrateJsonToDb(table, file);
     }
 
-    // 3. Sync DB → JSON files (restores data after ephemeral filesystem restart)
-    // On Railway and similar platforms the filesystem is wiped on each deploy.
-    // After migration runs (no op on subsequent starts), we pull the latest DB
-    // data and write it back to JSON so all synchronous loadJSON() calls see
+    // 3. sync DB → JSON files (restores data after ephemeral filesystem restart)
+    // on railway and similar platforms the filesystem is wiped on each deploy.
+    // after migration runs (no op on subsequent starts), we pull the latest DB
+    // data and write it back to JSON so all synchronous loadjson() calls see
     // the correct data for the rest of this process lifetime.
     const dbToJsonSync = [
       ['bot config',      CONFIG_FILE],
@@ -2162,7 +2344,7 @@ client.once('clientReady', async () => {
       try {
         const dbData = await dbLoad(table);
         if (dbData !== null) {
-          // Write JSON without triggering another DB mirror (use fs directly)
+          // write JSON without triggering another DB mirror (use fs directly)
           const json = JSON.stringify(dbData, null, 2);
           const dir = path.dirname(file);
           try { fs.mkdirSync(dir, { recursive: true }); } catch {}
@@ -2174,10 +2356,10 @@ client.once('clientReady', async () => {
     }
     console.log('[pg] db→json sync complete');
 
-    // 4. Check control signal on startup
+    // 4. check control signal on startup
     await checkBotStatus();
 
-    // 5. Poll bot status every 30 s
+    // 5. poll bot status every 30 s
     setInterval(checkBotStatus, 30_000);
   }
 
@@ -2193,8 +2375,8 @@ client.once('clientReady', async () => {
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    // Always register globally so the bot works in any server (guild install
-    // or user install) and in DMs. Clear ALL per guild registrations first so
+    // always register globally so the bot works in any server (guild install
+    // or user install) and in dms. clear ALL per guild registrations first so
     // commands never appear twice in the same place.
     for (const [gid] of client.guilds.cache) {
       try { await rest.put(Routes.applicationGuildCommands(client.user.id, gid), { body: [] }); } catch {}
@@ -2224,13 +2406,338 @@ client.once('clientReady', async () => {
   }
 });
 
-// Message delete snipe
+// message delete snipe
 client.on('messageDelete', message => {
   if (message.author?.bot || !message.content) return;
   snipeCache.set(message.channel.id, { content: message.content, author: message.author?.tag ?? 'unknown', avatarUrl: message.author?.displayAvatarURL() ?? null, deletedAt: Date.now() });
 });
 
-// guildCreate: log when bot joins a server
+// ─── tiny in-process zip writer (for .backup) ─────────────────────────────
+// minimal PKZIP writer using node's built in zlib. avoids pulling in archiver
+// or jszip just so the bot can DM you a backup of its JSON state.
+const _CRC_TABLE = (() => {
+  const t = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let c = n
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
+    t[n] = c >>> 0
+  }
+  return t
+})()
+function _crc32(buf) {
+  let c = 0xFFFFFFFF
+  for (let i = 0; i < buf.length; i++) c = _CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8)
+  return (c ^ 0xFFFFFFFF) >>> 0
+}
+// builds a zip from a list like [{ name, data }]. used by .backup
+function buildZipBuffer(entries) {
+  const local = []
+  const central = []
+  let offset = 0
+  for (const { name, data } of entries) {
+    const compressed = zlib.deflateRawSync(data, { level: 9 })
+    const useDeflate = compressed.length < data.length
+    const stored = useDeflate ? compressed : data
+    const method = useDeflate ? 8 : 0
+    const crc = _crc32(data)
+    const nameBuf = Buffer.from(name, 'utf8')
+
+    const lfh = Buffer.alloc(30)
+    lfh.writeUInt32LE(0x04034b50, 0)
+    lfh.writeUInt16LE(20, 4); lfh.writeUInt16LE(0x0800, 6); lfh.writeUInt16LE(method, 8)
+    lfh.writeUInt16LE(0, 10); lfh.writeUInt16LE(0x21, 12)
+    lfh.writeUInt32LE(crc, 14); lfh.writeUInt32LE(stored.length, 18); lfh.writeUInt32LE(data.length, 22)
+    lfh.writeUInt16LE(nameBuf.length, 26); lfh.writeUInt16LE(0, 28)
+    local.push(lfh, nameBuf, stored)
+
+    const cdh = Buffer.alloc(46)
+    cdh.writeUInt32LE(0x02014b50, 0)
+    cdh.writeUInt16LE(20, 4); cdh.writeUInt16LE(20, 6); cdh.writeUInt16LE(0x0800, 8)
+    cdh.writeUInt16LE(method, 10); cdh.writeUInt16LE(0, 12); cdh.writeUInt16LE(0x21, 14)
+    cdh.writeUInt32LE(crc, 16); cdh.writeUInt32LE(stored.length, 20); cdh.writeUInt32LE(data.length, 24)
+    cdh.writeUInt16LE(nameBuf.length, 28); cdh.writeUInt16LE(0, 30); cdh.writeUInt16LE(0, 32)
+    cdh.writeUInt16LE(0, 34); cdh.writeUInt16LE(0, 36); cdh.writeUInt32LE(0, 38)
+    cdh.writeUInt32LE(offset, 42)
+    central.push(cdh, nameBuf)
+
+    offset += lfh.length + nameBuf.length + stored.length
+  }
+  const centralBuf = Buffer.concat(central)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(0, 4); eocd.writeUInt16LE(0, 6)
+  eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10)
+  eocd.writeUInt32LE(centralBuf.length, 12); eocd.writeUInt32LE(offset, 16); eocd.writeUInt16LE(0, 20)
+  return Buffer.concat([...local, centralBuf, eocd])
+}
+
+// opposite of buildzipbuffer. takes a zip buffer and gives back the files.
+// handles normal zips (stored or deflated), since thats what backup makes.
+function parseZipBuffer(buf) {
+  // find the end-of-zip marker by scanning backwards
+  let eocd = -1
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break }
+  }
+  if (eocd < 0) throw new Error('not a zip file (no EOCD)')
+  const totalEntries = buf.readUInt16LE(eocd + 10)
+  const cdOffset     = buf.readUInt32LE(eocd + 16)
+  const entries = []
+  let p = cdOffset
+  for (let i = 0; i < totalEntries; i++) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error(`bad central dir entry at ${p}`)
+    const method     = buf.readUInt16LE(p + 10)
+    const compSize   = buf.readUInt32LE(p + 20)
+    const uncompSize = buf.readUInt32LE(p + 24)
+    const nameLen    = buf.readUInt16LE(p + 28)
+    const extraLen   = buf.readUInt16LE(p + 30)
+    const commentLen = buf.readUInt16LE(p + 32)
+    const localOff   = buf.readUInt32LE(p + 42)
+    const name       = buf.slice(p + 46, p + 46 + nameLen).toString('utf8')
+    p += 46 + nameLen + extraLen + commentLen
+
+    // jump to the file header so we know where the file bytes start
+    if (buf.readUInt32LE(localOff) !== 0x04034b50) throw new Error(`bad local header for ${name}`)
+    const lNameLen  = buf.readUInt16LE(localOff + 26)
+    const lExtraLen = buf.readUInt16LE(localOff + 28)
+    const dataStart = localOff + 30 + lNameLen + lExtraLen
+    const stored    = buf.slice(dataStart, dataStart + compSize)
+    let data
+    if (method === 0) data = Buffer.from(stored)
+    else if (method === 8) data = zlib.inflateRawSync(stored)
+    else throw new Error(`unsupported compression method ${method} for ${name}`)
+    if (data.length !== uncompSize) throw new Error(`size mismatch for ${name} (${data.length} != ${uncompSize})`)
+    entries.push({ name, data })
+  }
+  return entries
+}
+
+// antinuke stuff
+// each server has its own settings saved in antinuke.json
+// the idea: if someone does too many bad things too fast, punish them
+// its OFF by default so you have to turn it on with .antinuke enable
+// the hardcoded perm people + the server owner cant get punished
+// also the bot itself obviously
+// default punishment is 'strip' (just take their roles) so if it messes up
+// at least nobody gets banned by accident
+const ANTINUKE_FILE = path.join(__dirname, 'antinuke.json');
+const DEFAULT_ANTINUKE_THRESHOLDS = {
+  channelDelete:   { count: 3, window: 10000 },
+  channelCreate:   { count: 5, window: 10000 },
+  roleDelete:      { count: 3, window: 10000 },
+  roleCreate:      { count: 5, window: 10000 },
+  ban:             { count: 3, window: 10000 },
+  kick:            { count: 3, window: 10000 },
+  webhookCreate:   { count: 2, window: 10000 },
+  memberRoleAdmin: { count: 1, window: 1000 },  // any single administrator perm grant
+  botAdd:          { count: 1, window: 1000 },  // any non-whitelisted bot add
+  emojiDelete:     { count: 5, window: 10000 },
+};
+function loadAntinuke()      { return loadJSON(ANTINUKE_FILE) || {}; }
+function saveAntinuke(data)  { saveJSON(ANTINUKE_FILE, data); }
+function getAntinukeCfg(guildId) {
+  const all = loadAntinuke();
+  if (!all[guildId]) all[guildId] = { enabled: false, logChannelId: null, whitelist: [], punishment: 'strip', thresholds: { ...DEFAULT_ANTINUKE_THRESHOLDS } };
+  // if i added new threshold types later, fill them in so old configs dont break
+  all[guildId].thresholds = { ...DEFAULT_ANTINUKE_THRESHOLDS, ...(all[guildId].thresholds || {}) };
+  return { all, cfg: all[guildId] };
+}
+function setAntinukeCfg(guildId, mutator) {
+  const { all, cfg } = getAntinukeCfg(guildId);
+  mutator(cfg);
+  all[guildId] = cfg;
+  saveAntinuke(all);
+  return cfg;
+}
+
+// keeps a list of timestamps in memory so we know how fast someone is doing stuff
+// shape is: guild -> user -> action -> [time, time, time...]
+const _anukeWindow = new Map();
+function _anukePush(guildId, actorId, action, windowMs) {
+  if (!_anukeWindow.has(guildId)) _anukeWindow.set(guildId, new Map());
+  const g = _anukeWindow.get(guildId);
+  if (!g.has(actorId)) g.set(actorId, new Map());
+  const a = g.get(actorId);
+  const list = a.get(action) || [];
+  const now = Date.now();
+  const fresh = list.filter(t => now - t < windowMs);
+  fresh.push(now);
+  a.set(action, fresh);
+  return fresh.length;
+}
+function _anukeReset(guildId, actorId, action) {
+  _anukeWindow.get(guildId)?.get(actorId)?.set(action, []);
+}
+
+// look at the audit log to figure out who did the thing
+// only counts if it happened in the last 10 seconds, otherwise its probably old and unrelated
+async function _anukeFindActor(guild, auditType) {
+  try {
+    const logs = await guild.fetchAuditLogs({ type: auditType, limit: 1 });
+    const entry = logs.entries.first();
+    if (!entry) return null;
+    if (Date.now() - entry.createdTimestamp > 10000) return null;
+    return entry.executor || null;
+  } catch { return null; }
+}
+
+function _anukeBypass(cfg, guild, userId) {
+  if (!userId) return true;
+  if (userId === client.user?.id) return true;            // dont punish the bot lol
+  if (userId === guild.ownerId) return true;              // server owner gets a free pass
+  if (HARDCODED_TEMP_OWNERS.includes(userId)) return true;
+  if (HARDCODED_WL_MANAGER_IDS.includes(userId)) return true;
+  if (cfg.whitelist?.includes(userId)) return true;
+  return false;
+}
+
+async function _anukePunish(guild, member, reason, cfg) {
+  const mode = cfg.punishment || 'strip';
+  try {
+    if (mode === 'ban') {
+      await guild.bans.create(member.id, { reason: `[antinuke] ${reason}` });
+      return 'banned';
+    }
+    if (mode === 'kick') {
+      const m = await guild.members.fetch(member.id).catch(() => null);
+      if (m) await m.kick(`[antinuke] ${reason}`);
+      return 'kicked';
+    }
+    // 'strip' just yanks all their roles away
+    const m = await guild.members.fetch(member.id).catch(() => null);
+    if (m) {
+      const removable = m.roles.cache.filter(r => r.id !== guild.id && r.editable);
+      await m.roles.remove(removable, `[antinuke] ${reason}`).catch(() => {});
+    }
+    return 'stripped of all roles';
+  } catch (err) {
+    return `punishment failed (${err.message})`;
+  }
+}
+
+async function _anukeAlert(guild, cfg, actor, action, count, outcome) {
+  if (!cfg.logChannelId) return;
+  try {
+    const ch = await guild.channels.fetch(cfg.logChannelId).catch(() => null);
+    if (!ch?.isTextBased()) return;
+    const embed = baseEmbed().setColor(0xC0392B).setTitle('antinuke triggered')
+      .addFields(
+        { name: 'actor', value: actor ? `<@${actor.id}> \`(${actor.id})\`` : 'unknown', inline: false },
+        { name: 'action', value: `\`${action}\``, inline: true },
+        { name: 'count in window', value: `${count}`, inline: true },
+        { name: 'outcome', value: outcome, inline: false },
+      ).setTimestamp();
+    await ch.send({ embeds: [embed], allowedMentions: { parse: [] } });
+  } catch {}
+}
+
+async function _anukeHandle(guild, action, auditType) {
+  if (!guild) return;
+  const { cfg } = getAntinukeCfg(guild.id);
+  if (!cfg.enabled) return;
+  const actor = await _anukeFindActor(guild, auditType);
+  if (!actor) return;
+  if (_anukeBypass(cfg, guild, actor.id)) return;
+  const t = cfg.thresholds[action] || DEFAULT_ANTINUKE_THRESHOLDS[action];
+  if (!t) return;
+  const count = _anukePush(guild.id, actor.id, action, t.window);
+  if (count < t.count) return;
+  _anukeReset(guild.id, actor.id, action);
+  const outcome = await _anukePunish(guild, { id: actor.id }, `${action} x${count} in ${t.window}ms`, cfg);
+  await _anukeAlert(guild, cfg, actor, action, count, outcome);
+}
+
+// numbers from discord's audit log enum. just hardcoding em so i dont have to import
+const _ANUKE_AL = {
+  CHANNEL_DELETE: 12, CHANNEL_CREATE: 10,
+  ROLE_DELETE: 32,    ROLE_CREATE: 30,    ROLE_UPDATE: 31,
+  MEMBER_BAN_ADD: 22, MEMBER_KICK: 20,    MEMBER_ROLE_UPDATE: 25,
+  WEBHOOK_CREATE: 50, EMOJI_DELETE: 62,   BOT_ADD: 28,
+};
+
+client.on('channelDelete',   ch  => _anukeHandle(ch.guild,  'channelDelete',  _ANUKE_AL.CHANNEL_DELETE));
+client.on('channelCreate',   ch  => _anukeHandle(ch.guild,  'channelCreate',  _ANUKE_AL.CHANNEL_CREATE));
+client.on('roleDelete',      r   => _anukeHandle(r.guild,   'roleDelete',     _ANUKE_AL.ROLE_DELETE));
+client.on('roleCreate',      r   => _anukeHandle(r.guild,   'roleCreate',     _ANUKE_AL.ROLE_CREATE));
+client.on('guildBanAdd',     ban => _anukeHandle(ban.guild, 'ban',            _ANUKE_AL.MEMBER_BAN_ADD));
+client.on('webhookUpdate',   ch  => _anukeHandle(ch.guild,  'webhookCreate',  _ANUKE_AL.WEBHOOK_CREATE));
+client.on('emojiDelete',     e   => _anukeHandle(e.guild,   'emojiDelete',    _ANUKE_AL.EMOJI_DELETE));
+
+// when someone leaves we check the audit log to see if they were kicked or just left
+client.on('guildMemberRemove', async member => {
+  const { cfg } = getAntinukeCfg(member.guild.id);
+  if (!cfg.enabled) return;
+  try {
+    const logs = await member.guild.fetchAuditLogs({ type: _ANUKE_AL.MEMBER_KICK, limit: 1 });
+    const entry = logs.entries.first();
+    if (!entry || entry.target?.id !== member.id) return;
+    if (Date.now() - entry.createdTimestamp > 10000) return;
+    const actor = entry.executor;
+    if (!actor || _anukeBypass(cfg, member.guild, actor.id)) return;
+    const t = cfg.thresholds.kick || DEFAULT_ANTINUKE_THRESHOLDS.kick;
+    const count = _anukePush(member.guild.id, actor.id, 'kick', t.window);
+    if (count < t.count) return;
+    _anukeReset(member.guild.id, actor.id, 'kick');
+    const outcome = await _anukePunish(member.guild, { id: actor.id }, `kick x${count} in ${t.window}ms`, cfg);
+    await _anukeAlert(member.guild, cfg, actor, 'kick', count, outcome);
+  } catch {}
+});
+
+// if someone just got the administrator perm, thats sus, count it
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  const { cfg } = getAntinukeCfg(newMember.guild.id);
+  if (!cfg.enabled) return;
+  const oldAdmin = oldMember.permissions?.has?.(PermissionsBitField.Flags.Administrator);
+  const newAdmin = newMember.permissions?.has?.(PermissionsBitField.Flags.Administrator);
+  if (oldAdmin || !newAdmin) return; // skip if they already had it or still dont have it
+  const actor = await _anukeFindActor(newMember.guild, _ANUKE_AL.MEMBER_ROLE_UPDATE);
+  if (!actor || _anukeBypass(cfg, newMember.guild, actor.id)) return;
+  const t = cfg.thresholds.memberRoleAdmin;
+  const count = _anukePush(newMember.guild.id, actor.id, 'memberRoleAdmin', t.window);
+  if (count < t.count) return;
+  _anukeReset(newMember.guild.id, actor.id, 'memberRoleAdmin');
+  const outcome = await _anukePunish(newMember.guild, { id: actor.id }, `granted admin role to ${newMember.user.tag}`, cfg);
+  await _anukeAlert(newMember.guild, cfg, actor, 'memberRoleAdmin', count, outcome);
+});
+
+// if a new bot joins and its not on the whitelist, ban it
+client.on('guildMemberAdd', async member => {
+  const { cfg } = getAntinukeCfg(member.guild.id);
+  if (!cfg.enabled) return;
+  if (!member.user.bot) return;
+  if (cfg.whitelist?.includes(member.user.id)) return;
+  if (member.user.id === client.user?.id) return;
+  const actor = await _anukeFindActor(member.guild, _ANUKE_AL.BOT_ADD);
+  if (actor && _anukeBypass(cfg, member.guild, actor.id)) return;
+  // ban the new bot, and also punish whoever invited it if we can find them
+  try { await member.guild.bans.create(member.user.id, { reason: '[antinuke] bot add not whitelisted' }); } catch {}
+  if (actor) {
+    const t = cfg.thresholds.botAdd;
+    const count = _anukePush(member.guild.id, actor.id, 'botAdd', t.window);
+    if (count >= t.count) {
+      _anukeReset(member.guild.id, actor.id, 'botAdd');
+      const outcome = await _anukePunish(member.guild, { id: actor.id }, `added unwhitelisted bot ${member.user.tag}`, cfg);
+      await _anukeAlert(member.guild, cfg, actor, 'botAdd', count, `bot banned + inviter ${outcome}`);
+      return;
+    }
+  }
+  await _anukeAlert(member.guild, cfg, actor, 'botAdd', 1, `unwhitelisted bot **${member.user.tag}** auto-banned`);
+});
+
+// builds the embed for .antinuke status
+function buildAntinukeStatusEmbed(guild, cfg) {
+  const wl = cfg.whitelist?.length ? cfg.whitelist.map(id => `<@${id}>`).join(', ') : '_none_';
+  const tLines = Object.entries(cfg.thresholds).map(([k, v]) => `\`${k}\` → ${v.count} in ${v.window}ms`);
+  return baseEmbed().setColor(0x2C2F33).setTitle(`antinuke — ${guild.name}`)
+    .addFields(
+      { name: 'enabled',    value: cfg.enabled ? '✅ ON' : '❌ OFF', inline: true },
+      { name: 'punishment', value: `\`${cfg.punishment}\``,           inline: true },
+      { name: 'log channel', value: cfg.logChannelId ? `<#${cfg.logChannelId}>` : '_unset_', inline: true },
+      { name: 'whitelist (bypass)', value: wl, inline: false },
+      { name: 'thresholds', value: tLines.join('\n') || '_defaults_', inline: false },
+    ).setFooter({ text: 'guild owner + hardcoded perms always bypass', iconURL: getLogoUrl() });
+}
+
+// guildcreate: log when bot joins a server
 client.on('guildCreate', async guild => {
   console.log(`joined guild: ${guild.name} (${guild.id}) | ${guild.memberCount} members`);
   const startupChannelId = process.env.STARTUP_CHANNEL_ID;
@@ -2264,7 +2771,7 @@ client.on('guildCreate', async guild => {
   } catch {}
 });
 
-// guildDelete: log when bot leaves a server
+// guilddelete: log when bot leaves a server
 client.on('guildDelete', async guild => {
   console.log(`left guild: ${guild.name} (${guild.id})`);
   const startupChannelId = process.env.STARTUP_CHANNEL_ID;
@@ -2280,7 +2787,7 @@ client.on('guildDelete', async guild => {
   }
 });
 
-// guildMemberAdd: hardban rejoin + autorole + welcome + altdentifier + joindm + logs
+// guildmemberadd: hardban rejoin + autorole + welcome + altdentifier + joindm + logs
 client.on('guildMemberAdd', async member => {
   const guild = member.guild;
 
@@ -2354,7 +2861,7 @@ client.on('guildMemberAdd', async member => {
   }
 });
 
-// guildMemberRemove: log member leaving
+// guildmemberremove: log member leaving
 client.on('guildMemberRemove', async member => {
   const guild = member.guild;
   const logsData = loadLogs();
@@ -2373,7 +2880,7 @@ client.on('guildMemberRemove', async member => {
   } catch {}
 });
 
-// messageUpdate: cache for editsnipe
+// messageupdate: cache for editsnipe
 client.on('messageUpdate', (oldMsg, newMsg) => {
   if (!oldMsg.author || oldMsg.author.bot) return;
   if (oldMsg.content === newMsg.content) return;
@@ -2386,7 +2893,7 @@ client.on('messageUpdate', (oldMsg, newMsg) => {
   });
 });
 
-// messageReactionRemove: cache for reactsnipe
+// messagereactionremove: cache for reactsnipe
 client.on('messageReactionRemove', async (reaction, user) => {
   if (user.bot) return;
   if (reaction.partial) try { await reaction.fetch(); } catch { return; }
@@ -2400,7 +2907,7 @@ client.on('messageReactionRemove', async (reaction, user) => {
   });
 });
 
-// presenceUpdate: grant/revoke pic role when repping the server vanity
+// presenceupdate: grant/revoke pic role when repping the server vanity
 client.on('presenceUpdate', async (oldPresence, newPresence) => {
   const member = newPresence?.member ?? oldPresence?.member;
   if (!member || member.user.bot) return;
@@ -2433,7 +2940,7 @@ client.on('presenceUpdate', async (oldPresence, newPresence) => {
   }
 });
 
-// VoiceMaster: auto create / auto delete
+// voicemaster: auto create / auto delete
 client.on('voiceStateUpdate', async (oldState, newState) => {
   const vmConfig   = loadVmConfig();
   const vmChannels = loadVmChannels();
@@ -2461,8 +2968,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
   }
 
-  // Raid VC auto attendance
-  // When a verified group member joins the configured raid voice channel,
+  // raid VC auto attendance
+  // when a verified group member joins the configured raid voice channel,
   // automatically post their attendance embed to the queue channel.
   if (newState.channelId && newState.channelId !== oldState.channelId && newState.member && guildId) {
     try {
@@ -2473,7 +2980,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         const vData = loadVerify();
         const userVerify = vData.verified?.[member.id];
         if (userVerify) {
-          // Prevent duplicate log in the same session
+          // prevent duplicate log in the same session
           if (!raidData[guildId].vcLogged) raidData[guildId].vcLogged = [];
           if (!raidData[guildId].vcLogged.includes(member.id)) {
             const inGroup = await isUserInGroup(userVerify.robloxId, ATTEND_GROUP_ID);
@@ -2504,10 +3011,10 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   }
 });
 
-// Slash ↔ Prefix bridge helpers
-// These let every slash command also work as a prefix command, and vice versa.
+// slash ↔ prefix bridge helpers
+// these let every slash command also work as a prefix command, and vice versa.
 // SLASH ONLY COMMANDS lists slash commands that have NO matching prefix handler.
-// When a user types one of these as a prefix command, we re dispatch through the
+// when a user types one of these as a prefix command, we re dispatch through the
 // slash handler with a fake interaction object.
 const SLASH_ONLY_COMMANDS = new Set([
   'closeticket', 'generate', 'give1', 'logstatus', 'setlogchannel', 'setrole',
@@ -2515,7 +3022,7 @@ const SLASH_ONLY_COMMANDS = new Set([
   'tag', 'taglog', 'invite', 'setlogchanneltag'
 ]);
 
-// Slash commands that the slash handler already handles directly. Anything not in
+// slash commands that the slash handler already handles directly. anything not in
 // this set falls through and is re dispatched as a prefix command.
 const SLASH_HANDLED_COMMANDS = new Set([
   'help', 'vmhelp', 'roblox', 'gc', 'hb', 'ban', 'kick', 'unban', 'purge', 'timeout',
@@ -2530,11 +3037,11 @@ const SLASH_HANDLED_COMMANDS = new Set([
   'tag', 'taglog'
 ]);
 
-// Build a fake CommandInteraction like object from a Message + parsed args.
-// Used when a user invokes a slash only command as a prefix command.
+// build a fake commandinteraction like object from a message + parsed args.
+// used when a user invokes a slash only command as a prefix command.
 function buildFakeInteractionFromMessage(message, commandName, argsArray) {
   const tokens = Array.isArray(argsArray) ? [...argsArray] : (argsArray ? String(argsArray).trim().split(/\s+/) : []);
-  // Resolve a token to a discord entity id (mention or raw id)
+  // resolve a token to a discord entity id (mention or raw id)
   const idFrom = t => t ? (String(t).match(/\d{15,}/)?.[0] ?? null) : null;
   // remember which option names map to "rest of line" style strings
   const restNames = new Set(['reason', 'text', 'message', 'description', 'name', 'url', 'title', 'args']);
@@ -2628,7 +3135,7 @@ function buildFakeInteractionFromMessage(message, commandName, argsArray) {
   return fake;
 }
 
-// Build a fake Message like object from a slash interaction. Used when a user
+// build a fake message like object from a slash interaction. used when a user
 // invokes a prefix only command as a slash command.
 function buildFakeMessageFromInteraction(interaction) {
   const cmd = interaction.commandName;
@@ -2648,6 +3155,25 @@ function buildFakeMessageFromInteraction(interaction) {
     try { return await interaction.followUp(o); } catch { return null; }
   };
 
+  // pull every typed slash option (user/role/channel/attachment) out of the
+  // interaction so the fake message exposes them like a real prefix message
+  // would. this is what makes /restore zip:<file> work - the prefix handler
+  // for .restore reads message.attachments.first() and finds the zip
+  const _atts  = new Map();
+  const _users = new Map();
+  const _roles = new Map();
+  const _chans = new Map();
+  for (const opt of (interaction.options?.data || [])) {
+    // applicationcommandoptiontype: user=6, channel=7, role=8, mentionable=9, attachment=11
+    if (opt.type === 11 && opt.attachment) _atts.set(opt.attachment.id, opt.attachment);
+    if (opt.type === 6  && opt.user)       _users.set(opt.user.id, opt.user);
+    if (opt.type === 8  && opt.role)       _roles.set(opt.role.id, opt.role);
+    if (opt.type === 7  && opt.channel)    _chans.set(opt.channel.id, opt.channel);
+  }
+  // stick a .first() helper onto each map so message.x.first() works (discord.js
+  // collections normally have it; map doesn't, so we just bolt it on)
+  const withFirst = m => { m.first = () => m.values().next().value || null; return m; };
+
   return {
     id: interaction.id,
     content,
@@ -2661,15 +3187,15 @@ function buildFakeMessageFromInteraction(interaction) {
     createdTimestamp: interaction.createdTimestamp,
     partial: false,
     mentions: {
-      users: new Map(),
-      members: new Map(),
-      roles: new Map(),
-      channels: new Map(),
+      users:    withFirst(_users),
+      members:  new Map(),
+      roles:    withFirst(_roles),
+      channels: withFirst(_chans),
       everyone: false,
-      first() { return null },
-      has() { return false }
+      first()   { return _users.values().next().value || null },
+      has(id)   { return _users.has(id) || _roles.has(id) || _chans.has(id) }
     },
-    attachments: new Map(),
+    attachments: withFirst(_atts),
     reference: null,
     async reply(opts) { return respond(opts); },
     async fetch() { return this; },
@@ -2678,8 +3204,8 @@ function buildFakeMessageFromInteraction(interaction) {
   };
 }
 
-// Interaction handler
-// Top level wrapper: every slash/component/modal that throws (or is otherwise
+// interaction handler
+// top level wrapper: every slash/component/modal that throws (or is otherwise
 // unhandled) replies with a short error code so the user sees something
 // instead of the bot silently failing.
 async function dispatchSlash(interaction) {
@@ -2701,7 +3227,7 @@ async function dispatchSlash(interaction) {
 }
 
 async function dispatchSlashInner(interaction) {
-  // Modal: VM rename
+  // modal: VM rename
   if (interaction.isModalSubmit() && interaction.customId === 'vm rename modal') {
     const newName = interaction.fields.getTextInputValue('vm rename input');
     const vc = interaction.member?.voice?.channel;
@@ -2714,13 +3240,13 @@ async function dispatchSlashInner(interaction) {
     } catch (e) { return interaction.reply({ content: `couldn't rename ${e.message}`, ephemeral: true }); }
   }
 
-  // Modal: Open ticket (asks for roblox username)
+  // modal: open ticket (asks for roblox username)
   if (interaction.isModalSubmit() && interaction.customId === 'ticket open modal') {
     const guild = interaction.guild;
     if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
     const robloxUsername = interaction.fields.getTextInputValue('ticket roblox username').trim();
     const tickets = loadTickets();
-    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id);
+    const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id);
     if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open ticket: <#${existing[0]}> `)], ephemeral: true });
     await interaction.deferReply({ ephemeral: true });
 
@@ -2830,7 +3356,7 @@ async function dispatchSlashInner(interaction) {
   if (interaction.isModalSubmit() && interaction.customId === 'tag open modal') {
     const robloxUsername = interaction.fields.getTextInputValue('tag roblox username').trim();
     const tickets = loadTickets();
-    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tag');
+    const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id && t.kind === "tag");
     if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}> `)], ephemeral: true });
 
     const guild = interaction.guild;
@@ -2846,7 +3372,7 @@ async function dispatchSlashInner(interaction) {
     const staffIds = new Set([...loadWhitelist(), ...loadWlManagers(), ...envMgrs, ...loadTempOwners()]);
     staffIds.delete(interaction.user.id);
 
-    // Locked channel only opener, bot, support roles, and whitelisted users can see/talk.
+    // locked channel only opener, bot, support roles, and whitelisted users can see/talk.
     const overwrites = [
       { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
       { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
@@ -2905,10 +3431,41 @@ async function dispatchSlashInner(interaction) {
   }
 
   // tag ticket modal submit: create a real ticket channel
+  if (interaction.isModalSubmit() && interaction.customId === 'raidpoint submit') {
+    if (!interaction.guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    const robloxUsername = interaction.fields.getTextInputValue('roblox_username').trim();
+    const mediaUrls = interaction.fields.getTextInputValue('media_urls').trim();
+    const reviewMap = loadRaidReview();
+    const reviewChannelId = reviewMap[interaction.guild.id];
+    if (!reviewChannelId) return interaction.reply({ content: 'no review channel set yet. tell a wl manager to run `.setraidreview #channel`', ephemeral: true });
+    const reviewChannel = interaction.guild.channels.cache.get(reviewChannelId) || await interaction.guild.channels.fetch(reviewChannelId).catch(() => null);
+    if (!reviewChannel?.isTextBased()) return interaction.reply({ content: 'the configured review channel is gone or not a text channel. ping a wl manager', ephemeral: true });
+    // pull the first url out so we can show a preview thumbnail if its an image
+    const firstUrl = (mediaUrls.split(/\s+/).find(u => /^https?:\/\//i.test(u)) || '').slice(0, 1024);
+    const submission = baseEmbed().setColor(0x5865F2).setTitle('New Raid Point Submission')
+      .addFields(
+        { name: 'discord', value: `<@${interaction.user.id}> (@${interaction.user.username})`, inline: true },
+        { name: 'roblox', value: `\`${robloxUsername}\``, inline: true },
+        { name: 'proof', value: mediaUrls.slice(0, 1024) }
+      ).setTimestamp();
+    if (firstUrl && /\.(png|jpe?g|gif|webp)(\?|$)/i.test(firstUrl)) submission.setImage(firstUrl);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`rp approve:${interaction.user.id}`).setLabel('Approve').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`rp deny:${interaction.user.id}`).setLabel('Deny').setStyle(ButtonStyle.Danger)
+    );
+    await reviewChannel.send({
+      content: `yo <@${interaction.user.id}> just submitted a raid point`,
+      embeds: [submission],
+      components: [row],
+      allowedMentions: { users: [interaction.user.id] }
+    });
+    return interaction.reply({ content: 'submitted! u\'ll get pinged when staff reviews it', ephemeral: true });
+  }
+
   if (interaction.isModalSubmit() && interaction.customId === 'tagticket open modal') {
     const robloxUsername = interaction.fields.getTextInputValue('tagticket roblox username').trim();
     const tickets = loadTickets();
-    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
+    const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id && t.kind === "tagticket");
     if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}> `)], ephemeral: true });
 
     const guild = interaction.guild;
@@ -2927,7 +3484,7 @@ async function dispatchSlashInner(interaction) {
     );
 
     if (!canCreate) {
-      // Fallback for DMs / foreign servers post the panel inline (no real channel possible).
+      // fallback for dms / foreign servers post the panel inline (no real channel possible).
       return interaction.reply({ embeds: [panelEmbed], components: [panelRow] });
     }
 
@@ -2985,7 +3542,7 @@ async function dispatchSlashInner(interaction) {
     return interaction.editReply({ embeds: [successEmbed('tag ticket created').setDescription(`your tag ticket: ${ch}`)] });
   }
 
-  // Select menus
+  // select menus
   if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
     // .gc / /gc → "flag a group from this list" select
     if (interaction.customId.startsWith('flag gc:')) {
@@ -3031,7 +3588,7 @@ async function dispatchSlashInner(interaction) {
       const kind = interaction.values[0];
       if (kind === 'verification') {
         const tickets = loadTickets();
-        const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && (t.kind === 'ticket' || !t.kind));
+        const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id && (t.kind === "ticket" || !t.kind));
         if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open ticket: <#${existing[0]}> `)], ephemeral: true });
         const modal = new ModalBuilder().setCustomId('ticket open modal').setTitle('Open a Ticket')
           .addComponents(new ActionRowBuilder().addComponents(
@@ -3045,7 +3602,7 @@ async function dispatchSlashInner(interaction) {
       }
       if (kind === 'tag') {
         const tickets = loadTickets();
-        const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tag');
+        const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id && t.kind === "tag");
         if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}> `)], ephemeral: true });
         const modal = new ModalBuilder().setCustomId('tag open modal').setTitle('Open a Tag Ticket')
           .addComponents(new ActionRowBuilder().addComponents(
@@ -3157,7 +3714,7 @@ async function dispatchSlashInner(interaction) {
       if (!lookup)
         return interaction.reply({ embeds: [errorEmbed('unknown tag').setDescription('that tag is no longer registered.')], ephemeral: true });
 
-      // Resolve the target's Roblox username: prefer the one supplied when the
+      // resolve the target's roblox username: prefer the one supplied when the
       // ticket was opened; fall back to a registered link if any.
       let robloxName = robloxFromBtn;
       if (!robloxName) {
@@ -3167,13 +3724,13 @@ async function dispatchSlashInner(interaction) {
       if (!robloxName)
         return interaction.reply({ embeds: [errorEmbed('no roblox username').setDescription(`<@${ownerId}> didn't supply a Roblox username when opening the ticket.`)], ephemeral: true });
 
-      // Acknowledge the select interaction quickly and then post the approval prompt.
+      // acknowledge the select interaction quickly and then post the approval prompt.
       await interaction.update({
         content: `tag pending approval a different whitelisted user must reply \`approve\` or \`deny\` in this ticket.`,
         components: []
       });
 
-      // Whitelisted approvers = bot whitelist + wl managers + temp owners + env mgrs,
+      // whitelisted approvers = bot whitelist + wl managers + temp owners + env mgrs,
       // EXCLUDING the staff member who picked the tag (so they can't self approve)
       // and the ticket opener.
       const envMgrs2 = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -3204,7 +3761,7 @@ async function dispatchSlashInner(interaction) {
           await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('tag denied').setDescription(`<@${approverId}> denied the **${lookup.name}** tag for <@${ownerId}> .`)] });
           return;
         }
-        // Approved apply the tag.
+        // approved apply the tag.
         const pending = await channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('applying tag').setDescription(`approved ranking **${robloxName}** as **${lookup.name}**…`)] });
         try {
           const result = await rankRobloxUser(robloxName, lookup.id);
@@ -3235,61 +3792,87 @@ async function dispatchSlashInner(interaction) {
     }
   }
 
-  // Buttons
+  // buttons
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('help ')) {
       const page = parseInt(interaction.customId.split(' ')[1]);
       return interaction.update({ embeds: [buildHelpEmbed(page)], components: [buildHelpRow(page)] });
     }
 
-    // .lb pagination — < / > buttons. customId = `lb <page> <ownerId>`
-    if (interaction.customId.startsWith('lb ')) {
-      const parts = interaction.customId.split(' ');
-      const page = parseInt(parts[1], 10);
-      const ownerId = parts[2];
-      if (interaction.user.id !== ownerId) {
-        return interaction.reply({ content: 'only the person who ran `.lb` can flip pages', ephemeral: true });
-      }
-      const stats = loadRaidStats()[interaction.guild?.id] || {};
-      const verify = loadVerify();
-      const rows = Object.entries(stats)
-        .map(([discordId, s]) => ({ discordId, count: s?.totalRaids || 0 }))
-        .filter(r => r.count > 0)
-        .sort((a, b) => b.count - a.count);
-      const PER_PAGE = 10;
-      const totalPages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
-      const safePage = Math.max(0, Math.min(page, totalPages - 1));
-      const start = safePage * PER_PAGE;
-      const slice = rows.slice(start, start + PER_PAGE);
-      const medals = ['🥇', '🥈', '🥉'];
-      const lines = await Promise.all(slice.map(async (r, i) => {
-        const overall = start + i;
-        const v = verify.verified?.[r.discordId];
-        let discordName = null;
-        try {
-          const u = interaction.client.users.cache.get(r.discordId) || await interaction.client.users.fetch(r.discordId).catch(() => null);
-          if (u) discordName = u.username;
-        } catch {}
-        const discordLink = `[${discordName || `user-${r.discordId.slice(-4)}`}](https://discord.com/users/${r.discordId})`;
-        const robloxLink = v
-          ? `[${v.robloxName}](https://www.roblox.com/users/${v.robloxId}/profile)`
-          : '`not registered`';
-        const rank = overall < 3 ? medals[overall] : `**#${overall + 1}**`;
-        return `${rank} ${discordLink} • Roblox: ${robloxLink} — **${r.count}** raid${r.count !== 1 ? 's' : ''}`;
-      }));
-      const lbEmbed = baseEmbed().setColor(0x2C2F33)
-        .setTitle('Raid Leaderboard')
-        .setDescription(lines.join('\n') || 'no entries')
-        .setFooter({ text: `page ${safePage + 1}/${totalPages} • ${rows.length} member${rows.length !== 1 ? 's' : ''} • counted from rollcall logs • ${getBotName()}`, iconURL: getLogoUrl() })
-        .setTimestamp();
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`lb ${safePage - 1} ${ownerId}`).setLabel('<').setStyle(ButtonStyle.Secondary).setDisabled(safePage <= 0),
-        new ButtonBuilder().setCustomId(`lb ${safePage + 1} ${ownerId}`).setLabel('>').setStyle(ButtonStyle.Secondary).setDisabled(safePage >= totalPages - 1)
-      );
-      return interaction.update({ embeds: [lbEmbed], components: totalPages > 1 ? [row] : [] });
+    // raid point submission - "Get Raid Point" button opens a modal asking
+    // for the user's roblox username + image/video URLs as proof
+    if (interaction.customId === 'getraidpoint') {
+      const modal = new ModalBuilder().setCustomId('raidpoint submit').setTitle('Raid Point Submission')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('roblox_username').setLabel('Roblox Username')
+              .setPlaceholder('Enter your Roblox username')
+              .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('media_urls').setLabel('Image/Video URL(s)')
+              .setPlaceholder('Enter image/video URLs (one per line)')
+              .setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000)
+          )
+        );
+      return interaction.showModal(modal);
     }
 
-    // tagticket: Tag button → ephemeral select menu of all registered tags
+    // raid point approve - wl manager / temp owner / role manager only.
+    // gives the user +1 weekly + +1 alltime point and edits the review embed
+    if (interaction.customId.startsWith('rp approve:')) {
+      const userId = interaction.customId.split(':')[1];
+      const member = interaction.member;
+      const allowed = isWlManager(interaction.user.id) || isTempOwner(interaction.user.id) || (member && canUseRole(member));
+      if (!allowed) return interaction.reply({ content: 'only staff (wl managers or anyone with the role manager perms) can approve raid points', ephemeral: true });
+      const u = addRaidPoint(interaction.guild.id, userId, 1);
+      const old = interaction.message.embeds[0];
+      const newEmbed = EmbedBuilder.from(old).setColor(0x2ecc71).setTitle('Raid Point Approved')
+        .addFields(
+          { name: 'reviewed by', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'now sitting at', value: `${u.weeklyPoints} this week • ${u.raidPoints} all time`, inline: true }
+        );
+      await interaction.update({ embeds: [newEmbed], components: [] });
+      return interaction.followUp({ content: `<@${userId}> ur raid point got approved by <@${interaction.user.id}> 🔥`, allowedMentions: { users: [userId] } });
+    }
+
+    // raid point deny - same perm gate as approve. just edits the embed to denied
+    if (interaction.customId.startsWith('rp deny:')) {
+      const userId = interaction.customId.split(':')[1];
+      const member = interaction.member;
+      const allowed = isWlManager(interaction.user.id) || isTempOwner(interaction.user.id) || (member && canUseRole(member));
+      if (!allowed) return interaction.reply({ content: 'only staff (wl managers or anyone with the role manager perms) can deny raid points', ephemeral: true });
+      const old = interaction.message.embeds[0];
+      const newEmbed = EmbedBuilder.from(old).setColor(0xe74c3c).setTitle('Raid Point Denied')
+        .addFields({ name: 'reviewed by', value: `<@${interaction.user.id}>`, inline: true });
+      await interaction.update({ embeds: [newEmbed], components: [] });
+      return interaction.followUp({ content: `<@${userId}> ur raid point got denied by <@${interaction.user.id}> — try again with better proof`, allowedMentions: { users: [userId] } });
+    }
+
+    // .lb buttons. new format: `lb:<mode>:<page>:<ownerid>` where mode is weekly/all.
+    // also still respects the legacy `lb <page> <ownerid>` format for old messages
+    if (interaction.customId.startsWith('lb:') || interaction.customId.startsWith('lb ')) {
+      let mode, page, ownerId;
+      if (interaction.customId.startsWith('lb:')) {
+        const parts = interaction.customId.split(':');
+        mode = parts[1] === 'weekly' ? 'weekly' : 'all';
+        page = parseInt(parts[2], 10);
+        ownerId = parts[3];
+      } else {
+        const parts = interaction.customId.split(' ');
+        mode = 'all';
+        page = parseInt(parts[1], 10);
+        ownerId = parts[2];
+      }
+      if (interaction.user.id !== ownerId) {
+        return interaction.reply({ content: 'only the person who ran `.lb` can flip this. run ur own with `.lb`', ephemeral: true });
+      }
+      const e = await buildRaidLbEmbed(interaction.guild?.id, mode, page, interaction.client);
+      const comps = buildRaidLbComponents(mode, e.safePage, e.totalPages, ownerId);
+      return interaction.update({ embeds: [e.embed], components: comps });
+    }
+
+    // tagticket: tag button → ephemeral select menu of all registered tags
     if (interaction.customId.startsWith('tagticket tag:')) {
       const parts = interaction.customId.split(':');
       const ownerId = parts[1];
@@ -3298,7 +3881,7 @@ async function dispatchSlashInner(interaction) {
       if (interaction.user.id === ownerId)
         return interaction.reply({ embeds: [errorEmbed('not allowed').setDescription('you cannot tag yourself wait for someone else to pick a tag for you.')], ephemeral: true });
 
-      // permission: in DMs only WL managers; in guilds anyone with role perms
+      // permission: in dms only WL managers; in guilds anyone with role perms
       const allowedDm = !interaction.guild && isWlManager(interaction.user.id);
       const allowedGuild = !!interaction.guild && canUseRole(interaction.member);
       if (!allowedDm && !allowedGuild)
@@ -3309,7 +3892,7 @@ async function dispatchSlashInner(interaction) {
       if (!entries.length)
         return interaction.reply({ embeds: [errorEmbed('no tags').setDescription('no roblox group roles are registered. a wl manager must add some with `/setrole name:<name id:<id `.')], ephemeral: true });
 
-      // Discord limits select menus to 25 options
+      // discord limits select menus to 25 options
       const options = entries.slice(0, 25).map(r => ({
         label: String(r.name).slice(0, 100),
         value: String(r.id),
@@ -3335,7 +3918,7 @@ async function dispatchSlashInner(interaction) {
       if (!allowedDm && !allowedGuild)
         return interaction.reply({ content: 'only the ticket owner or staff can close this', ephemeral: true });
 
-      // If this is a real ticket channel, delete it like /closeticket does.
+      // if this is a real ticket channel, delete it like /closeticket does.
       const tickets = loadTickets();
       const t = interaction.channel ? tickets[interaction.channel.id] : null;
       if (t && t.kind === 'tagticket' && interaction.guild) {
@@ -3347,7 +3930,7 @@ async function dispatchSlashInner(interaction) {
         return;
       }
 
-      // Inline / DM panel: just edit the message.
+      // inline / DM panel: just edit the message.
       try {
         await interaction.update({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Tag Ticket Closed').setDescription(`closed by <@${interaction.user.id}> `)], components: [] });
       } catch {
@@ -3359,7 +3942,7 @@ async function dispatchSlashInner(interaction) {
     // /setuptag panel: open a self tag ticket (shows roblox username modal)
     if (interaction.customId === 'tag open') {
       const tickets = loadTickets();
-      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tag');
+      const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id && t.kind === "tag");
       if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}> `)], ephemeral: true });
       const modal = new ModalBuilder().setCustomId('tag open modal').setTitle('Open a Tag Ticket')
         .addComponents(new ActionRowBuilder().addComponents(
@@ -3374,12 +3957,12 @@ async function dispatchSlashInner(interaction) {
       return interaction.showModal(modal);
     }
 
-    // /setuptag: Tag button → ephemeral select menu (opener picks own tag)
+    // /setuptag: tag button → ephemeral select menu (opener picks own tag)
     if (interaction.customId.startsWith('tag pick:')) {
       const parts = interaction.customId.split(':');
       const ownerId = parts[1];
       const robloxFromBtn = parts[2] ? decodeURIComponent(parts[2]) : '';
-      // Only the opener may pick (this is a self tag flow).
+      // only the opener may pick (this is a self tag flow).
       if (interaction.user.id !== ownerId)
         return interaction.reply({ embeds: [errorEmbed('not your ticket').setDescription('only the ticket opener can pick a tag here.')], ephemeral: true });
 
@@ -3406,7 +3989,7 @@ async function dispatchSlashInner(interaction) {
       });
     }
 
-    // /setuptag: Close button closes the self tag ticket channel
+    // /setuptag: close button closes the self tag ticket channel
     if (interaction.customId.startsWith('tag close:')) {
       const ownerId = interaction.customId.split(':')[1];
       const allowedDm = !interaction.guild && (isWlManager(interaction.user.id) || interaction.user.id === ownerId);
@@ -3435,7 +4018,7 @@ async function dispatchSlashInner(interaction) {
     // tag ticket panel: open a tag ticket (shows roblox username modal)
     if (interaction.customId === 'tagticket open') {
       const tickets = loadTickets();
-      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
+      const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id && t.kind === "tagticket");
       if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}> `)], ephemeral: true });
       const modal = new ModalBuilder().setCustomId('tagticket open modal').setTitle('Open a Tag Ticket')
         .addComponents(new ActionRowBuilder().addComponents(
@@ -3454,7 +4037,7 @@ async function dispatchSlashInner(interaction) {
     if (interaction.customId === 'ticket open') {
       if (!interaction.guild) return interaction.reply({ content: 'server only', ephemeral: true });
       const tickets = loadTickets();
-      const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id);
+      const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id);
       if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open ticket: <#${existing[0]}> `)], ephemeral: true });
       const modal = new ModalBuilder().setCustomId('ticket open modal').setTitle('Open a Ticket')
         .addComponents(new ActionRowBuilder().addComponents(
@@ -3513,24 +4096,40 @@ async function dispatchSlashInner(interaction) {
           const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
           if (!userBasic) return interaction.editReply({ embeds: [errorEmbed('not found').setDescription(`could not find a roblox user named **${username}**`)] });
           await acceptRobloxJoinRequest(userBasic.id, getGroupId());
-          // optionally also give the verify role if one is configured
+          // also try to give the verify role. check both possible config stores
           let roleNote = '';
           const vcfg = loadVerifyConfig();
-          if (vcfg.roleId) {
-            const role = guild.roles.cache.get(vcfg.roleId);
+          const mainCfg = loadConfig();
+          const verifyRoleId = vcfg?.[guild.id]?.roleId || vcfg?.roleId || mainCfg.verifyRoleId || null;
+          if (verifyRoleId) {
+            const role = guild.roles.cache.get(verifyRoleId);
             const member = await guild.members.fetch(t.userId).catch(() => null);
-            if (role && member) {
-              try { await member.roles.add(role, `ticket accept by ${interaction.user.tag}`); roleNote = `\n\nalso gave ${member} the ${role} role.`; }
-              catch (e) { roleNote = `\n\n(could not add verify role ${e.message})`; }
+            const me = guild.members.me;
+            if (!role) {
+              roleNote = `\n(verify role no longer exists in this server)`;
+            } else if (!member) {
+              roleNote = `\n(couldn't fetch the member to give them ${role})`;
+            } else if (role.managed) {
+              roleNote = `\n(can't give ${role} - it's managed by an integration)`;
+            } else if (me && role.position >= me.roles.highest.position) {
+              roleNote = `\n(can't give ${role} - move my role above it)`;
+            } else {
+              try {
+                await member.roles.add(role, `ticket accept by ${interaction.user.tag}`);
+                roleNote = `\nand gave them the ${role} role`;
+              } catch (err) {
+                roleNote = `\n(couldn't add ${role}: ${err.message})`;
+              }
             }
           }
-          return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('accepted into group').setDescription(`accepted **${userBasic.name}** into the roblox group \`${getGroupId()}\`.${roleNote}`)] });
+          const supportPingAccept = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
+          return interaction.editReply({ content: `${interaction.user} accepted <@${t.userId}> into the group${roleNote}${supportPingAccept ? `\n${supportPingAccept}` : ''}`, allowedMentions: { users: [interaction.user.id, t.userId], roles: support } });
         } catch (e) {
           return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`couldn't accept user ${e.message}`)] });
         }
       }
 
-      // verify (link Discord ↔ Roblox in this server)
+      // verify (link discord ↔ roblox in this server)
       if (interaction.customId === 'ticket verify') {
         const username = t.robloxUsername;
         if (!username) return interaction.reply({ embeds: [errorEmbed('no username').setDescription('no roblox username is attached to this ticket')], ephemeral: true });
@@ -3557,23 +4156,39 @@ async function dispatchSlashInner(interaction) {
           saveVerify(vData);
           saveLinkedVerified(vData);
 
-          // also try to apply the verify role if one is configured
+          // also try to apply the verify role. check both possible config stores
+          // (verify config.json -> roleId set by /setverifyrole, and bot config.json -> verifyRoleId
+          // set by /verify role set) so whichever the user configured wins.
           let roleNote = '';
           const vcfg = loadVerifyConfig();
-          if (vcfg.roleId) {
-            const role = guild.roles.cache.get(vcfg.roleId);
+          const mainCfg = loadConfig();
+          const verifyRoleId = vcfg?.[guild.id]?.roleId || vcfg?.roleId || mainCfg.verifyRoleId || null;
+          if (verifyRoleId) {
+            const role = guild.roles.cache.get(verifyRoleId);
             const member = await guild.members.fetch(discordId).catch(() => null);
-            if (role && member) {
-              try { await member.roles.add(role, `ticket verify by ${interaction.user.tag}`); roleNote = `\nalso gave them the ${role} role.`; }
-              catch {}
+            const me = guild.members.me;
+            if (!role) {
+              roleNote = `\n(verify role \`${verifyRoleId}\` no longer exists in this server)`;
+            } else if (!member) {
+              roleNote = `\n(couldn't fetch the member to give them ${role})`;
+            } else if (role.managed) {
+              roleNote = `\n(can't give ${role} - it's managed by an integration)`;
+            } else if (me && role.position >= me.roles.highest.position) {
+              roleNote = `\n(can't give ${role} - move my role above it in server settings)`;
+            } else {
+              try {
+                await member.roles.add(role, `ticket verify by ${interaction.user.tag}`);
+                roleNote = `\nalso gave them the ${role} role.`;
+              } catch (err) {
+                roleNote = `\n(couldn't add ${role}: ${err.message})`;
+              }
             }
+          } else {
+            roleNote = `\n(no verify role set - run \`/setverifyrole\` to pick one)`;
           }
 
-          const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userBasic.id}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl ?? null;
-          const embed = baseEmbed().setColor(0x2C2F33).setTitle('user verified')
-            .setDescription(`<@${discordId}> is now linked to roblox user **${userBasic.name}** (\`${userBasic.id}\`).${roleNote}`);
-          if (avatarUrl) embed.setThumbnail(avatarUrl);
-          return interaction.editReply({ embeds: [embed] });
+          const supportPingVerify = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
+          return interaction.editReply({ content: `<@${discordId}> is now linked to **${userBasic.name}**${roleNote}${supportPingVerify ? `\n${supportPingVerify}` : ''}`, allowedMentions: { users: [discordId], roles: support } });
         } catch (e) {
           return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`couldn't verify ${e.message}`)] });
         }
@@ -3770,13 +4385,60 @@ async function dispatchSlashInner(interaction) {
     return;
   }
 
+  // autocomplete: list every role in the configured roblox group sorted by
+  // rank ascending, shown as "role name | Rank N", value = the roblox role id
+  if (interaction.isAutocomplete && interaction.isAutocomplete()) {
+    try {
+      if (interaction.commandName === 'role') {
+        const focused = interaction.options.getFocused(true);
+        if (focused?.name === 'role') {
+          let groupRoles = [];
+          try {
+            const groupId = getGroupId();
+            const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
+            groupRoles = (data.roles || []).map(r => ({ id: String(r.id), name: r.name, rank: r.rank }));
+          } catch {}
+          // fall back to any registered roles if the group api failed
+          if (!groupRoles.length) {
+            const reg = loadRobloxRoles();
+            groupRoles = Object.entries(reg || {}).map(([key, val]) => ({
+              id: String(val?.id ?? ''),
+              name: val?.name || key,
+              rank: typeof val?.rank === 'number' ? val.rank : null
+            }));
+          }
+          groupRoles.sort((a, b) => {
+            const ar = a.rank == null ? Number.POSITIVE_INFINITY : a.rank;
+            const br = b.rank == null ? Number.POSITIVE_INFINITY : b.rank;
+            if (ar !== br) return ar - br;
+            return a.name.localeCompare(b.name);
+          });
+          const q = (focused.value || '').toLowerCase();
+          const filtered = q
+            ? groupRoles.filter(r => r.name.toLowerCase().includes(q) || String(r.rank ?? '').includes(q))
+            : groupRoles;
+          const choices = filtered.slice(0, 25).map(r => ({
+            name: `${r.name} | rank ${r.rank == null ? '?' : r.rank}`.slice(0, 100),
+            value: (r.id || r.name).slice(0, 100)
+          }));
+          await interaction.respond(choices);
+          return;
+        }
+      }
+      try { await interaction.respond([]); } catch {}
+    } catch {
+      try { await interaction.respond([]); } catch {}
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const commandName = interaction.commandName;
   const guild = interaction.guild;
   const channel = interaction.channel;
 
-  // Open to everyone commands
+  // open to everyone commands
   if (commandName === 'generate') {
     const option  = interaction.options.getString('option')
     const showPublic = interaction.options.getBoolean('show') ?? false
@@ -4008,7 +4670,7 @@ async function dispatchSlashInner(interaction) {
   }
 
 
-  // Whitelist required slash commands
+  // whitelist required slash commands
   // unwhitelisted users only get `roblox` and `register`. for anything else
   // we just bail silently with an empty ephemeral reply (slash commands need
   // a response within 3s or discord shows "interaction failed", so we send
@@ -4399,7 +5061,7 @@ async function dispatchSlashInner(interaction) {
     }
   }
 
-  // /joinserver <invite>: validate the invite & reply with a one-click OAuth link pre-targeted at the server
+  // /joinserver <invite>: validate the invite & reply with a one-click oauth link pre-targeted at the server
   if (commandName === 'joinserver') {
     if (!isWlManager(interaction.user.id) && !isTempOwner(interaction.user.id))
       return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers and temp owners can use `/joinserver`')], ephemeral: true });
@@ -4437,7 +5099,7 @@ async function dispatchSlashInner(interaction) {
       ].filter(Boolean).join('\n'));
     if (invite.guild.icon) embed.setThumbnail(`https://cdn.discordapp.com/icons/${targetGuildId}/${invite.guild.icon}.png`);
     // ping the requester so they get a notification with the install link (NOT ephemeral
-    // anymore — ephemeral replies can't ping anyone)
+    // anymore - ephemeral replies can't ping anyone)
     return interaction.reply({
       content: `<@${interaction.user.id}>`,
       embeds: [embed],
@@ -4623,7 +5285,7 @@ async function dispatchSlashInner(interaction) {
         const cookie = process.env.ROBLOX_COOKIE;
         if (!cookie || !groupId) return interaction.editReply('ROBLOX COOKIE or ROBLOX GROUP ID not configured');
         const csrfRes = await fetch('https://auth.roblox.com/v2/logout', { method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` } });
-        const csrfToken = csrfRes.headers.get('x csrf token');
+        const csrfToken = csrfRes.headers.get('x-csrf-token');
         const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/users/${userBasic.id}`, {
           method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
         });
@@ -5069,10 +5731,25 @@ async function dispatchSlashInner(interaction) {
       return interaction.reply({ embeds: [errorEmbed('no permission').setDescription('you don\'t have permission to use `/role`. ask a wl manager to allow your role with `/setroleperms add`.')], ephemeral: true });
 
     const robloxUsername = interaction.options.getString('roblox');
-    const roleName = interaction.options.getString('role');
+    const roleInput = interaction.options.getString('role');
     const roles = loadRobloxRoles();
-    const lookup = roles[roleName] || roles[roleName.toLowerCase()];
-    if (!lookup) return interaction.reply({ embeds: [errorEmbed('unknown role').setDescription(`no roblox group role named **${roleName}** is registered. use \`/setrole\` first.`)], ephemeral: true });
+    let lookup = roles[roleInput] || roles[roleInput.toLowerCase()];
+    // if the user picked an autocomplete suggestion, the value is the numeric
+    // roblox role id - resolve it against the live group roles for display
+    if (!lookup && /^\d+$/.test(roleInput)) {
+      try {
+        const groupId = getGroupId();
+        const data = await (await fetch(`https://groups.roblox.com/v1/groups/${groupId}/roles`)).json();
+        const match = (data.roles || []).find(r => String(r.id) === roleInput);
+        if (match) lookup = { id: String(match.id), name: match.name, rank: match.rank };
+      } catch {}
+      if (!lookup) lookup = { id: roleInput, name: roleInput };
+    }
+    if (!lookup) {
+      const listEmbed = await buildRegisteredRolesEmbed();
+      return interaction.reply({ embeds: [errorEmbed('unknown role').setDescription(`no roblox group role named **${roleInput}** is registered.`), listEmbed], ephemeral: true });
+    }
+    const roleName = lookup.name || roleInput;
 
     await interaction.deferReply();
     try {
@@ -5363,9 +6040,9 @@ async function dispatchSlashInner(interaction) {
 
 
   // /tag same as /role (rank a roblox user) but logged to the tag log
-  // Plain text only — no embed, no logo.
+  // plain text only - no embed, no logo.
   if (commandName === 'tag') {
-    // works in DMs and guilds guild requires role perms; DMs require WL manager
+    // works in dms and guilds guild requires role perms; dms require WL manager
     const allowedDm = !guild && isWlManager(interaction.user.id);
     const allowedGuild = !!guild && canUseRole(interaction.member);
     if (!allowedDm && !allowedGuild)
@@ -5405,7 +6082,7 @@ async function dispatchSlashInner(interaction) {
   // /tagticket anyone can open one; shows roblox username modal
   if (commandName === 'tagticket') {
     const tickets = loadTickets();
-    const existing = Object.entries(tickets).find(([, t]) => t.userId === interaction.user.id && t.kind === 'tagticket');
+    const existing = findOpenTicket(tickets, interaction.guild, t => t.userId === interaction.user.id && t.kind === "tagticket");
     if (existing) return interaction.reply({ embeds: [errorEmbed('ticket already open').setDescription(`you already have an open tag ticket: <#${existing[0]}> `)], ephemeral: true });
 
     const modal = new ModalBuilder().setCustomId('tagticket open modal').setTitle('Open a Tag Ticket')
@@ -5523,8 +6200,8 @@ async function dispatchSlashInner(interaction) {
     await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('fetching group members and game servers...')] });
     const WHOISIN_GROUP = 206868002;
     try {
-      // Parse place ID supports:
-      // roblox.com/games/start?placeId=123&gameInstanceId=...
+      // parse place ID supports:
+      // roblox.com/games/start?placeid=123&gameinstanceid=...
       // roblox.com/games/123/game name
       // raw numeric place ID
       let placeId = null;
@@ -5535,16 +6212,16 @@ async function dispatchSlashInner(interaction) {
       else if (/^\d+$/.test(input)) placeId = input;
       if (!placeId) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription("couldn't parse a place ID paste a Roblox game URL or server link, e.g. `roblox.com/games/start?placeId=123&gameInstanceId=...`")] });
 
-      // Resolve place ID → universe ID
+      // resolve place ID → universe ID
       const placeDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`)).json();
       const universeId = placeDetail?.data?.[0]?.universeId;
       if (!universeId) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a game for place ID \`${placeId}\` make sure the game exists and is public`)] });
 
-      // Get game name
+      // get game name
       let gameName = `Place ${placeId}`;
       try { const gr = await (await fetch(`https://games.roblox.com/v1/games?universeIds=${universeId}`)).json(); if (gr?.data?.[0]?.name) gameName = gr.data[0].name; } catch {}
 
-      // Load all group members (paginated)
+      // load all group members (paginated)
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('loading group members...')] });
       const memberIds = new Set();
       const memberNames = {};
@@ -5558,7 +6235,7 @@ async function dispatchSlashInner(interaction) {
       } while (cur);
       if (!memberIds.size) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('could not load group members Roblox API may be unavailable')] });
 
-      // Scan all public servers, collect player tokens
+      // scan all public servers, collect player tokens
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`loaded **${memberIds.size}** group members, scanning servers...`)] });
       const allTokens = [];
       let sCur = ''; let serverCount = 0;
@@ -5572,7 +6249,7 @@ async function dispatchSlashInner(interaction) {
 
       if (!allTokens.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`scanned **${serverCount}** server${serverCount !== 1 ? 's' : ''} no players found (game may be empty or servers private)`)] });
 
-      // Resolve player tokens → Roblox user IDs via thumbnail batch API
+      // resolve player tokens → roblox user ids via thumbnail batch API
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`resolving **${allTokens.length}** player${allTokens.length !== 1 ? 's' : ''} across **${serverCount}** server${serverCount !== 1 ? 's' : ''}...`)] });
       const resolvedIds = new Set();
       for (let i = 0; i < allTokens.length; i += 100) {
@@ -5583,7 +6260,7 @@ async function dispatchSlashInner(interaction) {
         } catch {}
       }
 
-      // Filter to group members only
+      // filter to group members only
       const inGame = [...resolvedIds].filter(id => memberIds.has(id));
       if (!inGame.length) return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`no group members found in **${gameName}**\n*(checked ${serverCount} server${serverCount !== 1 ? 's' : ''}, ${resolvedIds.size} total player${resolvedIds.size !== 1 ? 's' : ''})*`)] });
 
@@ -5606,7 +6283,7 @@ async function dispatchSlashInner(interaction) {
     const queueChannelId = queueData[guild.id]?.channelId;
     const queueChannel = queueChannelId ? (guild.channels.cache.get(queueChannelId) ?? channel) : channel;
 
-    // Look up Roblox avatar for the embed thumbnail
+    // look up roblox avatar for the embed thumbnail
     let attendAvatarUrl = null;
     try {
       const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
@@ -5726,7 +6403,7 @@ async function dispatchSlashInner(interaction) {
         logged++;
         await new Promise(r => setTimeout(r, 300));
       }
-      // big summary in the rollcall channel — clickable discord + roblox names
+      // big summary in the rollcall channel - clickable discord + roblox names
       if (rollCallChannel && summaryRows.length) {
         const lines = summaryRows.map((r, i) =>
           `**${i + 1}.** [${r.discordName}](https://discord.com/users/${r.discordId}) — Roblox: [${r.robloxName}](https://www.roblox.com/users/${r.robloxId}/profile)`
@@ -5815,7 +6492,7 @@ async function dispatchSlashInner(interaction) {
   // /verify
   if (commandName === 'verify') {
     if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
-    if (!isWlManager(interaction.user.id)) return interaction.reply({ content: 'only whitelist managers can use `/verify`', ephemeral: true });
+    if (!hasTicketAccess(interaction.user.id, interaction.member)) return interaction.reply({ content: 'only whitelist managers, temp owners, or ticket support roles can use `/verify`', ephemeral: true });
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'role') {
@@ -5977,10 +6654,10 @@ async function dispatchSlashInner(interaction) {
       const vData = loadVerify();
       const allRegistered = Object.entries(vData.verified || {});
       await interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`**${targetUser.name}** is in **${gameName}** fetching group members & checking presence...`)] });
-      // Fetch all group members (registered + unregistered)
+      // fetch all group members (registered + unregistered)
       const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
       const allGroupIds = [...groupMembers];
-      // Build quick lookup maps from registered data
+      // build quick lookup maps from registered data
       const registeredRobloxToDiscord = vData.robloxToDiscord || {};
       const registeredRobloxToName = {};
       for (const [, v] of allRegistered) {
@@ -6008,7 +6685,7 @@ async function dispatchSlashInner(interaction) {
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
-      // Resolve usernames for unregistered members found in same server
+      // resolve usernames for unregistered members found in same server
       const needsName = inSameServer.filter(m => !m.robloxName);
       if (needsName.length) {
         try {
@@ -6022,9 +6699,9 @@ async function dispatchSlashInner(interaction) {
           }
         } catch {}
       }
-      // Fill any still missing names with the ID as fallback
+      // fill any still missing names with the ID as fallback
       for (const m of inSameServer) { if (!m.robloxName) m.robloxName = String(m.robloxId); }
-      // Post attendance embeds to the attendance channel all members (registered + unregistered)
+      // post attendance embeds to the attendance channel all members (registered + unregistered)
       const queueData = loadQueue();
       const queueChannelId = queueData[guild.id]?.channelId;
       const queueChannel = queueChannelId ? (guild.channels.cache.get(queueChannelId) ?? null) : null;
@@ -6263,8 +6940,68 @@ async function dispatchSlashInner(interaction) {
     } catch (err) { return interaction.editReply({ content: `conversion failed ${err.message}\n\nmake sure \`sharp\` is installed (\`npm install sharp\`)` }); }
   }
 
+  // /vanityset - bind a vanity tag and a role for status repping. whitelist only.
+  if (commandName === 'vanityset') {
+    if (!guild) return interaction.reply({ content: 'server only', ephemeral: true });
+    if (!isWlManager(interaction.user.id))
+      return interaction.reply({ content: 'only whitelist managers can use `/vanityset`', ephemeral: true });
+    const vanityRaw = interaction.options.getString('vanity') || '';
+    const role = interaction.options.getRole('role');
+    const vanityCode = vanityRaw.trim().replace(/^\/+/, '');
+    if (!vanityCode) return interaction.reply({ content: "vanity code can't be empty", ephemeral: true });
+    if (!role) return interaction.reply({ content: 'pick a role', ephemeral: true });
+    // make sure the bot can actually hand the role out (not managed, below the bot's top role)
+    const me = guild.members.me;
+    if (role.managed) return interaction.reply({ content: "that role is managed by an integration, i can't give it out", ephemeral: true });
+    if (me && role.position >= me.roles.highest.position) {
+      return interaction.reply({ content: `move my role above ${role} so i can give it out`, ephemeral: true });
+    }
+    const vData = loadVanity() || {};
+    vData[guild.id] = { vanityCode, picRoleId: role.id };
+    saveVanity(vData);
+    await interaction.reply({ content: `set anyone repping \`/${vanityCode}\` in their status will get ${role}. scanning current members...`, allowedMentions: { roles: [] } });
+
+    // sweep right now so anyone already repping gets the role without waiting for a presence change
+    const tag = `/${vanityCode}`;
+    let added = 0;
+    try {
+      // grab everyone with a presence in cache (presence intent is enabled)
+      await guild.members.fetch().catch(() => null);
+      for (const member of guild.members.cache.values()) {
+        if (member.user.bot) continue;
+        const presence = member.presence;
+        const repping = presence?.activities?.some(
+          a => a.type === 4 && typeof a.state === 'string' && a.state.includes(tag)
+        );
+        if (repping && !member.roles.cache.has(role.id)) {
+          try { await member.roles.add(role.id, `vanityset sweep`); added++; } catch {}
+        }
+      }
+    } catch {}
+    try { await interaction.followUp({ content: `gave the role to ${added} member${added === 1 ? '' : 's'} already repping \`${tag}\``, allowedMentions: { roles: [] } }); } catch {}
+    return;
+  }
+
+  // /cmd - run any prefix only command (lets you reach commands not bridged as slash)
+  if (commandName === 'cmd') {
+    const name = (interaction.options.getString('name') || '').trim().replace(/^\/+/, '').toLowerCase();
+    const argsStr = interaction.options.getString('args') || '';
+    if (!name) return interaction.reply({ content: 'give a command name', ephemeral: true });
+    try {
+      const prefix = getPrefix();
+      const fakeMsg = buildFakeMessageFromInteraction(interaction);
+      if (fakeMsg) {
+        fakeMsg.content = `${prefix}${name}${argsStr ? ' ' + argsStr : ''}`;
+        await dispatchPrefix(fakeMsg);
+      }
+    } catch (err) {
+      try { await interaction.reply({ content: `error: ${err.message}`, ephemeral: true }); } catch {}
+    }
+    return;
+  }
+
   // slash → prefix bridge: any chat input command not handled above falls
-  // through here. We re dispatch as a prefix command so every prefix only
+  // through here. we re dispatch as a prefix command so every prefix only
   // command also works as a slash command.
   if (interaction.isChatInputCommand && interaction.isChatInputCommand() && !interaction.replied && !interaction.deferred) {
     try {
@@ -6391,7 +7128,7 @@ async function dispatchPrefixInner(message) {
   const args    = message.content.slice(prefix.length).trim().split(/ +/);
   const command = args.shift().toLowerCase();
 
-  // Open to everyone prefix commands
+  // open to everyone prefix commands
   if (command === 'roblox') {
     const username = args[0];
     if (!username) return message.reply('provide a Roblox username');
@@ -6530,7 +7267,7 @@ async function dispatchPrefixInner(message) {
       .setThumbnail(sniped.avatarUrl)] });
   }
 
-  // VoiceMaster prefix commands
+  // voicemaster prefix commands
   if (command === 'drag') {
     if (!message.guild) return;
     const target = message.mentions.members?.first();
@@ -6612,7 +7349,7 @@ async function dispatchPrefixInner(message) {
     return message.reply({ embeds: [buildVmHelpEmbed(prefix)] });
   }
 
-  // Whitelist required prefix commands
+  // whitelist required prefix commands
   // unwhitelisted users only get `roblox` and `register`. for anything else
   // the bot just doesn't respond. no error, no embed it's like the command
   // was never typed. that way randoms can't even tell what commands exist.
@@ -6979,13 +7716,13 @@ async function dispatchPrefixInner(message) {
 
   if (command === 'dm') {
     if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers can use `.dm`')] });
-    // .dm @user/userId/roleId <message
+    // .dm @user/userid/roleid <message
     const rawTarget = args[0];
     if (!rawTarget) return;
     const dmMsg = args.slice(1).join(' ');
     if (!dmMsg) return message.reply('include a message to send');
 
-    // Resolve target: user mention, role mention, or raw ID
+    // resolve target: user mention, role mention, or raw ID
     const userMention = message.mentions.users.first();
     const roleMention = message.mentions.roles?.first();
 
@@ -7008,7 +7745,7 @@ async function dispatchPrefixInner(message) {
       return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`done sent: **${sent}**, failed: **${failed}**`)] });
     }
 
-    // Single user: @mention or raw ID
+    // single user: @mention or raw ID
     let targetUser = userMention;
     if (!targetUser) {
       const rawId = rawTarget.replace(/\D/g, '');
@@ -7057,7 +7794,7 @@ async function dispatchPrefixInner(message) {
         const cookie = process.env.ROBLOX_COOKIE;
         if (!cookie || !groupId) return message.reply('ROBLOX COOKIE or ROBLOX GROUP ID not configured');
         const csrfRes = await fetch('https://auth.roblox.com/v2/logout', { method: 'POST', headers: { Cookie: `.ROBLOSECURITY=${cookie}` } });
-        const csrfToken = csrfRes.headers.get('x csrf token');
+        const csrfToken = csrfRes.headers.get('x-csrf-token');
         const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/users/${userBasic.id}`, {
           method: 'DELETE', headers: { Cookie: `.ROBLOSECURITY=${cookie}`, 'X-CSRF-TOKEN': csrfToken }
         });
@@ -7067,6 +7804,232 @@ async function dispatchPrefixInner(message) {
       }
       return message.reply(`unknown action use check, rank, or exile`);
     } catch (err) { return message.reply(`something went wrong ${err.message}`); }
+  }
+
+  // .antinuke - only wl managers + temp owners
+  if (command === 'antinuke') {
+    if (!message.guild) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('use this in a server')] });
+    if (!isWlManager(message.author.id) && !isTempOwner(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers and temp owners can use `.antinuke`')] });
+    const sub = (args[0] || 'status').toLowerCase();
+    const { cfg } = getAntinukeCfg(message.guild.id);
+
+    if (sub === 'status' || sub === 'show') {
+      return message.reply({ embeds: [buildAntinukeStatusEmbed(message.guild, cfg)] });
+    }
+    if (sub === 'enable' || sub === 'on') {
+      setAntinukeCfg(message.guild.id, c => { c.enabled = true; });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('✅ antinuke is now **ON** for this server')] });
+    }
+    if (sub === 'disable' || sub === 'off') {
+      setAntinukeCfg(message.guild.id, c => { c.enabled = false; });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('❌ antinuke is now **OFF** for this server')] });
+    }
+    if (sub === 'punishment' || sub === 'punish') {
+      const mode = (args[1] || '').toLowerCase();
+      if (!['ban', 'kick', 'strip'].includes(mode))
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('usage: `.antinuke punishment <ban|kick|strip>`')] });
+      setAntinukeCfg(message.guild.id, c => { c.punishment = mode; });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`punishment set to \`${mode}\``)] });
+    }
+    if (sub === 'logs' || sub === 'log') {
+      const arg = args[1];
+      if (!arg || arg.toLowerCase() === 'clear') {
+        setAntinukeCfg(message.guild.id, c => { c.logChannelId = null; });
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('antinuke log channel cleared')] });
+      }
+      const ch = message.mentions?.channels?.first?.() || message.guild.channels.cache.get(arg.replace(/[^\d]/g, ''));
+      if (!ch) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('couldn\'t find that channel — mention it like `#channel` or pass an id')] });
+      setAntinukeCfg(message.guild.id, c => { c.logChannelId = ch.id; });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`antinuke logs will go to <#${ch.id}>`)] });
+    }
+    if (sub === 'whitelist' || sub === 'wl') {
+      const action = (args[1] || '').toLowerCase();
+      if (action === 'list') {
+        const list = cfg.whitelist?.length ? cfg.whitelist.map(id => `<@${id}> \`${id}\``).join('\n') : '_empty_';
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('antinuke whitelist').setDescription(list)], allowedMentions: { parse: [] } });
+      }
+      const targetArg = args[2];
+      const targetUser = message.mentions?.users?.first?.();
+      const targetId = targetUser?.id || (/^\d{15,25}$/.test(targetArg || '') ? targetArg : null);
+      if (!['add', 'remove', 'rm'].includes(action) || !targetId)
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('usage: `.antinuke whitelist <add|remove|list> [@user|id]`')] });
+      setAntinukeCfg(message.guild.id, c => {
+        c.whitelist = c.whitelist || [];
+        if (action === 'add') { if (!c.whitelist.includes(targetId)) c.whitelist.push(targetId); }
+        else c.whitelist = c.whitelist.filter(x => x !== targetId);
+      });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`${action === 'add' ? '✅ added' : '✅ removed'} <@${targetId}> ${action === 'add' ? 'to' : 'from'} the antinuke whitelist`)], allowedMentions: { parse: [] } });
+    }
+    if (sub === 'threshold' || sub === 'limit') {
+      const action = args[1];
+      const count = parseInt(args[2], 10);
+      const seconds = parseFloat(args[3]);
+      if (!action || !Number.isFinite(count) || count < 1 || !Number.isFinite(seconds) || seconds <= 0 || !DEFAULT_ANTINUKE_THRESHOLDS[action])
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`usage: \`.antinuke threshold <action> <count> <seconds>\`\n\nactions: ${Object.keys(DEFAULT_ANTINUKE_THRESHOLDS).map(k => `\`${k}\``).join(', ')}`)] });
+      setAntinukeCfg(message.guild.id, c => { c.thresholds[action] = { count, window: Math.round(seconds * 1000) }; });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`threshold for \`${action}\` set to **${count}** events in **${seconds}s**`)] });
+    }
+    if (sub === 'reset') {
+      setAntinukeCfg(message.guild.id, c => { c.thresholds = { ...DEFAULT_ANTINUKE_THRESHOLDS }; });
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('thresholds reset to defaults')] });
+    }
+    if (sub === 'test') {
+      // just shows what the alert would look like, doesnt actually do anything
+      const fake = baseEmbed().setColor(0xC0392B).setTitle('antinuke triggered (TEST)')
+        .addFields(
+          { name: 'actor', value: `<@${message.author.id}> \`(${message.author.id})\``, inline: false },
+          { name: 'action', value: '`channelDelete`', inline: true },
+          { name: 'count in window', value: '3', inline: true },
+          { name: 'outcome', value: `would be: ${cfg.punishment}`, inline: false },
+        ).setTimestamp();
+      return message.reply({ embeds: [fake], allowedMentions: { parse: [] } });
+    }
+    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('antinuke usage').setDescription([
+      '`.antinuke status`',
+      '`.antinuke enable` / `disable`',
+      '`.antinuke punishment <ban|kick|strip>`',
+      '`.antinuke logs <#channel|clear>`',
+      '`.antinuke whitelist <add|remove|list> [@user|id]`',
+      '`.antinuke threshold <action> <count> <seconds>`',
+      '`.antinuke reset`  (restore default thresholds)',
+      '`.antinuke test`   (preview an alert, no action)',
+    ].join('\n'))] });
+  }
+
+  // .backup - zips up all the .json files and dms them to you
+  // only wl managers and temp owners can do this
+  // if your dms are off it just posts the zip in the channel
+  if (command === 'backup') {
+    if (!isWlManager(message.author.id) && !isTempOwner(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers and temp owners can use `.backup`')] });
+    try {
+      const allFiles = fs.readdirSync(__dirname);
+      const jsonFiles = allFiles.filter(f => f.endsWith('.json') && !f.endsWith('.bak') && !f.includes('.corrupt')).sort();
+      if (!jsonFiles.length)
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('nothing to back up — no .json files found')] });
+
+      const entries = [];
+      let totalBytes = 0;
+      const skipped = [];
+      for (const f of jsonFiles) {
+        try {
+          const buf = fs.readFileSync(path.join(__dirname, f));
+          entries.push({ name: f, data: buf });
+          totalBytes += buf.length;
+        } catch (e) { skipped.push(`${f} (${e.message})`); }
+      }
+
+      // throw in a little info file so later you know where this backup came from
+      const meta = {
+        createdAt: new Date().toISOString(),
+        createdBy: { id: message.author.id, tag: message.author.tag },
+        bot: { id: client.user?.id, tag: client.user?.tag },
+        guild: message.guild ? { id: message.guild.id, name: message.guild.name } : null,
+        files: jsonFiles,
+        skipped,
+        totalBytes,
+      };
+      entries.push({ name: '_meta.json', data: Buffer.from(JSON.stringify(meta, null, 2), 'utf8') });
+
+      const zipBuf = buildZipBuffer(entries);
+      // discord wont let you upload more than 25mb so bail early if were close
+      if (zipBuf.length > 24 * 1024 * 1024)
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`backup is too large to upload (${(zipBuf.length / 1024 / 1024).toFixed(2)} MB > 24 MB). consider attaching a Railway volume and downloading the JSON files directly.`)] });
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+      const filename = `bot-backup_${stamp}.zip`;
+      const attachment = new AttachmentBuilder(zipBuf, { name: filename });
+      const summary = baseEmbed().setColor(0x2C2F33).setTitle('bot backup').setDescription([
+        `**files:** ${jsonFiles.length}`,
+        `**uncompressed:** ${(totalBytes / 1024).toFixed(1)} KB`,
+        `**zip size:** ${(zipBuf.length / 1024).toFixed(1)} KB`,
+        skipped.length ? `**skipped:** ${skipped.length} (see _meta.json)` : null,
+      ].filter(Boolean).join('\n'));
+
+      // try to DM it first. if dms are closed just post here
+      try {
+        const dm = await message.author.createDM();
+        await dm.send({ embeds: [summary], files: [attachment] });
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`📬 backup DMed (${jsonFiles.length} files, ${(zipBuf.length / 1024).toFixed(1)} KB)`)] });
+      } catch (dmErr) {
+        return message.reply({ embeds: [summary], files: [attachment], content: '⚠️ DMs are closed, posting here instead' });
+      }
+    } catch (err) {
+      return message.reply({ embeds: [baseEmbed().setColor(0xC0392B).setDescription(`backup failed: ${err.message}`)] });
+    }
+  }
+
+  // .restore - you attach a backup zip and it puts all the json files back
+  // wl managers and temp owners only
+  // it makes a .bak copy of every file before overwriting so if i mess up its fixable
+  // _meta.json gets read for info but never written to the bot folder
+  if (command === 'restore') {
+    if (!isWlManager(message.author.id) && !isTempOwner(message.author.id))
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers and temp owners can use `.restore`')] });
+    const att = message.attachments?.first?.();
+    if (!att || !/\.zip$/i.test(att.name || ''))
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('attach a `.zip` file from `.backup` to this message and try again')] });
+    if (att.size > 50 * 1024 * 1024)
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('attached zip is over 50 MB — refusing to load it into memory')] });
+
+    try {
+      const res = await fetch(att.url);
+      if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+      const zipBuf = Buffer.from(await res.arrayBuffer());
+      const entries = parseZipBuffer(zipBuf);
+
+      // peek at the meta file (if there is one) to make sure the zip looks legit
+      const metaEntry = entries.find(e => e.name === '_meta.json');
+      let meta = null;
+      if (metaEntry) {
+        try { meta = JSON.parse(metaEntry.data.toString('utf8')); }
+        catch { return message.reply({ embeds: [baseEmbed().setColor(0xC0392B).setDescription('`_meta.json` inside the zip is corrupted — aborting restore')] }); }
+      }
+
+      // double check all the files. they should be plain *.json names with no folders or weird stuff
+      const targets = entries.filter(e => e.name !== '_meta.json');
+      for (const e of targets) {
+        if (!/^[A-Za-z0-9 _.\-]+\.json$/.test(e.name) || e.name.includes('..') || e.name.includes('/') || e.name.includes('\\'))
+          return message.reply({ embeds: [baseEmbed().setColor(0xC0392B).setDescription(`refusing to restore — suspicious entry name: \`${e.name}\``)] });
+        // also make sure each one is valid json so i dont overwrite a real file with junk
+        try { JSON.parse(e.data.toString('utf8')); }
+        catch { return message.reply({ embeds: [baseEmbed().setColor(0xC0392B).setDescription(`refusing to restore — \`${e.name}\` inside the zip isn't valid JSON`)] }); }
+      }
+      if (!targets.length)
+        return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('zip contains no .json files to restore')] });
+
+      // ok now actually write the files. before overwriting anything
+      // copy the old one to <name>.bak.<timestamp> as a just-in-case
+      const stamp = Date.now();
+      const written = [];
+      const restoreBackedUp = [];
+      const failed = [];
+      for (const e of targets) {
+        const dest = path.join(__dirname, e.name);
+        try {
+          if (fs.existsSync(dest)) {
+            const bk = `${dest}.bak.${stamp}`;
+            try { fs.copyFileSync(dest, bk); restoreBackedUp.push(path.basename(bk)); } catch {}
+          }
+          fs.writeFileSync(dest, e.data);
+          written.push(e.name);
+        } catch (err) { failed.push(`${e.name} (${err.message})`); }
+      }
+
+      const summary = baseEmbed().setColor(0x2C2F33).setTitle('restore complete').setDescription([
+        `**restored:** ${written.length} file${written.length !== 1 ? 's' : ''}`,
+        `**pre-restore backups:** ${restoreBackedUp.length} (saved as \`<name>.bak.${stamp}\`)`,
+        failed.length ? `**failed:** ${failed.length}\n${failed.map(f => `• ${f}`).join('\n')}` : null,
+        meta?.createdAt ? `**source backup created:** ${meta.createdAt}` : null,
+        meta?.createdBy?.tag ? `**source backup author:** ${meta.createdBy.tag} \`(${meta.createdBy.id})\`` : null,
+        '',
+        '⚠️ in-memory state (snipe cache, antinuke event windows, etc.) was NOT replaced. restart the bot to fully reload from the new files.',
+      ].filter(Boolean).join('\n'));
+      return message.reply({ embeds: [summary], allowedMentions: { parse: [] } });
+    } catch (err) {
+      return message.reply({ embeds: [baseEmbed().setColor(0xC0392B).setDescription(`restore failed: ${err.message}`)] });
+    }
   }
 
   // .permcheck [user / id / mention]: anyone can check anyone's bot permissions
@@ -7491,11 +8454,11 @@ async function dispatchPrefixInner(message) {
     }
     if (!targetMember) return;
 
-    // collect roles from @mentions AND any raw role IDs in args (skip the first arg if it was a user ID)
+    // collect roles from @mentions AND any raw role ids in args (skip the first arg if it was a user ID)
     const collectedRoles = new Map();
     // add all @mentioned roles
     for (const [id, role] of (message.mentions.roles ?? [])) collectedRoles.set(id, role);
-    // scan all args for numeric IDs that aren't the user's ID
+    // scan all args for numeric ids that aren't the user's ID
     const userArgId = targetMember.id;
     for (const arg of args) {
       if (!/^\d+$/.test(arg)) continue;
@@ -7631,8 +8594,8 @@ async function dispatchPrefixInner(message) {
   }
 
   // .joinserver <invite link> (WL managers + temp owners)
-  // bots can NOT auto-accept invites (Discord API restriction). this command instead
-  // validates the invite, fetches server info, and replies with a one-click OAuth2
+  // bots can NOT auto-accept invites (discord API restriction). this command instead
+  // validates the invite, fetches server info, and replies with a one-click oauth2
   // install link pre-targeted at that server (guild_id + disable_guild_select=true)
   // so the target server's owner just clicks once to add the bot.
   if (command === 'joinserver') {
@@ -7642,7 +8605,7 @@ async function dispatchPrefixInner(message) {
     const raw = args[0];
     if (!raw) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('usage: `.joinserver <invite link or code>`')] });
 
-    // accept full URLs (discord.gg/x, discord.com/invite/x, discordapp.com/invite/x) or bare codes
+    // accept full urls (discord.gg/x, discord.com/invite/x, discordapp.com/invite/x) or bare codes
     const inviteCode = (raw.match(/(?:discord(?:app)?\.com\/invite\/|discord\.gg\/)([\w-]+)/i)?.[1] || raw).trim();
 
     let invite;
@@ -7665,7 +8628,7 @@ async function dispatchPrefixInner(message) {
     const clientId = client.user?.id || process.env.CLIENT_ID || '';
     if (!clientId) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('bot client id not ready, try again in a few seconds')] });
 
-    // pre-target the OAuth dialog at the invite's server so the target server owner just clicks once
+    // pre-target the oauth dialog at the invite's server so the target server owner just clicks once
     const installUrl = `https://discord.com/oauth2/authorize?client_id=${clientId}&permissions=8&scope=bot+applications.commands&guild_id=${targetGuildId}&disable_guild_select=true`;
 
     const embed = baseEmbed().setColor(0x2C2F33).setTitle('join server')
@@ -7745,7 +8708,7 @@ async function dispatchPrefixInner(message) {
   if (command === 'rankup') {
     if (!message.guild) return;
 
-    // optional "3x" anywhere in args to jump N ranks at once
+    // optional "3x" anywhere in args to jump n ranks at once
     // (so .rankup @user 3x works the same as .rankup 3x @user, ppl type both ways)
     let levels = 1;
     const argsCleaned = [];
@@ -7872,12 +8835,12 @@ async function dispatchPrefixInner(message) {
 
     const collectedIds = [];
     const seen = new Set();
-    // Parse role mentions in the exact order they appear in the message text
+    // parse role mentions in the exact order they appear in the message text
     for (const match of message.content.matchAll(/<@&(\d+)>/g)) {
       const id = match[1];
       if (!seen.has(id) && message.guild.roles.cache.has(id)) { collectedIds.push(id); seen.add(id); }
     }
-    // Also handle any bare numeric role IDs in args
+    // also handle any bare numeric role ids in args
     for (const arg of args) {
       if (!/^\d+$/.test(arg) || seen.has(arg)) continue;
       const r = message.guild.roles.cache.get(arg);
@@ -7982,8 +8945,8 @@ async function dispatchPrefixInner(message) {
   }
 
   // .import
-  // Usage: .import (attach a registered members.json or linked verified.json)
-  // Bulk imports registered users from a rfile/lvfile JSON export. WL managers only.
+  // usage: .import (attach a registered members.json or linked verified.json)
+  // bulk imports registered users from a rfile/lvfile JSON export. WL managers only.
   if (command === 'import') {
     if (!isWlManager(message.author.id)) return message.reply({ embeds: [errorEmbed('no permission').setDescription('only whitelist managers can use `.import`')] });
     const attachment = message.attachments.first();
@@ -8022,8 +8985,8 @@ async function dispatchPrefixInner(message) {
   }
 
   // .register
-  // Usage: .register RobloxUsername
-  // Self service: links the calling Discord user to a Roblox account.
+  // usage: .register robloxusername
+  // self service: links the calling discord user to a roblox account.
   if (command === 'register') {
     const robloxInput = args[0]?.trim();
     if (!robloxInput) return;
@@ -8072,8 +9035,8 @@ async function dispatchPrefixInner(message) {
   }
 
   // .pregister
-  // Usage: .pregister RobloxUsername @user (or userId)
-  // Registers another Discord user to a Roblox account. WL managers only.
+  // usage: .pregister robloxusername @user (or userid)
+  // registers another discord user to a roblox account. WL managers only.
   if (command === 'pregister') {
     if (!message.guild) return;
     if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers can use `.pregister`')] });
@@ -8136,7 +9099,7 @@ async function dispatchPrefixInner(message) {
   // .verify role remove clears the verify role
   if (command === 'verify') {
     if (!message.guild) return;
-    if (!isWlManager(message.author.id)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers can use `.verify`')] });
+    if (!hasTicketAccess(message.author.id, message.member)) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('only whitelist managers, temp owners, or ticket support roles can use `.verify`')] });
 
     const sub = args[0]?.toLowerCase();
 
@@ -8190,13 +9153,13 @@ async function dispatchPrefixInner(message) {
         .setDescription('no one has linked their Roblox account yet')] });
     }
 
-    // Build one line per user: Discord mention → Roblox username (linked profile)
+    // build one line per user: discord mention → roblox username (linked profile)
     const lines = [];
     for (const [discordId, { robloxName, robloxId }] of entries) {
       lines.push(`<@${discordId}> → [\`${robloxName}\`](https://www.roblox.com/users/${robloxId}/profile)`);
     }
 
-    // Split into pages of 20 so embeds don't hit the 4096 char description limit
+    // split into pages of 20 so embeds don't hit the 4096 char description limit
     const PAGE_SIZE = 20;
     const pages     = [];
     for (let i = 0; i < lines.length; i += PAGE_SIZE) {
@@ -8213,7 +9176,7 @@ async function dispatchPrefixInner(message) {
       return message.reply({ embeds: [buildPage(0)] });
     }
 
-    // Multi page with buttons
+    // multi page with buttons
     const buildRow = (idx) => new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`rlist ${idx - 1}`).setLabel('‹ Back').setStyle(ButtonStyle.Secondary).setDisabled(idx === 0),
       new ButtonBuilder().setCustomId(`rlist ${idx + 1}`).setLabel('Next ›').setStyle(ButtonStyle.Secondary).setDisabled(idx === totalPages - 1)
@@ -8247,7 +9210,7 @@ async function dispatchPrefixInner(message) {
         .setTimestamp(new Date(linked.verifiedAt))] });
     }
 
-    // Lookup by Roblox username
+    // lookup by roblox username
     const inputName = args[0];
     if (!inputName) return;
 
@@ -8278,8 +9241,8 @@ async function dispatchPrefixInner(message) {
   if (command === 'attend') {
     if (!message.guild) return;
 
-    // Usage: .attend @discordUser robloxUsername
-    // or: .attend discordId robloxUsername
+    // usage: .attend @discorduser robloxusername
+    // or: .attend discordid robloxusername
     // or: .attend @user1 roblox1 @user2 roblox2 ... (bulk)
     if (!args.length) return;
 
@@ -8289,8 +9252,8 @@ async function dispatchPrefixInner(message) {
       ? message.guild.channels.cache.get(queueChannelId) ?? message.channel
       : message.channel;
 
-    // Pair up args: could be interleaved mentions + roblox names
-    // Simple approach: pair each mention/id with the next non mention arg as roblox name
+    // pair up args: could be interleaved mentions + roblox names
+    // simple approach: pair each mention/id with the next non mention arg as roblox name
     await fetchMembersCached(message.guild);
 
     const pairs = [];
@@ -8298,7 +9261,7 @@ async function dispatchPrefixInner(message) {
     let i = 0;
     while (i < tokens.length) {
       const token = tokens[i];
-      // Try to resolve as Discord user
+      // try to resolve as discord user
       let member = null;
       const mentionMatch = token.match(/^<@!?(\d+)>$/);
       if (mentionMatch) {
@@ -8325,7 +9288,7 @@ async function dispatchPrefixInner(message) {
       }
     }
 
-    // If no pairs found from mentions, try simple mode: first arg = user, second = roblox
+    // if no pairs found from mentions, try simple mode: first arg = user, second = roblox
     if (!pairs.length) {
       const userToken = args[0];
       const robloxName = args.slice(1).join(' ') || 'unknown';
@@ -8386,7 +9349,7 @@ async function dispatchPrefixInner(message) {
     return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Raid Voice Channel Set').setDescription(`attendance will now be auto logged when verified group members join ${vc}\n\nThe logged list resets whenever you set a new channel.`).setTimestamp()] });
   }
 
-  // .setrollcallchannel — sets where the big summary embed (everyone in the rollcall) gets posted
+  // .setrollcallchannel - sets where the big summary embed (everyone in the rollcall) gets posted
   // when u run .endrollcall. usage: .setrollcallchannel #channel
   if (command === 'setrollcallchannel') {
     if (!message.guild) return;
@@ -8401,61 +9364,77 @@ async function dispatchPrefixInner(message) {
     return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Rollcall Channel Set').setDescription(`when u run \`${prefix}endrollcall\` the full list of who reacted (with clickable Discord + Roblox names) will get posted in ${ch}`).setTimestamp()] });
   }
 
-  // .lb — raid leaderboard. shows who has been in the most rollcalls/raids
+  // .lb - raid leaderboard. shows who has been in the most rollcalls/raids
   // (uses the same raid stats that .endrollcall already updates so the count = how many rollcalls they were in)
-  // paginated 10 per page with transparent < / > buttons (Secondary style).
-  if (command === 'lb') {
+  // paginated 10 per page with transparent < / > buttons (secondary style).
+  // .rmanager @role - flips a discord role's permission to use /role and .role.
+  // wl manager only. if the role's already allowed it gets removed. basically a
+  // shortcut for /setroleperms add+remove since typing that out gets old fast
+  if (command === 'rmanager') {
     if (!message.guild) return;
-    const stats = loadRaidStats()[message.guild.id] || {};
-    const verify = loadVerify();
-    const rows = Object.entries(stats)
-      .map(([discordId, s]) => ({ discordId, count: s?.totalRaids || 0 }))
-      .filter(r => r.count > 0)
-      .sort((a, b) => b.count - a.count);
-    if (!rows.length) {
-      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Raid Leaderboard').setDescription('nobody has joined a raid yet (no rollcalls have been logged)')] });
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only wl managers can mess with the role manager list')] });
+    const role = message.mentions.roles.first();
+    if (!role) return message.reply('mention a role bro. like `.rmanager @raidLead`');
+    const perms = loadRolePerms();
+    let action;
+    let next;
+    if (perms.includes(role.id)) {
+      next = perms.filter(id => id !== role.id);
+      action = 'removed';
+    } else {
+      next = [...perms, role.id];
+      action = 'added';
     }
-    const PER_PAGE = 10;
-    const totalPages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
-    const medals = ['🥇', '🥈', '🥉'];
-    // build a single page (10 rows). resolves discord usernames lazily so big leaderboards dont stall.
-    const buildPage = async (page) => {
-      const start = page * PER_PAGE;
-      const slice = rows.slice(start, start + PER_PAGE);
-      const lines = await Promise.all(slice.map(async (r, i) => {
-        const overall = start + i;
-        const v = verify.verified?.[r.discordId];
-        let discordName = null;
-        try {
-          const u = message.client.users.cache.get(r.discordId) || await message.client.users.fetch(r.discordId).catch(() => null);
-          if (u) discordName = u.username;
-        } catch {}
-        const discordLink = `[${discordName || `user-${r.discordId.slice(-4)}`}](https://discord.com/users/${r.discordId})`;
-        const robloxLink = v
-          ? `[${v.robloxName}](https://www.roblox.com/users/${v.robloxId}/profile)`
-          : '`not registered`';
-        const rank = overall < 3 ? medals[overall] : `**#${overall + 1}**`;
-        return `${rank} ${discordLink} • Roblox: ${robloxLink} — **${r.count}** raid${r.count !== 1 ? 's' : ''}`;
-      }));
-      return baseEmbed().setColor(0x2C2F33)
-        .setTitle('Raid Leaderboard')
-        .setDescription(lines.join('\n') || 'no entries')
-        .setFooter({ text: `page ${page + 1}/${totalPages} • ${rows.length} member${rows.length !== 1 ? 's' : ''} • counted from rollcall logs • ${getBotName()}`, iconURL: getLogoUrl() })
-        .setTimestamp();
-    };
-    // < / > buttons. Secondary style is the transparent/grey one in discord
-    // customId encodes the requesting user so randoms can't flip pages on someone else's leaderboard
-    const buildRow = (page) => new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`lb ${page - 1} ${message.author.id}`).setLabel('<').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
-      new ButtonBuilder().setCustomId(`lb ${page + 1} ${message.author.id}`).setLabel('>').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1)
-    );
-    const initialEmbed = await buildPage(0);
-    const components = totalPages > 1 ? [buildRow(0)] : [];
-    return message.reply({ embeds: [initialEmbed], components });
+    saveRolePerms(next);
+    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Role Manager Updated')
+      .setDescription(`${action} ${role} — anyone with this role ${action === 'added' ? 'can now use' : 'can no longer use'} \`/role\` and \`.role\``)
+      .setTimestamp()] });
   }
 
-  // .lbreset — wipe the raid leaderboard for this server.
-  // wl managers + temp owners can run it (anyone isWlManager() returns true for).
+  // .setupraidpoints - drops the raid point submission embed in the current
+  // channel. has a button that opens the modal. wl managers only
+  if (command === 'setupraidpoints') {
+    if (!message.guild) return;
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only wl managers can set this up')] });
+    const e = baseEmbed().setColor(0x5865F2).setTitle('Raid Point Submission')
+      .setDescription('did u just hop in a raid? tap the button below to submit ur raid point. someone will look it over and either approve or deny it.')
+      .setTimestamp();
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('getraidpoint').setLabel('Get Raid Point').setStyle(ButtonStyle.Primary)
+    );
+    return message.channel.send({ embeds: [e], components: [row] });
+  }
+
+  // .setraidreview #channel - sets the channel where raid point submissions
+  // get sent for staff to approve / deny
+  if (command === 'setraidreview') {
+    if (!message.guild) return;
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only wl managers can set the review channel')] });
+    const ch = message.mentions.channels.first();
+    if (!ch?.isTextBased?.()) return message.reply('mention a text channel like `.setraidreview #raid-reviews`');
+    const data = loadRaidReview();
+    data[message.guild.id] = ch.id;
+    saveRaidReview(data);
+    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Raid Review Channel Set')
+      .setDescription(`raid point submissions will now drop into ${ch}. staff can approve or deny em from there`)
+      .setTimestamp()] });
+  }
+
+  // .lb - raid point leaderboard. now uses raid POINTS instead of raid count.
+  // toggle weekly / all time with the buttons. weekly resets every monday utc
+  if (command === 'lb') {
+    if (!message.guild) return;
+    const mode = (args[0] || '').toLowerCase() === 'weekly' ? 'weekly' : 'all';
+    const e = await buildRaidLbEmbed(message.guild.id, mode, 0, message.client);
+    const comps = buildRaidLbComponents(mode, 0, e.totalPages, message.author.id);
+    return message.reply({ embeds: [e.embed], components: comps });
+  }
+
+  // .lbreset - wipe the raid leaderboard for this server.
+  // wl managers + temp owners can run it (anyone iswlmanager() returns true for).
   if (command === 'lbreset') {
     if (!message.guild) return;
     if (!isWlManager(message.author.id))
@@ -8510,11 +9489,11 @@ async function dispatchPrefixInner(message) {
       const vData = loadVerify();
       const queueChannelId = qData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? message.guild.channels.cache.get(queueChannelId) : null;
-      // the new rollcall summary channel — set with .setrollcallchannel
+      // the new rollcall summary channel - set with .setrollcallchannel
       const rollCallChannelId = qData[message.guild.id]?.rollCallChannelId;
       const rollCallChannel = rollCallChannelId ? message.guild.channels.cache.get(rollCallChannelId) : null;
       let logged = 0; const skipped = []; const loggedEntries = [];
-      // for the summary embed — keep both names so we can build clickable links
+      // for the summary embed - keep both names so we can build clickable links
       const summaryRows = [];
       for (const user of reactors) {
         const userVerify = vData.verified?.[user.id];
@@ -8536,7 +9515,7 @@ async function dispatchPrefixInner(message) {
         logged++;
         await new Promise(r => setTimeout(r, 300));
       }
-      // post the big summary embed in the rollcall channel — every1 in the rollcall, with clickable names
+      // post the big summary embed in the rollcall channel - every1 in the rollcall, with clickable names
       if (rollCallChannel && summaryRows.length) {
         const lines = summaryRows.map((r, i) =>
           `**${i + 1}.** [${r.discordName}](https://discord.com/users/${r.discordId}) — Roblox: [${r.robloxName}](https://www.roblox.com/users/${r.robloxId}/profile)`
@@ -8561,7 +9540,7 @@ async function dispatchPrefixInner(message) {
   }
 
   // .atlog
-  // Show recent rollcall attendance logs. Usage:
+  // show recent rollcall attendance logs. usage:
   // .atlog → list the last 10 sessions
   // .atlog <n → show full details of session #n from the list
   // .atlog clear → wipe all logs for this guild (wl manager only)
@@ -8571,7 +9550,7 @@ async function dispatchPrefixInner(message) {
       return message.reply('you need to be whitelisted to use this');
     const all = loadAtLog();
     const sessions = all[message.guild.id] || [];
-    // helper: render a discord id as "<@id (`robloxName`)" if they're registered via .register
+    // helper: render a discord id as "<@id (`robloxname`)" if they're registered via .register
     const _vForLog = loadVerify();
     const renderUser = (id) => {
       const r = _vForLog?.verified?.[id]?.robloxName;
@@ -8587,10 +9566,10 @@ async function dispatchPrefixInner(message) {
 
     if (!sessions.length) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Attendance Log').setDescription('no rollcall sessions logged yet run `.endrollcall` to record one')] });
 
-    // Newest first
+    // newest first
     const recent = [...sessions].reverse();
 
-    // Detail view
+    // detail view
     if (args[0] && /^\d+$/.test(args[0])) {
       const idx = parseInt(args[0], 10) - 1;
       const s = recent[idx];
@@ -8605,7 +9584,7 @@ async function dispatchPrefixInner(message) {
       return message.reply({ embeds: [embed] });
     }
 
-    // List view (last 10)
+    // list view (last 10)
     const top = recent.slice(0, 10);
     const listLines = top.map((s, i) => `**${i + 1}.** <t:${Math.floor(s.ts / 1000)}:R **${s.logged.length}** logged${s.skipped?.length ? `, ${s.skipped.length} skipped` : ''} • by ${renderUser(s.by)}`);
     const embed = baseEmbed().setColor(0x2C2F33)
@@ -8616,8 +9595,8 @@ async function dispatchPrefixInner(message) {
   }
 
   // .whoisin
-  // Usage: .whoisin <roblox game URL or place ID
-  // Checks which members of group 206868002 are currently in that game.
+  // usage: .whoisin <roblox game URL or place ID
+  // checks which members of group 206868002 are currently in that game.
   if (command === 'whoisin') {
     if (!message.guild) return;
     const input = args[0];
@@ -8625,8 +9604,8 @@ async function dispatchPrefixInner(message) {
     const WHOISIN_GROUP = 206868002;
     const status = await message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('fetching group members and game servers...')] });
     try {
-      // Parse place ID supports:
-      // roblox.com/games/start?placeId=123&gameInstanceId=...
+      // parse place ID supports:
+      // roblox.com/games/start?placeid=123&gameinstanceid=...
       // roblox.com/games/123/game name
       // raw numeric place ID
       let placeId = null;
@@ -8637,16 +9616,16 @@ async function dispatchPrefixInner(message) {
       else if (/^\d+$/.test(input)) placeId = input;
       if (!placeId) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription("couldn't parse a place ID paste a Roblox game URL or server link, e.g. `roblox.com/games/start?placeId=123&gameInstanceId=...`")] });
 
-      // Resolve place ID → universe ID
+      // resolve place ID → universe ID
       const placeDetail = await (await fetch(`https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`)).json();
       const universeId = placeDetail?.data?.[0]?.universeId;
       if (!universeId) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`couldn't find a game for place ID \`${placeId}\` make sure the game exists and is public`)] });
 
-      // Get game name
+      // get game name
       let gameName = `Place ${placeId}`;
       try { const gr = await (await fetch(`https://games.roblox.com/v1/games?universeIds=${universeId}`)).json(); if (gr?.data?.[0]?.name) gameName = gr.data[0].name; } catch {}
 
-      // Load ALL group members (paginated)
+      // load ALL group members (paginated)
       await status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('loading group members...')] });
       const memberIds = new Set();
       const memberNames = {};
@@ -8660,7 +9639,7 @@ async function dispatchPrefixInner(message) {
       } while (cur);
       if (!memberIds.size) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription('could not load group members Roblox API may be unavailable')] });
 
-      // Scan all public game servers, collect player tokens
+      // scan all public game servers, collect player tokens
       await status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`loaded **${memberIds.size}** group members, scanning servers...`)] });
       const allTokens = [];
       let sCur = ''; let serverCount = 0;
@@ -8674,7 +9653,7 @@ async function dispatchPrefixInner(message) {
 
       if (!allTokens.length) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`scanned **${serverCount}** server${serverCount !== 1 ? 's' : ''} no players found (game may be empty or servers private)`)] });
 
-      // Resolve player tokens → Roblox user IDs via thumbnail batch API
+      // resolve player tokens → roblox user ids via thumbnail batch API
       await status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`resolving **${allTokens.length}** player${allTokens.length !== 1 ? 's' : ''} across **${serverCount}** server${serverCount !== 1 ? 's' : ''}...`)] });
       const resolvedIds = new Set();
       for (let i = 0; i < allTokens.length; i += 100) {
@@ -8685,7 +9664,7 @@ async function dispatchPrefixInner(message) {
         } catch {}
       }
 
-      // Cross reference: keep only players who are group members
+      // cross reference: keep only players who are group members
       const inGame = [...resolvedIds].filter(id => memberIds.has(id));
       if (!inGame.length) return status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`no group members found in **${gameName}**\n*(checked ${serverCount} server${serverCount !== 1 ? 's' : ''}, ${resolvedIds.size} total player${resolvedIds.size !== 1 ? 's' : ''})*`)] });
 
@@ -8737,10 +9716,10 @@ async function dispatchPrefixInner(message) {
       const vData = loadVerify();
       const allRegistered = Object.entries(vData.verified || {});
       await status.edit({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`**${targetUser.name}** is in **${gameName}** fetching group members & checking presence...`)] });
-      // Fetch all group members (registered + unregistered)
+      // fetch all group members (registered + unregistered)
       const groupMembers = await fetchGroupMemberIds(ATTEND_GROUP_ID);
       const allGroupIds = [...groupMembers];
-      // Build quick lookup maps from registered data
+      // build quick lookup maps from registered data
       const registeredRobloxToDiscord = vData.robloxToDiscord || {};
       const registeredRobloxToName = {};
       for (const [, v] of allRegistered) {
@@ -8768,7 +9747,7 @@ async function dispatchPrefixInner(message) {
         } catch {}
         await new Promise(r => setTimeout(r, 200));
       }
-      // Resolve usernames for unregistered members found in same server
+      // resolve usernames for unregistered members found in same server
       const needsName = inSameServer.filter(m => !m.robloxName);
       if (needsName.length) {
         try {
@@ -8782,9 +9761,9 @@ async function dispatchPrefixInner(message) {
           }
         } catch {}
       }
-      // Fill any still missing names with the ID as fallback
+      // fill any still missing names with the ID as fallback
       for (const m of inSameServer) { if (!m.robloxName) m.robloxName = String(m.robloxId); }
-      // Post attendance embeds to the queue channel all members (registered + unregistered)
+      // post attendance embeds to the queue channel all members (registered + unregistered)
       const queueData = loadQueue();
       const queueChannelId = queueData[message.guild.id]?.channelId;
       const queueChannel = queueChannelId ? (message.guild.channels.cache.get(queueChannelId) ?? null) : null;
@@ -8892,7 +9871,7 @@ async function dispatchPrefixInner(message) {
   }
 
   // prefix → slash bridge: any prefix command not handled above falls
-  // through here. We re dispatch as a slash command so every slash only
+  // through here. we re dispatch as a slash command so every slash only
   // command also works as a prefix command.
   try {
     if (SLASH_ONLY_COMMANDS.has(command) || command === 'whitelist') {
@@ -8906,15 +9885,15 @@ async function dispatchPrefixInner(message) {
 client.on('messageCreate', dispatchPrefix);
 
 
-// Automatic raid attendance HTTP server
-// Roblox game scripts POST to this endpoint when a player joins the raid.
-// Body (JSON): { discordId, robloxUsername, guildId, secret }
+// automatic raid attendance HTTP server
+// roblox game scripts POST to this endpoint when a player joins the raid.
+// body (JSON): { discordid, robloxusername, guildid, secret }
 // secret must match process.env.ATTEND SECRET (optional but recommended)
 const ATTEND_PORT   = process.env.ATTEND_PORT   || 3001;
 const ATTEND_SECRET = process.env.ATTEND_SECRET || '';
 
 http.createServer(async (req, res) => {
-  // Health check
+  // health check
   if (req.method === 'GET' && req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('attend server ok');
@@ -8931,7 +9910,7 @@ http.createServer(async (req, res) => {
     try {
       const data = JSON.parse(body);
 
-      // Optional secret check
+      // optional secret check
       if (ATTEND_SECRET && data.secret !== ATTEND_SECRET) {
         res.writeHead(401); res.end('unauthorized'); return;
       }
@@ -8944,7 +9923,7 @@ http.createServer(async (req, res) => {
       const guild = client.guilds.cache.get(String(guildId));
       if (!guild) { res.writeHead(404); res.end('guild not found'); return; }
 
-      // Only log registered (mverify'd) members
+      // only log registered (mverify'd) members
       const vData = loadVerify();
       const registeredEntry = Object.entries(vData.verified || {}).find(([, v]) => v.robloxName?.toLowerCase() === robloxUsername?.toLowerCase());
       if (!registeredEntry) {
@@ -8963,7 +9942,7 @@ http.createServer(async (req, res) => {
 
       const discordDisplay = `<@${regDiscordId}> `;
 
-      // Fetch Roblox avatar for thumbnail
+      // fetch roblox avatar for thumbnail
       let httpAvatarUrl = null;
       try {
         const robloxRes = await (await fetch('https://users.roblox.com/v1/usernames/users', {
@@ -9001,18 +9980,18 @@ http.createServer(async (req, res) => {
   console.log(`attend server listening on port ${ATTEND_PORT}`);
 });
 
-// Survive transient errors so the bot doesn't crash mid write and lose data.
+// survive transient errors so the bot doesn't crash mid write and lose data.
 process.on('uncaughtException', (err) => { console.error('uncaughtException:', err); });
 process.on('unhandledRejection', (reason) => { console.error('unhandledRejection:', reason); });
 
-// Graceful shutdown: try to log out cleanly so any in flight writes finish.
+// graceful shutdown: try to log out cleanly so any in flight writes finish.
 let shuttingDown = false;
 async function gracefulShutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`received ${signal}, shutting down...`);
   try { await client.destroy(); } catch {}
-  // Close the Postgres pool so pending queries can drain
+  // close the postgres pool so pending queries can drain
   if (dbPool) { try { await dbPool.end(); } catch {} }
   process.exit(0);
 }
