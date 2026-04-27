@@ -777,8 +777,9 @@ function isWhitelisted(userId) {
   return loadWhitelist().includes(userId)
 }
 
-// ticket access check: wl managers, temp owners, or anyone with a configured
-// ticket support role can use ticket related commands and buttons.
+// ticket access check: wl managers, temp owners, anyone with a configured
+// ticket support role, anyone with a registered rom role (.rom / .rmanager
+// list), or anyone whose role has the discord administrator permission.
 // pass the guildmember (or null) so we can read role membership.
 function hasTicketAccess(memberOrUserId, member = null) {
   const userId = typeof memberOrUserId === 'string' ? memberOrUserId : memberOrUserId?.id
@@ -788,9 +789,84 @@ function hasTicketAccess(memberOrUserId, member = null) {
   if (isTempOwner(userId)) return true
   if (m && m.roles && m.roles.cache) {
     const support = loadTicketSupport()
+    const rom = loadRolePerms()
     if (m.roles.cache.some(r => support.includes(r.id))) return true
+    if (m.roles.cache.some(r => rom.includes(r.id))) return true
+    if (m.roles.cache.some(r => r.permissions?.has?.(PermissionsBitField.Flags.Administrator))) return true
   }
   return false
+}
+
+// add a single role to every currently open ticket channel. used after
+// .rom add / .rmanager so newly registered roles can immediately see the
+// existing tickets, not just future ones. returns { updated, skipped }.
+async function grantRoleToOpenTickets(guild, roleId) {
+  const tickets = loadTickets()
+  const VIEW = [
+    PermissionsBitField.Flags.ViewChannel,
+    PermissionsBitField.Flags.SendMessages,
+    PermissionsBitField.Flags.ReadMessageHistory,
+    PermissionsBitField.Flags.AttachFiles
+  ]
+  let updated = 0, skipped = 0
+  for (const chId of Object.keys(tickets)) {
+    const ch = guild.channels.cache.get(chId)
+    if (!ch) { skipped++; continue }
+    try {
+      await ch.permissionOverwrites.edit(roleId, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, AttachFiles: true })
+      updated++
+    } catch { skipped++ }
+  }
+  return { updated, skipped, _VIEW: VIEW }
+}
+
+// remove a role's overwrite from every currently open ticket channel.
+// used after .rom remove / .rmanager toggle-off so kicked roles lose
+// view access to existing tickets right away.
+async function revokeRoleFromOpenTickets(guild, roleId) {
+  const tickets = loadTickets()
+  let updated = 0, skipped = 0
+  for (const chId of Object.keys(tickets)) {
+    const ch = guild.channels.cache.get(chId)
+    if (!ch) { skipped++; continue }
+    try {
+      await ch.permissionOverwrites.delete(roleId)
+      updated++
+    } catch { skipped++ }
+  }
+  return { updated, skipped }
+}
+
+// build the permission overwrites for a ticket channel. locks the channel
+// down to: ticket opener + bot + support roles + rom roles + any role with
+// the administrator permission. everyone else is denied view by default.
+function buildTicketOverwrites(guild, openerUserId) {
+  const support = loadTicketSupport()
+  const rom = loadRolePerms()
+  const VIEW = [
+    PermissionsBitField.Flags.ViewChannel,
+    PermissionsBitField.Flags.SendMessages,
+    PermissionsBitField.Flags.ReadMessageHistory,
+    PermissionsBitField.Flags.AttachFiles
+  ]
+  const overwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+    { id: openerUserId, allow: VIEW },
+    { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
+  ]
+  const seen = new Set()
+  const addRole = rid => {
+    if (!rid || seen.has(rid)) return
+    if (!guild.roles.cache.has(rid)) return
+    seen.add(rid)
+    overwrites.push({ id: rid, allow: VIEW })
+  }
+  for (const rid of support) addRole(rid)
+  for (const rid of rom) addRole(rid)
+  for (const role of guild.roles.cache.values()) {
+    if (role.permissions?.has?.(PermissionsBitField.Flags.Administrator)) addRole(role.id)
+  }
+  return overwrites
 }
 
 // error codes for actual stuff that broke. silently ignore wrong usage but
@@ -1661,6 +1737,8 @@ const HELP_SECTIONS = [
       '{p}role [roblox] [role] set a roblox group role on a user',
       '{p}setrole [name] [id] register a roblox group role by name',
       '{p}setroleperms add/remove/list [role] let a discord role use {p}role',
+      '{p}rom @role / {p}rom add @role / {p}rom remove @role / {p}rom list register a discord role as a "role of management" — they get to use {p}role and see every ticket. also syncs every open ticket on the spot',
+      '{p}rmanager @role one-shot toggle of the same rom list (adds if missing, removes if there)',
       '{p}r @member [roles...] toggle discord roles on a member',
     ]
   },
@@ -1699,11 +1777,20 @@ const HELP_SECTIONS = [
       '{p}rollcall start a roll call (members react to confirm theyre in)',
       '{p}endrollcall close the roll call & log everyone who reacted',
       '{p}setrollcallchannel [channel] where the rollcall summary gets posted',
-      '{p}lb show the raid leaderboard (10 per page, < / > to flip)',
+      '{p}lb show the raid points leaderboard (weekly + all-time, 10 per page)',
       '{p}lbreset wipe the raid leaderboard for this server',
       '{p}atlog browse past rollcall sessions',
       '{p}whoisin [game URL/place id] check which group members are in a game',
       'note: every prefix command also works as a slash command (e.g. /lb, /lbreset).',
+    ]
+  },
+  {
+    title: 'raid points (whitelist only)',
+    commands: [
+      '{p}setupraidpoints drop the "Get Raid Point" button panel in this channel',
+      '{p}setraidreview [#channel] set the channel where raid point requests get sent for review',
+      'flow: members tap the button → fill out the popup → request goes to the review channel → staff hits Approve or Deny → point is added (or not).',
+      'pings: the role set with {p}rmanager / {p}rom gets pinged on every new request.',
     ]
   },
 ];
@@ -3251,33 +3338,12 @@ async function dispatchSlashInner(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     const support = loadTicketSupport();
-    const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
-    const staffIds = new Set([
-      ...loadWlManagers(),
-      ...envMgrs,
-      ...loadTempOwners(),
-      ...loadWhitelist()
-    ]);
-    staffIds.delete(interaction.user.id);
 
     const me = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
     if (!me || !me.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
       return interaction.editReply({ embeds: [errorEmbed('failed').setDescription('i need the **Manage Channels** permission to create tickets')] });
     }
-    const overwrites = [
-      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-      { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
-      { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
-    ];
-    for (const rid of support) {
-      if (guild.roles.cache.has(rid)) {
-        overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-      }
-    }
-    for (const uid of staffIds) {
-      const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
-      if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-    }
+    const overwrites = buildTicketOverwrites(guild, interaction.user.id);
     let parentId = interaction.channel.parentId || undefined;
     if (parentId) {
       const parent = guild.channels.cache.get(parentId);
@@ -3368,23 +3434,9 @@ async function dispatchSlashInner(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     const support = loadTicketSupport();
-    const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
-    const staffIds = new Set([...loadWhitelist(), ...loadWlManagers(), ...envMgrs, ...loadTempOwners()]);
-    staffIds.delete(interaction.user.id);
 
-    // locked channel only opener, bot, support roles, and whitelisted users can see/talk.
-    const overwrites = [
-      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
-      { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
-      { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
-    ];
-    for (const rid of support) {
-      if (guild.roles.cache.has(rid)) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
-    }
-    for (const uid of staffIds) {
-      const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
-      if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
-    }
+    // locked channel only opener, bot, support roles, rom roles, and admin-perm roles can see/talk.
+    const overwrites = buildTicketOverwrites(guild, interaction.user.id);
     let parentId = interaction.channel?.parentId || undefined;
     if (parentId) {
       const parent = guild.channels.cache.get(parentId);
@@ -3491,22 +3543,8 @@ async function dispatchSlashInner(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     const support = loadTicketSupport();
-    const envMgrs = (process.env.WHITELIST_MANAGERS || '').split(',').map(s => s.trim()).filter(Boolean);
-    const staffIds = new Set([...loadWlManagers(), ...envMgrs, ...loadTempOwners(), ...loadWhitelist()]);
-    staffIds.delete(interaction.user.id);
 
-    const overwrites = [
-      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-      { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] },
-      { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ReadMessageHistory] }
-    ];
-    for (const rid of support) {
-      if (guild.roles.cache.has(rid)) overwrites.push({ id: rid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-    }
-    for (const uid of staffIds) {
-      const m = guild.members.cache.get(uid) ?? await guild.members.fetch(uid).catch(() => null);
-      if (m) overwrites.push({ id: uid, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles] });
-    }
+    const overwrites = buildTicketOverwrites(guild, interaction.user.id);
     let parentId = interaction.channel?.parentId || undefined;
     if (parentId) {
       const parent = guild.channels.cache.get(parentId);
@@ -5626,7 +5664,9 @@ async function dispatchSlashInner(interaction) {
       for (const [, member] of members) {
         if (member.user.bot) continue;
         try {
-          await member.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${interaction.user.tag}` }).setTimestamp()] });
+          await member.send({ content: `${dmMsg}
+
+-# from ${interaction.user.tag}`, allowedMentions: { parse: [] } });
           sent++;
         } catch { failed++; }
         await new Promise(r => setTimeout(r, 500));
@@ -5635,7 +5675,9 @@ async function dispatchSlashInner(interaction) {
     }
     if (target.bot) return interaction.reply({ content: "can't DM a bot", ephemeral: true });
     try {
-      await target.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${interaction.user.tag}` }).setTimestamp()] });
+      await target.send({ content: `${dmMsg}
+
+-# from ${interaction.user.tag}`, allowedMentions: { parse: [] } });
       return interaction.reply({ content: `DM sent to **${target.tag}**`, ephemeral: true });
     } catch { return interaction.reply({ content: `couldn't DM **${target.tag}** they might have DMs off`, ephemeral: true }); }
   }
@@ -5836,11 +5878,15 @@ async function dispatchSlashInner(interaction) {
     if (action === 'add') {
       if (perms.includes(role.id)) return interaction.reply({ embeds: [errorEmbed('already allowed').setDescription(`${role} can already use /role`)], ephemeral: true });
       perms.push(role.id); saveRolePerms(perms);
-      return interaction.reply({ embeds: [successEmbed('role allowed').setDescription(`${role} can now use \`/role\``)] });
+      let syncLine = '';
+      try { const res = await grantRoleToOpenTickets(guild, role.id); syncLine = `\nsynced ${res.updated} open ticket${res.updated === 1 ? '' : 's'}${res.skipped ? ` (${res.skipped} skipped)` : ''}`; } catch {}
+      return interaction.reply({ embeds: [successEmbed('role allowed').setDescription(`${role} can now use \`/role\` and see tickets${syncLine}`)] });
     }
     if (action === 'remove') {
       perms = perms.filter(id => id !== role.id); saveRolePerms(perms);
-      return interaction.reply({ embeds: [successEmbed('role removed').setDescription(`${role} can no longer use \`/role\``)] });
+      let syncLine = '';
+      try { const res = await revokeRoleFromOpenTickets(guild, role.id); syncLine = `\nsynced ${res.updated} open ticket${res.updated === 1 ? '' : 's'}${res.skipped ? ` (${res.skipped} skipped)` : ''}`; } catch {}
+      return interaction.reply({ embeds: [successEmbed('role removed').setDescription(`${role} can no longer use \`/role\` or see tickets${syncLine}`)] });
     }
     return;
   }
@@ -7737,7 +7783,9 @@ async function dispatchPrefixInner(message) {
       for (const [, member] of members) {
         if (member.user.bot) continue;
         try {
-          await member.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+          await member.send({ content: `${dmMsg}
+
+-# from ${message.author.tag}`, allowedMentions: { parse: [] } });
           sent++;
         } catch { failed++; }
         await new Promise(r => setTimeout(r, 500)); // rate limit buffer
@@ -7754,7 +7802,9 @@ async function dispatchPrefixInner(message) {
     }
     if (targetUser.bot) return message.reply("can't DM a bot");
     try {
-      await targetUser.send({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Message').setDescription(dmMsg).setFooter({ text: `from ${message.author.tag}` }).setTimestamp()] });
+      await targetUser.send({ content: `${dmMsg}
+
+-# from ${message.author.tag}`, allowedMentions: { parse: [] } });
       return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(`DM sent to **${targetUser.tag}**`)] });
     } catch {
       return message.reply(`couldn't DM **${targetUser.tag}** they might have DMs off`);
@@ -9387,8 +9437,59 @@ async function dispatchPrefixInner(message) {
       action = 'added';
     }
     saveRolePerms(next);
+    // sync existing open tickets so the role gains/loses view right now
+    let syncLine = '';
+    try {
+      const res = action === 'added'
+        ? await grantRoleToOpenTickets(message.guild, role.id)
+        : await revokeRoleFromOpenTickets(message.guild, role.id);
+      syncLine = `\nsynced ${res.updated} open ticket${res.updated === 1 ? '' : 's'}${res.skipped ? ` (${res.skipped} skipped)` : ''}`;
+    } catch {}
     return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Role Manager Updated')
-      .setDescription(`${action} ${role} — anyone with this role ${action === 'added' ? 'can now use' : 'can no longer use'} \`/role\` and \`.role\``)
+      .setDescription(`${action} ${role} — anyone with this role ${action === 'added' ? 'can now use' : 'can no longer use'} \`/role\` and \`.role\`${syncLine}`)
+      .setTimestamp()] });
+  }
+
+  // .rom @role / .rom add @role / .rom remove @role / .rom list
+  // shorthand alias of .rmanager. registers a discord role as a "role of management"
+  // so members with it can use /role + .role. without a registered rom role,
+  // /role and .role are blocked. wl manager only.
+  if (command === 'rom') {
+    if (!message.guild) return;
+    if (!isWlManager(message.author.id))
+      return message.reply({ embeds: [errorEmbed('no permission').setDescription('only wl managers can change the rom list')] });
+    const sub = (args[0] || '').toLowerCase();
+    if (sub === 'list' || (!sub && !message.mentions.roles.first())) {
+      const perms = loadRolePerms();
+      if (!perms.length) return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('rom roles').setDescription('no rom roles registered yet. do `.rom @role` to add one.')] });
+      const lines = perms.map((id, i) => `${i + 1}. <@&${id}>`).join('\n');
+      return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('rom roles').setDescription(lines).setFooter({ text: 'anyone with one of these roles can use /role and see tickets' })] });
+    }
+    const role = message.mentions.roles.first();
+    if (!role) return message.reply('mention a role like `.rom @raidLead` (or `.rom list` to see them all)');
+    const perms = loadRolePerms();
+    let action, next;
+    if (sub === 'remove' || sub === 'rm' || sub === 'del') {
+      if (!perms.includes(role.id)) return message.reply(`${role} isn't a rom role`);
+      next = perms.filter(id => id !== role.id);
+      action = 'removed';
+    } else if (sub === 'add' || !sub) {
+      if (perms.includes(role.id)) return message.reply(`${role} is already a rom role`);
+      next = [...perms, role.id];
+      action = 'added';
+    } else {
+      return message.reply('use `.rom @role`, `.rom add @role`, `.rom remove @role`, or `.rom list`');
+    }
+    saveRolePerms(next);
+    let syncLine = '';
+    try {
+      const res = action === 'added'
+        ? await grantRoleToOpenTickets(message.guild, role.id)
+        : await revokeRoleFromOpenTickets(message.guild, role.id);
+      syncLine = `\nsynced ${res.updated} open ticket${res.updated === 1 ? '' : 's'}${res.skipped ? ` (${res.skipped} skipped)` : ''}`;
+    } catch {}
+    return message.reply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('rom updated')
+      .setDescription(`${action} ${role} — anyone with this role ${action === 'added' ? 'can now use' : 'can no longer use'} \`/role\`, \`.role\`, and see tickets${syncLine}`)
       .setTimestamp()] });
   }
 
