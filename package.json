@@ -1,7 +1,7 @@
 {
   "name": "discord-bot",
   "version": "1.0.0",
-  "description": "Discord ticket / verification bot",
+  "description": "Discord ticket / verification / Roblox group management bot",
   "type": "module",
   "main": "bot.js",
   "private": true,
