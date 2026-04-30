@@ -239,13 +239,29 @@ function saveStoredCookie(cookie) {
   if (c) process.env.ROBLOX_COOKIE = c;
 })();
 
-// modern "sins" embed system
-// every embed gets: author line (sins + logo), logo thumbnail top right,
-// bold title via settitle, timestamp, and footer the full discohook look.
+// every embed in the bot gets the same base look — author, logo, timestamp, footer
+// you can change the color server-wide with /embed
 const getBotName = () => { const cfg = loadJSON(path.join(__dirname, 'config.json')); return cfg.customName || client.user?.username || 'Bot' }
+
+// pull the global embed color out of config, fall back to dark gray
+const getEmbedColor = () => {
+  const cfg = loadConfig();
+  if (!cfg.embedColor) return 0x2C2F33;
+  return typeof cfg.embedColor === 'number' ? cfg.embedColor : parseInt(String(cfg.embedColor).replace('#', ''), 16) || 0x2C2F33;
+};
+
+// save a new embed color to config (accepts hex string or number)
+const setEmbedColor = (raw) => {
+  const cfg = loadConfig();
+  const num = typeof raw === 'number' ? raw : parseInt(String(raw).replace('#', ''), 16);
+  cfg.embedColor = isNaN(num) ? 0x2C2F33 : num;
+  saveConfig(cfg);
+  return cfg.embedColor;
+};
 
 function baseEmbed() {
   return new EmbedBuilder()
+    .setColor(getEmbedColor())
     .setAuthor({ name: getBotName(), iconURL: getLogoUrl() })
     .setThumbnail(getLogoUrl())
     .setTimestamp()
@@ -1701,6 +1717,40 @@ async function acceptRobloxJoinRequest(robloxUserId, groupId) {
   }
 }
 
+// checks if a single roblox user has a pending join request for the group.
+// returns true/false. requires ROBLOX_COOKIE with group admin access.
+async function userHasPendingJoinRequest(robloxUserId, groupId) {
+  const cookie = process.env.ROBLOX_COOKIE;
+  if (!cookie || !robloxUserId || !groupId) return false;
+  try {
+    const res = await fetch(`https://groups.roblox.com/v1/groups/${groupId}/join-requests/users/${robloxUserId}`, {
+      headers: { Cookie: `.ROBLOSECURITY=${cookie}` }
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+// fetches ALL pending join requests for a group (paginated).
+// returns an array of { created, requester: { userId, username, displayName } }
+// or null if the cookie is missing / request fails.
+async function fetchAllGroupJoinRequests(groupId) {
+  const cookie = process.env.ROBLOX_COOKIE;
+  if (!cookie || !groupId) return null;
+  const all = [];
+  let cursor = '';
+  do {
+    try {
+      const url = `https://groups.roblox.com/v1/groups/${groupId}/join-requests?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const res = await fetch(url, { headers: { Cookie: `.ROBLOSECURITY=${cookie}` } });
+      if (!res.ok) return null;
+      const json = await res.json();
+      for (const req of (json.data || [])) all.push(req);
+      cursor = json.nextPageCursor || '';
+    } catch { return null; }
+  } while (cursor);
+  return all;
+}
+
 async function buildJoinButton(userId) {
   try {
     const cookie = process.env.ROBLOX_COOKIE;
@@ -1771,6 +1821,57 @@ async function unjailMember(guild, member, modTag) {
 // name shown in the embed title and footer. categories with more commands
 // than HELP_PER_PAGE simply span multiple pages.
 const HELP_CATEGORIES = [
+  { name: '🔍 Verification', cmds: [
+    "{p}roblox [username] — look up any roblox account by username, shows their profile info",
+    "{p}rid [id] — same thing but you give it the numeric roblox ID instead of a name",
+    "{p}gc [username] — lists every roblox group that person is in",
+    "{p}rg [group link or id] — changes which roblox group the bot tracks for verification",
+    "{p}setverifyrole @role — sets the role people get after they verify their roblox account",
+    "{p}register — starts the verification flow for someone",
+    "{p}verify — finishes the verification and links their accounts",
+    "{p}linked — shows every discord↔roblox account that is currently linked",
+  ]},
+  { name: '🎮 Roblox', cmds: [
+    "{p}roblox [username] — pull up a roblox user's profile info",
+    "{p}rid [id] — look someone up by their roblox numeric ID",
+    "{p}gc [username] — list all groups a roblox user is in",
+    "{p}rg [link or id] — update the group the bot is watching",
+    "{p}grouproles — shows every role in the current roblox group",
+    "{p}cookie [.ROBLOSECURITY value] — sets the bot's roblox cookie (owner only)",
+    "{p}check — lists everyone who has a pending join request to the group (staff only)",
+  ]},
+  { name: '🎫 Tickets', cmds: [
+    "{p}setuptickets [#channel] [type] — drops a ticket panel in a channel. type can be: verification, tag, or both (defaults to both)",
+    "{p}closeticket — closes and deletes the current ticket channel",
+    "{p}ticket supportroles add/remove/list — manage which discord roles can see and work tickets",
+  ]},
+  { name: '⚔️ Group Raids', cmds: [
+    "{p}queue [#logchannel] — opens the raid queue, members can join from any channel. mention a channel to send the final list there when you close it",
+    "{p}join — join the active raid queue (you need your roblox linked first)",
+    "{p}list [#channel] — show everyone currently in the queue. mention a channel to post it there",
+    "{p}closequeue [#channel] — closes the queue and posts the full member list. sends to the log channel if one was set",
+    "{p}check — see all pending join requests to the roblox group (staff only)",
+  ]},
+  { name: '🛡️ Whitelist & Access', cmds: [
+    "{p}whitelist add/remove/list/check [user] — manage who is on the bot whitelist",
+    "{p}wlmanager add/remove/list [user] — manage who counts as a whitelist manager",
+    "{p}tempowner [user] — gives someone full access to all bot commands temporarily",
+    "{p}untempowner [user] — takes that access away",
+  ]},
+  { name: '📈 Rank Ladder', cmds: [
+    "{p}rankup [user] [levels] — moves a member up the rank ladder. you can rank multiple people at once and jump more than one level",
+    "{p}setrankroles set/list/clear [roles...] — configure the rank order for this server",
+    "{p}fileroles — downloads the current rank ladder as a JSON file",
+  ]},
+  { name: '⚙️ Bot Settings', cmds: [
+    "{p}status [type] [text] — change the bot's activity. types: playing, watching, listening, competing, streaming, custom",
+    "{p}status streaming [url] [text] — streaming specifically needs a twitch or youtube url to show the purple badge",
+    "{p}presence [state] — change the online dot. options: online, idle, dnd, invisible",
+    "{p}embed [#hex] — change the color used on all bot embeds server-wide (e.g. #FF5500)",
+    "{p}embedcreate — send a fully custom embed to any channel (title, description, color, image, footer, thumbnail)",
+    "{p}help — shows this menu",
+  ]},
+  // Moderation hidden - kept as prefix only, not in slash commands
   { name: 'Moderation', cmds: [
     "{p}ban [user] [reason] bans someone from the server (mention or ID)",
     "{p}unban [id] [reason] unbans someone by their ID",
@@ -2174,13 +2275,18 @@ const _HELP_OLD_DEAD = [
     const pageData = HELP_PAGES[safe];
     const lines = pageData.cmds.map(c => {
       const full = c.replace(/\{p\}/g, p);
-      const i = full.indexOf(' ');
-      if (i === -1) return `**\`${full}\`**`;
-      return `**\`${full.slice(0, i)}\`** — ${full.slice(i + 1)}`;
+      // support both "cmd — description" and "cmd description" formats
+      const dashIdx = full.indexOf(' — ');
+      if (dashIdx !== -1) {
+        return `**\`${full.slice(0, dashIdx)}\`** — ${full.slice(dashIdx + 3)}`;
+      }
+      const spaceIdx = full.indexOf(' ');
+      if (spaceIdx === -1) return `**\`${full}\`**`;
+      return `**\`${full.slice(0, spaceIdx)}\`** — ${full.slice(spaceIdx + 1)}`;
     });
-    const header = `**prefix:** \`${p}\`  •  **slash:** \`/\`\nevery command works as both a prefix command and a slash command — flip through the pages with the buttons below.\n`;
+    const header = `**prefix:** \`${p}\`  •  **slash:** \`/\`\nalmost every command works as both a prefix and a slash — use whichever is easier. flip through the pages below or jump to a category from the dropdown.\n`;
     return new EmbedBuilder()
-      .setColor(0x2C2F33)
+      .setColor(getEmbedColor())
       .setAuthor({ name: `${getBotName()} help`, iconURL: getLogoUrl() })
       .setThumbnail(getLogoUrl())
       .setTitle(pageData.category)
@@ -2244,8 +2350,12 @@ function buildFlaggedSection(userGroupIds) {
   return matched;
 }
 
-function buildGcNotInGroupEmbed(displayName, userGroupIds) {
-  let desc = `**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.\n\n **Group ID:** \`${getGroupId()}\`\n **Link:** [Click to Join](${getGroupLink()})`;
+function buildGcNotInGroupEmbed(displayName, userGroupIds, hasPendingRequest = false) {
+  const title = hasPendingRequest ? 'Requested Group' : 'Not In Group';
+  const statusLine = hasPendingRequest
+    ? `**${displayName}** has requested to join the group — please click **Accept User** to approve them.`
+    : `**${displayName}** hasn't joined the group yet.\nAsk them to join before verifying.`;
+  let desc = `${statusLine}\n\n **Group ID:** \`${getGroupId()}\`\n **Link:** [${hasPendingRequest ? 'View Group' : 'Click to Join'}](${getGroupLink()})`;
   const matchedFlagged = buildFlaggedSection(userGroupIds);
   if (matchedFlagged.length > 0) {
     const lines = matchedFlagged.map(g => {
@@ -2256,7 +2366,7 @@ function buildGcNotInGroupEmbed(displayName, userGroupIds) {
   }
   return new EmbedBuilder()
     .setColor(0x2C2F33)
-    .setTitle('Not In Group')
+    .setTitle(title)
     .setDescription(desc)
     .setFooter({ text: `${getBotName()} • ${getBotName()}`, iconURL: getLogoUrl() })
     .setTimestamp()
@@ -2356,173 +2466,54 @@ const ALL_CONTEXTS = [InteractionContextType.Guild, InteractionContextType.BotDM
 const ALL_INSTALLS = [ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall];
 
 const slashCommands = [
-  new SlashCommandBuilder().setName('help').setDescription('shows the command list')
+  // ── HELP ──────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder().setName('help').setDescription('shows all commands organized by category')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+
+  // ── VERIFICATION ──────────────────────────────────────────────────────────
   new SlashCommandBuilder().setName('roblox').setDescription('look up a roblox user')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
   new SlashCommandBuilder().setName('gc').setDescription('list roblox groups for a user')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('username').setDescription('roblox username').setRequired(true)),
-  new SlashCommandBuilder().setName('rg').setDescription('change the roblox group used by .gc and verify')
+  new SlashCommandBuilder().setName('rg').setDescription('change the roblox group used by gc and verify')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('link').setDescription('roblox group link or id').setRequired(true)),
+  new SlashCommandBuilder().setName('setverifyrole').setDescription('set the role given when someone verifies')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addRoleOption(o => o.setName('role').setDescription('role to give verified users').setRequired(true)),
+
+  // ── ROBLOX ────────────────────────────────────────────────────────────────
   new SlashCommandBuilder().setName('cookie').setDescription('set the roblox account cookie used by the bot (owner only)')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('cookie').setDescription('the .ROBLOSECURITY cookie value').setRequired(true)),
-  new SlashCommandBuilder().setName('hb').setDescription('hardban a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(false))
-    .addStringOption(o => o.setName('id').setDescription('user id if not in server').setRequired(false))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('ban').setDescription('ban a member')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to ban').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('kick').setDescription('kick a member')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to kick').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('unban').setDescription('unban a user by id')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('id').setDescription('user id to unban').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('purge').setDescription('delete messages in bulk')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('amount').setDescription('how many messages to delete (1 100)').setRequired(true).setMinValue(1).setMaxValue(100)),
-  new SlashCommandBuilder().setName('timeout').setDescription('timeout a member')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
-    .addIntegerOption(o => o.setName('minutes').setDescription('duration in minutes').setRequired(false).setMinValue(1).setMaxValue(40320))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('untimeout').setDescription('remove a timeout')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('mute').setDescription('mute a member')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('unmute').setDescription('remove a mute')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('hush').setDescription('auto delete all messages from a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('unhush').setDescription('remove auto delete from a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-  new SlashCommandBuilder().setName('nuke').setDescription('delete and recreate the channel (clears all messages)')
+  new SlashCommandBuilder().setName('grouproles').setDescription('list all roles in the roblox group')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('lock').setDescription('lock the current channel')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('unlock').setDescription('unlock the current channel')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('grouproles').setDescription('list roblox group roles')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('wlmanager').setDescription('manage whitelist managers')
+  new SlashCommandBuilder().setName('rid').setDescription('look up a roblox user by their numeric id')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
-      .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
-    .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
-  new SlashCommandBuilder().setName('jail').setDescription('jail a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to jail').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('unjail').setDescription('release a user from jail')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to unjail').setRequired(true)),
-  new SlashCommandBuilder().setName('prefix').setDescription('change or view the bot prefix')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('new').setDescription('new prefix').setRequired(false)),
-  new SlashCommandBuilder().setName('status').setDescription('change the bot status')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('type').setDescription('type').setRequired(true)
-      .addChoices({ name: 'playing', value: 'playing' }, { name: 'watching', value: 'watching' }, { name: 'listening', value: 'listening' }, { name: 'competing', value: 'competing' }, { name: 'custom', value: 'custom' }))
-    .addStringOption(o => o.setName('text').setDescription('status text').setRequired(true)),
-  new SlashCommandBuilder().setName('presence').setDescription('change the bot online status')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('state').setDescription('online state').setRequired(true)
-      .addChoices(
-        { name: 'online', value: 'online' },
-        { name: 'idle', value: 'idle' },
-        { name: 'do not disturb', value: 'dnd' },
-        { name: 'invisible', value: 'invisible' }
-      )),
+    .addStringOption(o => o.setName('id').setDescription('numeric roblox user id').setRequired(true)),
+
+  // ── WHITELIST ─────────────────────────────────────────────────────────────
   new SlashCommandBuilder().setName('whitelist').setDescription('manage the whitelist')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
       .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }, { name: 'check', value: 'check' }))
     .addUserOption(o => o.setName('user').setDescription('user (for add/remove/check)').setRequired(false)),
-  new SlashCommandBuilder().setName('joinserver').setDescription('get a one-click link that adds the bot to the server behind an invite link (WL managers only)')
+  new SlashCommandBuilder().setName('wlmanager').setDescription('manage whitelist managers')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('invite').setDescription('a discord invite link or invite code').setRequired(true)),
-  new SlashCommandBuilder().setName('permcheck').setDescription('show what bot-level roles a user has (wl manager / temp owner / whitelisted)')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('the user to check (defaults to you)').setRequired(false)),
-  new SlashCommandBuilder().setName('invite').setDescription('grab the invite link for the bot (whitelist managers only)')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('setlogchanneltag').setDescription('set the channel where tag logs go')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addChannelOption(o => o.setName('channel').setDescription('channel for tag logs').setRequired(true)),
-  // NEW COMMANDS
-  new SlashCommandBuilder().setName('unhb').setDescription('remove a hardban')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('id').setDescription('user id to un hardban').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-
-  // bleed.bot inspired commands (autorole/joindm/server setup removed)
-  new SlashCommandBuilder().setName('warn').setDescription('warn a member')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('member to warn').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-  new SlashCommandBuilder().setName('warnings').setDescription('show warnings for a member')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('member to check').setRequired(true)),
-  new SlashCommandBuilder().setName('clearwarns').setDescription('clear all warnings for a member')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('member to clear').setRequired(true)),
-  new SlashCommandBuilder().setName('delwarn').setDescription('delete a specific warning by index')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('member').setRequired(true))
-    .addIntegerOption(o => o.setName('index').setDescription('warning number from /warnings').setRequired(true).setMinValue(1)),
-
-
-  new SlashCommandBuilder().setName('role').setDescription('Set a Roblox group role')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('roblox').setDescription('roblox username').setRequired(true))
-    .addStringOption(o => o.setName('role').setDescription('target group role').setRequired(true).setAutocomplete(true)),
-
-  new SlashCommandBuilder().setName('setrole').setDescription('register a roblox group role by name and id')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('name').setDescription('role name (used in /role)').setRequired(true))
-    .addStringOption(o => o.setName('id').setDescription('roblox group role id').setRequired(true)),
-
-  new SlashCommandBuilder().setName('setroleperms').setDescription('Allow a Discord role to use /role')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
+    .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
       .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
-    .addRoleOption(o => o.setName('role').setDescription('discord role').setRequired(false)),
-
-  new SlashCommandBuilder().setName('tempowner').setDescription('Grant a user temporary access to all bot commands')
+    .addUserOption(o => o.setName('user').setDescription('user (for add/remove)').setRequired(false)),
+  new SlashCommandBuilder().setName('tempowner').setDescription('grant a user temporary access to all bot commands')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
+    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
+  new SlashCommandBuilder().setName('untempowner').setDescription('revoke temp owner access from a user')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
 
-  new SlashCommandBuilder().setName('untempowner').setDescription('Revoke temp owner access from a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user').setRequired(true)),
-
-  new SlashCommandBuilder().setName('setlogchannel').setDescription('Set the channel for bot action logs')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addChannelOption(o => o.setName('channel').setDescription('log channel').setRequired(true)),
-
-  new SlashCommandBuilder().setName('logstatus').setDescription('Check the current log channel setting')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-
-  new SlashCommandBuilder().setName('setverifyrole').setDescription('Set the role given on verification')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addRoleOption(o => o.setName('role').setDescription('role to give verified users').setRequired(true)),
-
-  new SlashCommandBuilder().setName('setuptickets').setDescription('Send a ticket panel to a channel')
+  // ── TICKETS ───────────────────────────────────────────────────────────────
+  new SlashCommandBuilder().setName('setuptickets').setDescription('send a ticket panel to a channel')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addChannelOption(o => o.setName('channel').setDescription('channel for the panel').setRequired(true))
     .addStringOption(o => o.setName('type').setDescription('what the panel offers (default: both)').setRequired(false)
@@ -2535,47 +2526,31 @@ const slashCommands = [
     .addStringOption(o => o.setName('description').setDescription('override the default description').setRequired(false))
     .addStringOption(o => o.setName('color').setDescription('hex color e.g. 4A0E0E (default: dark red)').setRequired(false))
     .addStringOption(o => o.setName('placeholder').setDescription('dropdown placeholder text').setRequired(false)),
-
-  new SlashCommandBuilder().setName('closeticket').setDescription('Close and delete the current ticket channel')
+  new SlashCommandBuilder().setName('closeticket').setDescription('close and delete the current ticket channel')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-
-  new SlashCommandBuilder().setName('ticket').setDescription('Ticket management')
+  new SlashCommandBuilder().setName('ticket').setDescription('ticket management')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addSubcommand(s => s.setName('supportroles').setDescription('Add or remove support roles for ticket actions')
+    .addSubcommand(s => s.setName('supportroles').setDescription('add or remove support roles for ticket actions')
       .addStringOption(o => o.setName('action').setDescription('action').setRequired(true)
         .addChoices({ name: 'add', value: 'add' }, { name: 'remove', value: 'remove' }, { name: 'list', value: 'list' }))
       .addRoleOption(o => o.setName('role').setDescription('discord role').setRequired(false))),
 
-  new SlashCommandBuilder().setName('tag').setDescription('Rank a Roblox user (same as /role) logged to the tag log')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('roblox').setDescription('roblox username').setRequired(true))
-    .addStringOption(o => o.setName('role').setDescription('registered roblox group role name').setRequired(true)),
+  // ── GROUP RAIDS ───────────────────────────────────────────────────────────
+  new SlashCommandBuilder().setName('queue').setDescription('open the raid queue (staff only)')
+    .addChannelOption(o => o.setName('logchannel').setDescription('channel to post the final member list in').setRequired(false))
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('join').setDescription('join the active raid queue')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('list').setDescription('show everyone currently in the raid queue')
+    .addChannelOption(o => o.setName('channel').setDescription('channel to post the list in (optional)').setRequired(false))
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('closequeue').setDescription('close the raid queue and post the final member list (staff only)')
+    .addChannelOption(o => o.setName('channel').setDescription('override where the final list gets posted').setRequired(false))
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
+  new SlashCommandBuilder().setName('check').setDescription('check all pending group join requests (staff only)')
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
-  new SlashCommandBuilder().setName('taglog').setDescription('View the most recent tag log entries')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('limit').setDescription('how many entries to show (default 10)').setRequired(false).setMinValue(1).setMaxValue(50)),
-
-  new SlashCommandBuilder().setName('r').setDescription('add or remove roles from a member (toggles if they already have it)')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('member').setDescription('member to give/remove roles').setRequired(true))
-    .addRoleOption(o => o.setName('role1').setDescription('first role').setRequired(true))
-    .addRoleOption(o => o.setName('role2').setDescription('second role').setRequired(false))
-    .addRoleOption(o => o.setName('role3').setDescription('third role').setRequired(false))
-    .addRoleOption(o => o.setName('role4').setDescription('fourth role').setRequired(false))
-    .addRoleOption(o => o.setName('role5').setDescription('fifth role').setRequired(false)),
-
-  new SlashCommandBuilder().setName('inrole').setDescription('list all members with a specific role')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addRoleOption(o => o.setName('role').setDescription('role to check').setRequired(true)),
-
-  new SlashCommandBuilder().setName('leaveserver').setDescription('force the bot to leave a server (WL managers only)')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('serverid').setDescription('server ID to leave (leave blank to leave current server)').setRequired(false)),
-
-  // roblox / rank commands
-  new SlashCommandBuilder().setName('rid').setDescription('look up a Roblox user by their numeric ID')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('id').setDescription('numeric Roblox user ID').setRequired(true)),
+  // ── RANK / LADDER ─────────────────────────────────────────────────────────
   new SlashCommandBuilder().setName('rankup').setDescription('promote members up the configured rank ladder')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
     .addUserOption(o => o.setName('user1').setDescription('member to rank up').setRequired(true))
@@ -2593,171 +2568,66 @@ const slashCommands = [
     .addRoleOption(o => o.setName('role3').setDescription('3rd rank role').setRequired(false))
     .addRoleOption(o => o.setName('role4').setDescription('4th rank role').setRequired(false))
     .addRoleOption(o => o.setName('role5').setDescription('5th (highest) rank role').setRequired(false)),
-  new SlashCommandBuilder().setName('fileroles').setDescription('download the rank ladder for this server as a JSON file')
+  new SlashCommandBuilder().setName('fileroles').setDescription('download the rank ladder for this server as a json file')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 
-  // utility
-  new SlashCommandBuilder().setName('servers').setDescription('list all servers the bot is in (WL managers only)')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-  new SlashCommandBuilder().setName('logo').setDescription('change the embed logo used across the bot')
+  // ── BOT MANAGEMENT ────────────────────────────────────────────────────────
+  // status — includes streaming which needs a twitch/youtube url to show properly
+  new SlashCommandBuilder().setName('status').setDescription('change the bot activity status')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('url').setDescription('image URL for the new logo (leave blank to see current)').setRequired(false))
-    .addStringOption(o => o.setName('action').setDescription('reset to default').setRequired(false)
-      .addChoices({ name: 'reset', value: 'reset' })),
-  new SlashCommandBuilder().setName('name').setDescription('change the bot display name used in all embeds')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('text').setDescription('new display name (leave blank to see current)').setRequired(false))
-    .addStringOption(o => o.setName('action').setDescription('reset to default').setRequired(false)
-      .addChoices({ name: 'reset', value: 'reset' })),
-
-  // bridged prefix-only slash commands removed — discord caps total slash
-  // commands at 130, and the explicit list above already exceeds that when
-  // combined with bridges. use `/cmd <name> <args>` to run any prefix command
-  // that doesn't have its own slash entry (e.g. /cmd ping, /cmd snipe).
-  // /cmd lets you run any prefix only command that didn't get its own slash.
-  // useful for things like .editsnipe, .drag, .cleanup, etc.
-  new SlashCommandBuilder().setName('cmd').setDescription('run any prefix only command')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('name').setDescription('the prefix command name (without the prefix)').setRequired(true))
-    .addStringOption(o => o.setName('args').setDescription('arguments to pass to the command').setRequired(false)),
-  // /vanityset binds a vanity tag and a role - members repping /<vanity> in their
-  // status get the role automatically (handled by the presenceupdate listener)
-  new SlashCommandBuilder().setName('vanityset').setDescription('set the vanity code and role for status repping')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('vanity').setDescription('vanity code without the slash (e.g. repent)').setRequired(true))
-    .addRoleOption(o => o.setName('role').setDescription('role to give while repping').setRequired(true)),
-  // /restore needs a real attachment option so users can drag the zip in.
-  // the slash-to-prefix bridge picks the attachment up via interaction.options.data
-  // and exposes it as message.attachments for the existing prefix handler
-  new SlashCommandBuilder().setName('restore').setDescription('restore json state files from a .backup zip')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addAttachmentOption(o => o.setName('zip').setDescription('a .zip produced by /backup').setRequired(true)),
-  // /autorole - pick a role that gets handed to anyone who joins the server.
-  // pass action=off (or omit role with action=remove) to clear it.
-  new SlashCommandBuilder().setName('autorole').setDescription('give a role to anyone who joins the server')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('action').setDescription('what to do').setRequired(true)
+    .addStringOption(o => o.setName('type').setDescription('activity type').setRequired(true)
       .addChoices(
-        { name: 'set',    value: 'set'    },
-        { name: 'remove', value: 'remove' },
-        { name: 'status', value: 'status' }
+        { name: 'playing',   value: 'playing'   },
+        { name: 'watching',  value: 'watching'  },
+        { name: 'listening', value: 'listening' },
+        { name: 'streaming', value: 'streaming' },
+        { name: 'competing', value: 'competing' },
+        { name: 'custom',    value: 'custom'    },
       ))
-    .addRoleOption(o => o.setName('role').setDescription('role to hand out (only needed for set)').setRequired(false)),
-
-  new SlashCommandBuilder().setName('alts').setDescription('check if a user has multiple Discord accounts linked to the same Roblox profile')
+    .addStringOption(o => o.setName('text').setDescription('status text').setRequired(true))
+    .addStringOption(o => o.setName('url').setDescription('stream url — required for streaming type (twitch or youtube)').setRequired(false)),
+  new SlashCommandBuilder().setName('presence').setDescription('change the bot online dot (online/idle/dnd/invisible)')
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('user to check (defaults to you)').setRequired(false)),
+    .addStringOption(o => o.setName('state').setDescription('online state').setRequired(true)
+      .addChoices(
+        { name: 'online',          value: 'online'    },
+        { name: 'idle',            value: 'idle'      },
+        { name: 'do not disturb',  value: 'dnd'       },
+        { name: 'invisible',       value: 'invisible' },
+      )),
 
-  // --- moderation extras ---
-  new SlashCommandBuilder().setName('softban').setDescription('ban then instantly unban (clears their recent messages)')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to softban').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-
-  new SlashCommandBuilder().setName('tempmute').setDescription('mute someone for a set amount of time')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to mute').setRequired(true))
-    .addStringOption(o => o.setName('duration').setDescription('like 10m, 2h, 1d').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-
-  new SlashCommandBuilder().setName('tempban').setDescription('ban someone for a limited time')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to tempban').setRequired(true))
-    .addStringOption(o => o.setName('duration').setDescription('like 1h, 7d').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-
-  new SlashCommandBuilder().setName('massban').setDescription('ban a list of user IDs at once')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('ids').setDescription('space separated user IDs').setRequired(true))
-    .addStringOption(o => o.setName('reason').setDescription('reason').setRequired(false)),
-
-  new SlashCommandBuilder().setName('slowmode').setDescription('set channel slowmode (0 to turn off)')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('seconds').setDescription('slowmode delay in seconds (0-21600)').setRequired(true).setMinValue(0).setMaxValue(21600)),
-
-  new SlashCommandBuilder().setName('cases').setDescription('view mod cases for a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to look up').setRequired(true)),
-
-  new SlashCommandBuilder().setName('case').setDescription('view a specific mod case by number')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('number').setDescription('case number').setRequired(true)),
-
-  new SlashCommandBuilder().setName('delcase').setDescription('delete a mod case')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('number').setDescription('case number to delete').setRequired(true)),
-
-  new SlashCommandBuilder().setName('note').setDescription('add a staff note to a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to note').setRequired(true))
-    .addStringOption(o => o.setName('text').setDescription('the note').setRequired(true)),
-
-  new SlashCommandBuilder().setName('notes').setDescription('view all notes on a user')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to look up').setRequired(true)),
-
-  // --- purge variants ---
-  new SlashCommandBuilder().setName('purgebot').setDescription('delete recent bot messages')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('amount').setDescription('how many to delete (default 20)').setRequired(false).setMinValue(1).setMaxValue(100)),
-
-  new SlashCommandBuilder().setName('purgeuser').setDescription("delete a user's recent messages")
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('whose messages to delete').setRequired(true))
-    .addIntegerOption(o => o.setName('amount').setDescription('how many (default 20)').setRequired(false).setMinValue(1).setMaxValue(100)),
-
-  new SlashCommandBuilder().setName('purgematch').setDescription('delete messages that contain certain text')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('text').setDescription('text to match').setRequired(true))
-    .addIntegerOption(o => o.setName('amount').setDescription('how many to scan (default 50)').setRequired(false).setMinValue(1).setMaxValue(100)),
-
-  new SlashCommandBuilder().setName('purgelinks').setDescription('delete recent messages that have links')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('amount').setDescription('how many to delete (default 20)').setRequired(false).setMinValue(1).setMaxValue(100)),
-
-  new SlashCommandBuilder().setName('purgeimages').setDescription('delete recent messages that have images')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addIntegerOption(o => o.setName('amount').setDescription('how many to delete (default 20)').setRequired(false).setMinValue(1).setMaxValue(100)),
-
-  // --- nicknames ---
-  new SlashCommandBuilder().setName('nick').setDescription("change someone's nickname")
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to rename').setRequired(true))
-    .addStringOption(o => o.setName('name').setDescription('new nickname (leave blank to clear)').setRequired(false)),
-
-  new SlashCommandBuilder().setName('resetnick').setDescription("clear someone's nickname")
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to reset').setRequired(true)),
-
-  new SlashCommandBuilder().setName('nickall').setDescription('add a prefix to every member nickname')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('prefix').setDescription('the prefix to add').setRequired(true)),
-
-  // --- fun / utility ---
-  new SlashCommandBuilder().setName('say').setDescription('make the bot send a message')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('text').setDescription('what to say').setRequired(true)),
-
-  new SlashCommandBuilder().setName('flip').setDescription('flip a coin'),
-
-  new SlashCommandBuilder().setName('choose').setDescription('pick a random option from a list')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addStringOption(o => o.setName('options').setDescription('comma separated options').setRequired(true)),
-
-  new SlashCommandBuilder().setName('invitelb').setDescription('show who has the most server invites')
+  // ── EMBED TOOLS ───────────────────────────────────────────────────────────
+  new SlashCommandBuilder().setName('embed').setDescription('change the global embed color for all bot embeds (staff only)')
+    .addStringOption(o => o.setName('color').setDescription('hex color code, e.g. #FF5500 or FF5500').setRequired(true))
     .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
-
-  // --- dm ---
-  new SlashCommandBuilder().setName('dm').setDescription('send a DM to a user as the bot')
-    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS)
-    .addUserOption(o => o.setName('user').setDescription('who to DM').setRequired(true))
-    .addStringOption(o => o.setName('message').setDescription('what to send').setRequired(true)),
+  new SlashCommandBuilder().setName('embedcreate').setDescription('build and send a fully custom embed to any channel (staff only)')
+    .addStringOption(o => o.setName('description').setDescription('main body text of the embed').setRequired(true))
+    .addStringOption(o => o.setName('title').setDescription('title of the embed').setRequired(false))
+    .addStringOption(o => o.setName('color').setDescription('hex color code, e.g. #FF5500 (defaults to server color)').setRequired(false))
+    .addChannelOption(o => o.setName('channel').setDescription('channel to send the embed in (defaults to current channel)').setRequired(false))
+    .addStringOption(o => o.setName('footer').setDescription('footer text').setRequired(false))
+    .addStringOption(o => o.setName('image').setDescription('image url to attach at the bottom of the embed').setRequired(false))
+    .addStringOption(o => o.setName('thumbnail').setDescription('thumbnail image url (top right corner)').setRequired(false))
+    .setIntegrationTypes(ALL_INSTALLS).setContexts(ALL_CONTEXTS),
 ].map(c => c.toJSON());
 
-// status helper
+// status helper — streaming needs a valid twitch or youtube url to show the purple badge
 function applyStatus(statusData) {
-  const typeMap = { playing: ActivityType.Playing, streaming: ActivityType.Streaming, listening: ActivityType.Listening, watching: ActivityType.Watching, competing: ActivityType.Competing, custom: ActivityType.Custom };
-  client.user.setActivity({ name: statusData.text, type: typeMap[statusData.type] ?? ActivityType.Playing });
+  const typeMap = {
+    playing:   ActivityType.Playing,
+    streaming: ActivityType.Streaming,
+    listening: ActivityType.Listening,
+    watching:  ActivityType.Watching,
+    competing: ActivityType.Competing,
+    custom:    ActivityType.Custom,
+  };
+  const activityType = typeMap[statusData.type] ?? ActivityType.Playing;
+  const activityOptions = { name: statusData.text, type: activityType };
+  // streaming is the only type that needs a url — without it discord wont show the purple badge
+  if (activityType === ActivityType.Streaming && statusData.url) {
+    activityOptions.url = statusData.url;
+  }
+  client.user.setActivity(activityOptions);
 }
 
 // changes the green/yellow/red dot next to the bots name
@@ -3777,9 +3647,14 @@ async function dispatchSlashInner(interaction) {
         const groups = groupsData.sort((a, b) => a.group.name.localeCompare(b.group.name));
         const avatarUrl = (await (await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`)).json()).data?.[0]?.imageUrl;
         const userGroupIds = new Set(groups.map(g => String(g.group.id)));
+        // check if user has a pending join request (only when not already in group)
+        let hasPendingRequest = false;
+        if (!inGroup) {
+          hasPendingRequest = await userHasPendingJoinRequest(userId, getGroupId());
+        }
         gcCache.set(robloxUsername.toLowerCase(), { displayName, groups, avatarUrl, userGroupIds, inGroup });
         setTimeout(() => gcCache.delete(robloxUsername.toLowerCase()), 10 * 60 * 1000);
-        const statusEmbed = inGroup ? buildGcInGroupEmbed(displayName, userGroupIds) : buildGcNotInGroupEmbed(displayName, userGroupIds);
+        const statusEmbed = inGroup ? buildGcInGroupEmbed(displayName, userGroupIds) : buildGcNotInGroupEmbed(displayName, userGroupIds, hasPendingRequest);
         await ch.send({
           embeds: [buildGcEmbed(displayName, groups, avatarUrl, 0), statusEmbed],
           components: groups.length > GC_PER_PAGE ? [buildGcRow(robloxUsername, groups, 0)] : []
@@ -4279,7 +4154,8 @@ async function dispatchSlashInner(interaction) {
         }
       }
 
-      // accept user (accept their roblox group join request)
+      // accept user (accept their roblox group join request — does NOT give verify role)
+      // use the Verify button to link discord↔roblox and give the verify role.
       if (interaction.customId === 'ticket accept') {
         const username = t.robloxUsername;
         if (!username) return interaction.reply({ embeds: [errorEmbed('no username').setDescription('no roblox username is attached to this ticket')], ephemeral: true });
@@ -4288,34 +4164,8 @@ async function dispatchSlashInner(interaction) {
           const userBasic = (await (await fetch('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }) })).json()).data?.[0];
           if (!userBasic) return interaction.editReply({ embeds: [errorEmbed('not found').setDescription(`could not find a roblox user named **${username}**`)] });
           await acceptRobloxJoinRequest(userBasic.id, getGroupId());
-          // also try to give the verify role. check both possible config stores
-          let roleNote = '';
-          const vcfg = loadVerifyConfig();
-          const mainCfg = loadConfig();
-          const verifyRoleId = vcfg?.[guild.id]?.roleId || vcfg?.roleId || mainCfg.verifyRoleId || null;
-          if (verifyRoleId) {
-            const role = guild.roles.cache.get(verifyRoleId);
-            const member = await guild.members.fetch(t.userId).catch(() => null);
-            const me = guild.members.me;
-            if (!role) {
-              roleNote = `\n(verify role no longer exists in this server)`;
-            } else if (!member) {
-              roleNote = `\n(couldn't fetch the member to give them ${role})`;
-            } else if (role.managed) {
-              roleNote = `\n(can't give ${role} - it's managed by an integration)`;
-            } else if (me && role.position >= me.roles.highest.position) {
-              roleNote = `\n(can't give ${role} - move my role above it)`;
-            } else {
-              try {
-                await member.roles.add(role, `ticket accept by ${interaction.user.tag}`);
-                roleNote = `\nand gave them the ${role} role`;
-              } catch (err) {
-                roleNote = `\n(couldn't add ${role}: ${err.message})`;
-              }
-            }
-          }
           const supportPingAccept = support.length ? support.map(id => `<@&${id}>`).join(' ') : '';
-          return interaction.editReply({ content: `${interaction.user} accepted <@${t.userId}> into the group${roleNote}${supportPingAccept ? `\n${supportPingAccept}` : ''}`, allowedMentions: { users: [interaction.user.id, t.userId], roles: support } });
+          return interaction.editReply({ content: `${interaction.user} accepted <@${t.userId}> into the group${supportPingAccept ? `\n${supportPingAccept}` : ''}`, allowedMentions: { users: [interaction.user.id, t.userId], roles: support } });
         } catch (e) {
           return interaction.editReply({ embeds: [errorEmbed('failed').setDescription(`couldn't accept user ${e.message}`)] });
         }
@@ -4836,12 +4686,18 @@ async function dispatchSlashInner(interaction) {
   }
 
   if (commandName === 'status') {
+    if (!canUseAny(interaction.user.id)) return interaction.reply({ content: 'only staff can change the status', ephemeral: true });
     const type = interaction.options.getString('type');
     const text = interaction.options.getString('text');
-    const statusData = { type, text };
+    const url  = interaction.options.getString('url') || null;
+    // streaming needs a valid url or discord wont show the purple streaming badge
+    if (type === 'streaming' && !url)
+      return interaction.reply({ content: 'streaming status requires a url — pass a twitch or youtube link in the `url` option', ephemeral: true });
+    const statusData = { type, text, url };
     applyStatus(statusData);
     const cfg = loadConfig(); cfg.status = statusData; saveConfig(cfg);
-    return interaction.reply({ content: `status changed to **${type}** ${text}` });
+    const urlNote = url ? ` (streaming: ${url})` : '';
+    return interaction.reply({ content: `status set to **${type}** — ${text}${urlNote}`, ephemeral: true });
   }
 
   // change the online dot (online / idle / dnd / invisible)
@@ -5715,6 +5571,281 @@ async function dispatchSlashInner(interaction) {
     } catch {
       return interaction.reply({ content: `couldn't DM **${targetUser.tag}** — they probably have DMs off`, ephemeral: true });
     }
+  }
+
+  // /queue — staff opens the raid queue in this channel
+  // you can optionally pass a log channel where join announcements will be posted
+  if (commandName === 'queue') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!canUseAny(interaction.user.id))
+      return interaction.reply({ content: 'only staff can open the queue', ephemeral: true });
+
+    const logChannel = interaction.options.getChannel('logchannel') || null;
+    const queueData = loadQueue();
+    if (!queueData[guild.id]) queueData[guild.id] = {};
+
+    // save the queue — store the log channel id if one was provided
+    queueData[guild.id].raidQueue = {
+      open: true,
+      channelId: interaction.channel.id,
+      logChannelId: logChannel?.id || null,
+      members: [],
+      openedAt: Date.now(),
+      openedBy: interaction.user.id,
+    };
+    saveQueue(queueData);
+
+    const prefix = getPrefix();
+    const logNote = logChannel ? `\nThe final member list will be posted in ${logChannel}.` : '';
+    return interaction.reply({
+      embeds: [baseEmbed()
+        .setTitle('Raid Queue Opened')
+        .setDescription(`The queue is now open! Type \`${prefix}join\` or \`/join\` in **any channel** to get in.${logNote}`)
+        .setTimestamp()],
+    });
+  }
+
+  // /join — anyone with a linked Roblox account can join the queue
+  if (commandName === 'join') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+
+    const queueData = loadQueue();
+    const raidQueue = queueData[guild.id]?.raidQueue;
+
+    if (!raidQueue?.open)
+      return interaction.reply({ content: 'there is no open raid queue right now', ephemeral: true });
+
+    // make sure they have their roblox linked
+    const verifyData = loadVerify();
+    const linkedAccount = verifyData.verified?.[interaction.user.id];
+    if (!linkedAccount)
+      return interaction.reply({ content: 'you need to link your Roblox account first — use the verify button in the ticket channel', ephemeral: true });
+
+    if (!Array.isArray(raidQueue.members)) raidQueue.members = [];
+
+    // dont let them join twice
+    if (raidQueue.members.some(m => m.discordId === interaction.user.id))
+      return interaction.reply({ content: 'you are already in the queue!', ephemeral: true });
+
+    // add them in
+    raidQueue.members.push({ discordId: interaction.user.id, robloxName: linkedAccount.robloxName });
+    saveQueue(queueData);
+
+    const position = raidQueue.members.length;
+    const joinEmbed = baseEmbed()
+      .setTitle('Joined the Queue')
+      .setDescription(`${interaction.user} (**${linkedAccount.robloxName}**) joined the queue.\nYou are #**${position}** in line.`)
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [joinEmbed] });
+
+    // if there is a log channel set, announce the join there too
+    if (raidQueue.logChannelId) {
+      const logCh = guild.channels.cache.get(raidQueue.logChannelId);
+      if (logCh) {
+        await logCh.send({
+          embeds: [baseEmbed()
+            .setTitle('New Queue Member')
+            .setDescription(`${interaction.user} (**${linkedAccount.robloxName}**) joined — they are #**${position}** in line.`)
+            .setTimestamp()],
+        }).catch(() => {});
+      }
+    }
+    return;
+  }
+
+  // /list — show everyone currently in the queue
+  // optionally pass a channel to post the list there instead of replying here
+  if (commandName === 'list') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+
+    const queueData = loadQueue();
+    const raidQueue = queueData[guild.id]?.raidQueue;
+
+    if (!raidQueue?.open)
+      return interaction.reply({ content: 'there is no active raid queue right now', ephemeral: true });
+
+    const members = raidQueue.members || [];
+    const targetChannel = interaction.options.getChannel('channel') || null;
+
+    if (!members.length) {
+      const emptyEmbed = baseEmbed().setTitle('Raid Queue').setDescription('nobody has joined yet — the queue is empty').setTimestamp();
+      if (targetChannel) {
+        await targetChannel.send({ embeds: [emptyEmbed] });
+        return interaction.reply({ content: `queue list posted in ${targetChannel}`, ephemeral: true });
+      }
+      return interaction.reply({ embeds: [emptyEmbed] });
+    }
+
+    const lines = members.map((m, i) => {
+      const id = typeof m === 'string' ? m : m.discordId;
+      const rblx = typeof m === 'string' ? null : m.robloxName;
+      return `**${i + 1}.** <@${id}>${rblx ? ` — **${rblx}**` : ''}`;
+    });
+
+    // split into chunks if the list is super long
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+      if (current.length + line.length + 1 > 3900) { chunks.push(current); current = ''; }
+      current += (current ? '\n' : '') + line;
+    }
+    if (current) chunks.push(current);
+
+    const sendTo = targetChannel || interaction.channel;
+    const firstEmbed = baseEmbed().setTitle(`Raid Queue — ${members.length} member${members.length !== 1 ? 's' : ''}`).setDescription(chunks[0]).setTimestamp();
+
+    if (targetChannel) {
+      await targetChannel.send({ embeds: [firstEmbed] });
+      for (const chunk of chunks.slice(1)) await targetChannel.send({ embeds: [baseEmbed().setDescription(chunk)] });
+      return interaction.reply({ content: `queue list posted in ${targetChannel}`, ephemeral: true });
+    }
+
+    await interaction.reply({ embeds: [firstEmbed] });
+    for (const chunk of chunks.slice(1)) await interaction.followUp({ embeds: [baseEmbed().setDescription(chunk)] });
+    return;
+  }
+
+  // /closequeue — staff closes the queue and optionally dumps the final list somewhere
+  if (commandName === 'closequeue') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!canUseAny(interaction.user.id))
+      return interaction.reply({ content: 'only staff can close the queue', ephemeral: true });
+
+    const queueData = loadQueue();
+    const raidQueue = queueData[guild.id]?.raidQueue;
+
+    if (!raidQueue?.open)
+      return interaction.reply({ content: 'there is no active queue to close right now', ephemeral: true });
+
+    const members = [...(raidQueue.members || [])];
+    queueData[guild.id].raidQueue = { open: false, members: [], closedAt: Date.now(), closedBy: interaction.user.id };
+    saveQueue(queueData);
+
+    const memberCount = members.length;
+    const closedEmbed = baseEmbed()
+      .setTitle('Raid Queue Closed')
+      .setDescription(memberCount
+        ? `The queue has been closed with **${memberCount}** member${memberCount !== 1 ? 's' : ''} in it.`
+        : 'The queue is now closed. Nobody had joined.')
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [closedEmbed] });
+
+    // post the final member list if there were any members
+    if (memberCount) {
+      // priority: channel option > saved log channel > current channel
+      const savedLogCh = raidQueue.logChannelId ? guild.channels.cache.get(raidQueue.logChannelId) : null;
+      const targetChannel = interaction.options.getChannel('channel') || savedLogCh || interaction.channel;
+      const lines = members.map((m, i) => {
+        const id = typeof m === 'string' ? m : m.discordId;
+        const rblx = typeof m === 'string' ? null : m.robloxName;
+        return `**${i + 1}.** <@${id}>${rblx ? ` — **${rblx}**` : ''}`;
+      });
+      const chunks = [];
+      let current = '';
+      for (const line of lines) {
+        if (current.length + line.length + 1 > 3900) { chunks.push(current); current = ''; }
+        current += (current ? '\n' : '') + line;
+      }
+      if (current) chunks.push(current);
+      await targetChannel.send({ embeds: [baseEmbed().setTitle(`Final Queue — ${memberCount} member${memberCount !== 1 ? 's' : ''}`).setDescription(chunks[0]).setTimestamp()] });
+      for (const chunk of chunks.slice(1)) await targetChannel.send({ embeds: [baseEmbed().setDescription(chunk)] });
+    }
+    return;
+  }
+
+  // /embed — change the global color used on all bot embeds
+  if (commandName === 'embed') {
+    if (!canUseAny(interaction.user.id))
+      return interaction.reply({ content: 'only staff can change the embed color', ephemeral: true });
+
+    const rawColor = interaction.options.getString('color');
+    const parsed = parseInt(rawColor.replace('#', ''), 16);
+
+    if (isNaN(parsed))
+      return interaction.reply({ content: `that doesn't look like a valid hex color — try something like \`#FF5500\` or \`2C2F33\``, ephemeral: true });
+
+    setEmbedColor(parsed);
+
+    return interaction.reply({
+      embeds: [baseEmbed()
+        .setTitle('Embed Color Updated')
+        .setDescription(`All bot embeds will now use **#${parsed.toString(16).toUpperCase().padStart(6, '0')}** as their color.\nThis is what it looks like!`)
+        .setTimestamp()],
+    });
+  }
+
+  // /embedcreate — build and send a fully custom embed to any channel
+  if (commandName === 'embedcreate') {
+    if (!canUseAny(interaction.user.id))
+      return interaction.reply({ content: 'only staff can create embeds', ephemeral: true });
+
+    const desc       = interaction.options.getString('description');
+    const title      = interaction.options.getString('title') || null;
+    const rawColor   = interaction.options.getString('color') || null;
+    const footer     = interaction.options.getString('footer') || null;
+    const imageUrl   = interaction.options.getString('image') || null;
+    const thumbUrl   = interaction.options.getString('thumbnail') || null;
+    const destChannel = interaction.options.getChannel('channel') || interaction.channel;
+
+    // build the embed — start with base then layer in the custom options
+    const customEmbed = new EmbedBuilder().setDescription(desc).setTimestamp();
+
+    if (title)    customEmbed.setTitle(title);
+    if (footer)   customEmbed.setFooter({ text: footer });
+    if (imageUrl) customEmbed.setImage(imageUrl);
+    if (thumbUrl) customEmbed.setThumbnail(thumbUrl);
+
+    // use the custom color if provided, otherwise fall back to the server color
+    if (rawColor) {
+      const parsed = parseInt(rawColor.replace('#', ''), 16);
+      if (!isNaN(parsed)) customEmbed.setColor(parsed);
+      else customEmbed.setColor(getEmbedColor());
+    } else {
+      customEmbed.setColor(getEmbedColor());
+    }
+
+    try {
+      await destChannel.send({ embeds: [customEmbed] });
+      return interaction.reply({ content: `embed sent to ${destChannel}`, ephemeral: true });
+    } catch {
+      return interaction.reply({ content: `couldn't send to that channel — make sure i have permission to post there`, ephemeral: true });
+    }
+  }
+
+  // /check — list all pending group join requests (staff only)
+  if (commandName === 'check') {
+    if (!guild) return interaction.reply({ content: 'this only works in a server', ephemeral: true });
+    if (!canUseAny(interaction.user.id))
+      return interaction.reply({ content: 'only whitelist managers can use this', ephemeral: true });
+    await interaction.deferReply();
+    const groupId = getGroupId();
+    const requests = await fetchAllGroupJoinRequests(groupId);
+    if (requests === null)
+      return interaction.editReply({ embeds: [errorEmbed('failed').setDescription('could not fetch pending requests — make sure `ROBLOX_COOKIE` is set and the bot account has group admin access')] });
+    if (!requests.length)
+      return interaction.editReply({ embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Pending Join Requests').setDescription('no pending join requests').setTimestamp()] });
+    const lines = requests.map((r, i) => {
+      const name = r.requester?.username || 'unknown';
+      const display = r.requester?.displayName && r.requester.displayName !== name ? ` (${r.requester.displayName})` : '';
+      const profileUrl = `https://www.roblox.com/users/${r.requester?.userId}/profile`;
+      return `**${i + 1}.** [${name}${display}](${profileUrl})`;
+    });
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+      if (current.length + line.length + 1 > 3900) { chunks.push(current); current = ''; }
+      current += (current ? '\n' : '') + line;
+    }
+    if (current) chunks.push(current);
+    const firstEmbed = baseEmbed().setColor(0x2C2F33).setTitle(`Pending Join Requests — ${requests.length}`).setDescription(chunks[0]).setTimestamp();
+    if (chunks.length === 1) return interaction.editReply({ embeds: [firstEmbed] });
+    await interaction.editReply({ embeds: [firstEmbed] });
+    for (const chunk of chunks.slice(1)) {
+      await interaction.followUp({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(chunk)] });
+    }
+    return;
   }
 
   // /taglog recent tag log entries
@@ -6916,14 +7047,27 @@ async function dispatchPrefixInner(message) {
   }
 
   if (command === 'status') {
-    const validTypes = ['playing', 'watching', 'listening', 'competing', 'custom'];
+    if (!canUseAny(message.author.id)) return message.reply('only staff can change the status.');
+    const validTypes = ['playing', 'watching', 'listening', 'competing', 'streaming', 'custom'];
     const type = args[0]?.toLowerCase();
-    const text = args.slice(1).join(' ');
-    if (!type || !validTypes.includes(type) || !text) return message.reply('not the right format');
-    const statusData = { type, text };
+    // for streaming: .status streaming <url> <text>
+    // for everything else: .status <type> <text>
+    if (!type || !validTypes.includes(type)) return message.reply(`valid types: ${validTypes.join(', ')}`);
+    let url = null;
+    let text;
+    if (type === 'streaming') {
+      url = args[1] || null;
+      text = args.slice(2).join(' ');
+      if (!url || !text) return message.reply('format for streaming: `.status streaming <twitch/youtube url> <status text>`');
+    } else {
+      text = args.slice(1).join(' ');
+      if (!text) return message.reply(`format: \`.status ${type} <text>\``);
+    }
+    const statusData = { type, text, url };
     applyStatus(statusData);
     const cfg = loadConfig(); cfg.status = statusData; saveConfig(cfg);
-    return message.reply({ content: `status changed to **${type}** ${text}`, allowedMentions: { repliedUser: false } });
+    const urlNote = url ? ` → ${url}` : '';
+    return message.reply({ content: `status set to **${type}** — ${text}${urlNote}`, allowedMentions: { repliedUser: false } });
   }
 
   // .presence online / idle / dnd / invisible
@@ -10171,6 +10315,212 @@ async function dispatchPrefixInner(message) {
   }
 
 
+
+  // .queue [#logchannel] — staff opens the raid queue here
+  // mention a channel if you want join announcements posted there
+  if (command === 'queue') {
+    if (!message.guild) return message.reply('server only.');
+    if (!canUseAny(message.author.id)) return message.reply('only staff can open the queue.');
+
+    // if they mentioned a channel use it as the log channel
+    const logChannel = message.mentions.channels.first() || null;
+
+    const queueData = loadQueue();
+    if (!queueData[message.guild.id]) queueData[message.guild.id] = {};
+
+    queueData[message.guild.id].raidQueue = {
+      open: true,
+      channelId: message.channel.id,
+      logChannelId: logChannel?.id || null,
+      members: [],
+      openedAt: Date.now(),
+      openedBy: message.author.id,
+    };
+    saveQueue(queueData);
+
+    const prefix = getPrefix();
+    const logNote = logChannel ? `\nThe final member list will be posted in ${logChannel}.` : '';
+    return message.reply({
+      embeds: [baseEmbed()
+        .setTitle('Raid Queue Opened')
+        .setDescription(`The queue is now open! Type \`${prefix}join\` in **any channel** to get in.${logNote}`)
+        .setTimestamp()],
+    });
+  }
+
+  // .join — join the active raid queue (must have roblox linked)
+  if (command === 'join') {
+    if (!message.guild) return message.reply('server only.');
+
+    const queueData = loadQueue();
+    const raidQueue = queueData[message.guild.id]?.raidQueue;
+
+    if (!raidQueue?.open)
+      return message.reply('there is no open raid queue right now.');
+
+    // they need their roblox linked before they can join
+    const verifyData = loadVerify();
+    const linkedAccount = verifyData.verified?.[message.author.id];
+    if (!linkedAccount)
+      return message.reply('you need to link your Roblox account first — use the verify button in the ticket channel.');
+
+    if (!Array.isArray(raidQueue.members)) raidQueue.members = [];
+
+    // stop them from joining twice
+    if (raidQueue.members.some(m => m.discordId === message.author.id))
+      return message.reply('you are already in the queue!');
+
+    raidQueue.members.push({ discordId: message.author.id, robloxName: linkedAccount.robloxName });
+    saveQueue(queueData);
+
+    const position = raidQueue.members.length;
+    await message.reply({
+      embeds: [baseEmbed()
+        .setTitle('Joined the Queue')
+        .setDescription(`${message.author} (**${linkedAccount.robloxName}**) joined the queue.\nYou are #**${position}** in line.`)
+        .setTimestamp()],
+    });
+
+    // post to the log channel if one was set when the queue opened
+    if (raidQueue.logChannelId) {
+      const logCh = message.guild.channels.cache.get(raidQueue.logChannelId);
+      if (logCh) {
+        await logCh.send({
+          embeds: [baseEmbed()
+            .setTitle('New Queue Member')
+            .setDescription(`${message.author} (**${linkedAccount.robloxName}**) joined — they are #**${position}** in line.`)
+            .setTimestamp()],
+        }).catch(() => {});
+      }
+    }
+    return;
+  }
+
+  // .list [#channel] — show everyone in the queue
+  // mention a channel to post the list there instead of replying here
+  if (command === 'list') {
+    if (!message.guild) return message.reply('server only.');
+
+    const queueData = loadQueue();
+    const raidQueue = queueData[message.guild.id]?.raidQueue;
+
+    if (!raidQueue?.open)
+      return message.reply('there is no active raid queue right now.');
+
+    const members = raidQueue.members || [];
+    const targetChannel = message.mentions.channels.first() || null;
+
+    if (!members.length) {
+      const emptyEmbed = baseEmbed().setTitle('Raid Queue').setDescription('nobody has joined yet — the queue is empty').setTimestamp();
+      if (targetChannel) { await targetChannel.send({ embeds: [emptyEmbed] }); return; }
+      return message.reply({ embeds: [emptyEmbed] });
+    }
+
+    const lines = members.map((m, i) => {
+      const id = typeof m === 'string' ? m : m.discordId;
+      const rblx = typeof m === 'string' ? null : m.robloxName;
+      return `**${i + 1}.** <@${id}>${rblx ? ` — **${rblx}**` : ''}`;
+    });
+
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+      if (current.length + line.length + 1 > 3900) { chunks.push(current); current = ''; }
+      current += (current ? '\n' : '') + line;
+    }
+    if (current) chunks.push(current);
+
+    const sendTo = targetChannel || message.channel;
+    const firstEmbed = baseEmbed().setTitle(`Raid Queue — ${members.length} member${members.length !== 1 ? 's' : ''}`).setDescription(chunks[0]).setTimestamp();
+
+    if (targetChannel) {
+      await targetChannel.send({ embeds: [firstEmbed] });
+      for (const chunk of chunks.slice(1)) await targetChannel.send({ embeds: [baseEmbed().setDescription(chunk)] });
+      return;
+    }
+
+    await message.reply({ embeds: [firstEmbed] });
+    for (const chunk of chunks.slice(1)) await message.channel.send({ embeds: [baseEmbed().setDescription(chunk)] });
+    return;
+  }
+
+  // .closequeue [#channel] — staff closes the queue and posts the final list
+  // mention a channel to post the final list there, otherwise it posts here
+  if (command === 'closequeue') {
+    if (!message.guild) return message.reply('server only.');
+    if (!canUseAny(message.author.id)) return message.reply('only staff can close the queue.');
+
+    const queueData = loadQueue();
+    const raidQueue = queueData[message.guild.id]?.raidQueue;
+
+    if (!raidQueue?.open) return message.reply('there is no active queue to close right now.');
+
+    const members = [...(raidQueue.members || [])];
+    queueData[message.guild.id].raidQueue = { open: false, members: [], closedAt: Date.now(), closedBy: message.author.id };
+    saveQueue(queueData);
+
+    const memberCount = members.length;
+    await message.reply({
+      embeds: [baseEmbed()
+        .setTitle('Raid Queue Closed')
+        .setDescription(memberCount
+          ? `The queue has been closed with **${memberCount}** member${memberCount !== 1 ? 's' : ''} in it.`
+          : 'The queue is now closed. Nobody had joined.')
+        .setTimestamp()],
+    });
+
+    if (memberCount) {
+      // priority: channel mention in message > saved log channel > current channel
+      const savedLogCh = raidQueue.logChannelId ? message.guild.channels.cache.get(raidQueue.logChannelId) : null;
+      const targetChannel = message.mentions.channels.first() || savedLogCh || message.channel;
+      const lines = members.map((m, i) => {
+        const id = typeof m === 'string' ? m : m.discordId;
+        const rblx = typeof m === 'string' ? null : m.robloxName;
+        return `**${i + 1}.** <@${id}>${rblx ? ` — **${rblx}**` : ''}`;
+      });
+      const chunks = [];
+      let current = '';
+      for (const line of lines) {
+        if (current.length + line.length + 1 > 3900) { chunks.push(current); current = ''; }
+        current += (current ? '\n' : '') + line;
+      }
+      if (current) chunks.push(current);
+      await targetChannel.send({ embeds: [baseEmbed().setTitle(`Final Queue — ${memberCount} member${memberCount !== 1 ? 's' : ''}`).setDescription(chunks[0]).setTimestamp()] });
+      for (const chunk of chunks.slice(1)) await targetChannel.send({ embeds: [baseEmbed().setDescription(chunk)] });
+    }
+    return;
+  }
+
+  // .check — list all pending group join requests (staff only)
+  if (command === 'check') {
+    if (!message.guild) return message.reply('server only.');
+    if (!canUseAny(message.author.id)) return message.reply('only whitelist managers can use this.');
+    const statusMsg = await message.reply('fetching pending join requests...');
+    const groupId = getGroupId();
+    const requests = await fetchAllGroupJoinRequests(groupId);
+    if (requests === null)
+      return statusMsg.edit({ content: null, embeds: [errorEmbed('failed').setDescription('could not fetch pending requests — make sure `ROBLOX_COOKIE` is set and the bot account has group admin access')] });
+    if (!requests.length)
+      return statusMsg.edit({ content: null, embeds: [baseEmbed().setColor(0x2C2F33).setTitle('Pending Join Requests').setDescription('no pending join requests').setTimestamp()] });
+    const lines = requests.map((r, i) => {
+      const name = r.requester?.username || 'unknown';
+      const display = r.requester?.displayName && r.requester.displayName !== name ? ` (${r.requester.displayName})` : '';
+      const profileUrl = `https://www.roblox.com/users/${r.requester?.userId}/profile`;
+      return `**${i + 1}.** [${name}${display}](${profileUrl})`;
+    });
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+      if (current.length + line.length + 1 > 3900) { chunks.push(current); current = ''; }
+      current += (current ? '\n' : '') + line;
+    }
+    if (current) chunks.push(current);
+    await statusMsg.edit({ content: null, embeds: [baseEmbed().setColor(0x2C2F33).setTitle(`Pending Join Requests — ${requests.length}`).setDescription(chunks[0]).setTimestamp()] });
+    for (const chunk of chunks.slice(1)) {
+      await message.channel.send({ embeds: [baseEmbed().setColor(0x2C2F33).setDescription(chunk)] });
+    }
+    return;
+  }
 
   // prefix → slash bridge: any prefix command not handled above falls
   // through here. we re dispatch as a slash command so every slash only
