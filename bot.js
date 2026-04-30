@@ -1848,7 +1848,7 @@ async function unjailMember(guild, member, modTag) {
 // name shown in the embed title and footer. categories with more commands
 // than HELP_PER_PAGE simply span multiple pages.
 const HELP_CATEGORIES = [
-  { name: 'Verification', cmds: [
+    { name: "Verification", cmds: [
     "{p}roblox [username] — look up any roblox account by username, shows their profile info",
     "{p}rid [id] — same thing but you give it the numeric roblox ID instead of a name",
     "{p}gc [username] — lists every roblox group that person is in",
@@ -1857,8 +1857,14 @@ const HELP_CATEGORIES = [
     "{p}register — starts the verification flow for someone",
     "{p}verify — finishes the verification and links their accounts",
     "{p}linked — shows every discord↔roblox account that is currently linked",
+    "{p}register start the verification flow",
+    "{p}pregister pre-register someone (whitelist only)",
+    "{p}verify finish verification",
+    "{p}registeredlist see who's verified",
+    "{p}linked list every roblox-discord link",
+    "{p}setverifyrole [role] role given when someone verifies",
   ]},
-  { name: 'Roblox', cmds: [
+  { name: "Roblox", cmds: [
     "{p}roblox [username] — pull up a roblox user's profile info",
     "{p}rid [id] — look someone up by their roblox numeric ID",
     "{p}gc [username] — list all groups a roblox user is in",
@@ -1866,40 +1872,66 @@ const HELP_CATEGORIES = [
     "{p}grouproles — shows every role in the current roblox group",
     "{p}cookie [.ROBLOSECURITY value] — sets the bot's roblox cookie (owner only)",
     "{p}check — lists everyone who has a pending join request to the group (staff only)",
+    "{p}roblox [username] look up a roblox user",
+    "{p}rid [id] look up a roblox user by their numeric ID",
+    "{p}gc [username] list a user's roblox groups",
+    "{p}rg [link/id] change the bot's tracked roblox group",
+    "{p}cookie [value] set the .ROBLOSECURITY cookie (owner only)",
+    "{p}group view or edit group config",
+    "{p}flag [id] flag a roblox group",
+    "{p}unflag [id] unflag a roblox group",
+    "{p}flagged list flagged groups",
+    "{p}grouproles list roles in the current group",
+    "{p}whoisin [game URL/place id] who from the group is in this game",
   ]},
-  { name: 'Tickets', cmds: [
+  { name: "Tickets", cmds: [
     "{p}setuptickets [#channel] [type] — drops a ticket panel in a channel. type can be: verification, tag, or both (defaults to both)",
     "{p}closeticket — closes and deletes the current ticket channel",
     "{p}ticket supportroles add/remove/list — manage which discord roles can see and work tickets",
+    "{p}setuptickets [channel] [type] sends a ticket panel — type is verification, tag, or both (default both)",
+    "{p}closeticket closes the current ticket channel",
+    "{p}ticket supportroles add/remove/list manage who can see tickets",
   ]},
-  { name: 'Group Raids', cmds: [
+  { name: "Group Raids", cmds: [
     "{p}queue [#logchannel] — opens the raid queue, members can join from any channel. mention a channel to send the final list there when you close it",
     "{p}join — join the active raid queue (you need your roblox linked first)",
     "{p}list [#channel] — show everyone currently in the queue. mention a channel to post it there",
     "{p}closequeue [#channel] — closes the queue and posts the full member list. sends to the log channel if one was set",
     "{p}check — see all pending join requests to the roblox group (staff only)",
   ]},
-  { name: 'Whitelist & Access', cmds: [
+  { name: "Whitelist & Access", cmds: [
     "{p}whitelist add/remove/list/check [user] — manage who is on the bot whitelist",
     "{p}wlmanager add/remove/list [user] — manage who counts as a whitelist manager",
     "{p}tempowner [user] — gives someone full access to all bot commands temporarily",
     "{p}untempowner [user] — takes that access away",
   ]},
-  { name: 'Rank Ladder', cmds: [
+  { name: "Rank Ladder", cmds: [
     "{p}rankup [user] [levels] — moves a member up the rank ladder. you can rank multiple people at once and jump more than one level",
     "{p}setrankroles set/list/clear [roles...] — configure the rank order for this server",
     "{p}fileroles — downloads the current rank ladder as a JSON file",
+    "{p}rankup [user] [levels] rank a member up the configured ladder",
+    "{p}setrankroles set / list / clear configure the rank ladder",
+    "{p}fileroles download the rank ladder as a JSON file",
   ]},
-  { name: 'Bot Settings', cmds: [
+  { name: "Bot Settings", cmds: [
     "{p}status [type] [text] — change the bot's activity. types: playing, watching, listening, competing, streaming, custom",
     "{p}status streaming [url] [text] — streaming specifically needs a twitch or youtube url to show the purple badge",
     "{p}presence [state] — change the online dot. options: online, idle, dnd, invisible",
     "{p}embed [#hex] — change the color used on all bot embeds server-wide (e.g. #FF5500)",
     "{p}embedcreate — send a fully custom embed to any channel (title, description, color, image, footer, thumbnail)",
     "{p}help — shows this menu",
+    "{p}prefix [new] view or change the bot prefix",
+    "{p}name [text] change bot display name in embeds",
+    "{p}logo [url] change the embed logo",
+    "{p}status [type] [text] change bot activity status",
+    "{p}presence [state] online / idle / dnd / invisible",
+    "{p}vanityset [vanity] [role] tie a vanity status to a role",
+    "{p}setlogchannel [channel] set the action log channel",
+    "{p}setlogchanneltag [channel] set the tag log channel",
+    "{p}logstatus show the current log channel setting",
+    "{p}restore (attach .backup zip) restore state files from a backup",
   ]},
-  // Moderation hidden - kept as prefix only, not in slash commands
-  { name: 'Moderation', cmds: [
+  { name: "Moderation", cmds: [
     "{p}ban [user] [reason] bans someone from the server (mention or ID)",
     "{p}unban [id] [reason] unbans someone by their ID",
     "{p}hb [user] [reason] hardbans so they can't rejoin even after unban",
@@ -1932,7 +1964,7 @@ const HELP_CATEGORIES = [
     "{p}notes [user] view all notes on someone",
     "{p}dm [user] [message] send a DM to a user as the bot",
   ]},
-  { name: 'Channels', cmds: [
+  { name: "Channels", cmds: [
     "{p}lock locks the channel so no one can talk",
     "{p}unlock opens the channel back up",
     "{p}nuke deletes and recreates this channel (wipes everything)",
@@ -1940,7 +1972,7 @@ const HELP_CATEGORIES = [
     "{p}snipe shows the last deleted message here",
     "{p}autopurge [#channel] [seconds | off] auto-delete old messages",
   ]},
-  { name: 'Purges', cmds: [
+  { name: "Purges", cmds: [
     "{p}purge [amount] deletes a bunch of messages at once",
     "{p}purgebot [n] only deletes bot messages",
     "{p}purgeuser [user] [n] deletes a specific user's messages",
@@ -1948,25 +1980,7 @@ const HELP_CATEGORIES = [
     "{p}purgelinks [n] deletes recent messages with links",
     "{p}purgeimages [n] deletes recent messages with images",
   ]},
-  { name: 'Tickets', cmds: [
-    "{p}setuptickets [channel] [type] sends a ticket panel — type is verification, tag, or both (default both)",
-    "{p}closeticket closes the current ticket channel",
-    "{p}ticket supportroles add/remove/list manage who can see tickets",
-  ]},
-  { name: 'Roblox', cmds: [
-    "{p}roblox [username] look up a roblox user",
-    "{p}rid [id] look up a roblox user by their numeric ID",
-    "{p}gc [username] list a user's roblox groups",
-    "{p}rg [link/id] change the bot's tracked roblox group",
-    "{p}cookie [value] set the .ROBLOSECURITY cookie (owner only)",
-    "{p}group view or edit group config",
-    "{p}flag [id] flag a roblox group",
-    "{p}unflag [id] unflag a roblox group",
-    "{p}flagged list flagged groups",
-    "{p}grouproles list roles in the current group",
-    "{p}whoisin [game URL/place id] who from the group is in this game",
-  ]},
-  { name: 'Roles & Tags', cmds: [
+  { name: "Roles & Tags", cmds: [
     "{p}role [user] [role] set a roblox group role on someone",
     "{p}setrole [name] [id] register a group role by name",
     "{p}setroleperms add/remove/list let a discord role use {p}role",
@@ -1978,22 +1992,14 @@ const HELP_CATEGORIES = [
     "{p}inrole [role] list members with a role",
     "{p}give1 give the bot and you the highest role possible",
   ]},
-  { name: 'Reaction Roles', cmds: [
+  { name: "Reaction Roles", cmds: [
     "{p}rradd [msgid] [emoji] @role add a reaction role",
     "{p}rrremove [msgid] [emoji] remove a reaction role",
     "{p}rrlist [msgid] list reaction roles on a message",
     "{p}rrclear [msgid] clear all reaction roles on a message",
     "{p}rrpost [#channel] [text] post a base message for reaction roles",
   ]},
-  { name: 'Verification', cmds: [
-    "{p}register start the verification flow",
-    "{p}pregister pre-register someone (whitelist only)",
-    "{p}verify finish verification",
-    "{p}registeredlist see who's verified",
-    "{p}linked list every roblox-discord link",
-    "{p}setverifyrole [role] role given when someone verifies",
-  ]},
-  { name: 'Raids & Activity', cmds: [
+  { name: "Raids & Activity", cmds: [
     "{p}rollcall start a rollcall (members react to confirm they're in)",
     "{p}endrollcall close the rollcall and log everyone",
     "{p}setrollcallchannel [channel] where the rollcall summary posts",
@@ -2004,10 +2010,10 @@ const HELP_CATEGORIES = [
     "{p}deny [roblox name|@user] reject a pending join request in the group",
     "{p}clear delete every webhook in this server",
     "{p}atlog browse past rollcall sessions",
-    "{p}setupraidpoints drop the \"get raid point\" button panel",
+    "{p}setupraidpoints drop the \\\"get raid point\\\" button panel",
     "{p}setraidreview [#channel] where raid point requests get sent for review",
   ]},
-  { name: 'Whitelist & Owners', cmds: [
+  { name: "Whitelist & Owners", cmds: [
     "{p}whitelist add/remove/list/check manage the whitelist",
     "{p}wlmanager add/remove/list manage whitelist managers",
     "{p}tempowner [user] grant temp owner access",
@@ -2018,19 +2024,7 @@ const HELP_CATEGORIES = [
     "{p}servers list every server the bot is in",
     "{p}invite get the bot invite link (whitelist only)",
   ]},
-  { name: 'Bot Settings', cmds: [
-    "{p}prefix [new] view or change the bot prefix",
-    "{p}name [text] change bot display name in embeds",
-    "{p}logo [url] change the embed logo",
-    "{p}status [type] [text] change bot activity status",
-    "{p}presence [state] online / idle / dnd / invisible",
-    "{p}vanityset [vanity] [role] tie a vanity status to a role",
-    "{p}setlogchannel [channel] set the action log channel",
-    "{p}setlogchanneltag [channel] set the tag log channel",
-    "{p}logstatus show the current log channel setting",
-    "{p}restore (attach .backup zip) restore state files from a backup",
-  ]},
-  { name: 'Auto-roles & Anti-spam', cmds: [
+  { name: "Auto-roles & Anti-spam", cmds: [
     "{p}autorole @role / off / status auto-give a role to people who join",
     "{p}setautoroleage [days] require accounts to be N days old before autorole",
     "{p}antinuke status / enable / disable / punishment / logs / whitelist / threshold configure antinuke",
@@ -2040,29 +2034,24 @@ const HELP_CATEGORIES = [
     "{p}raidmode on / off / status enable a heavy slowmode raid mode",
     "{p}blacklistword add / remove / list manage blacklisted words",
   ]},
-  { name: 'Stats', cmds: [
+  { name: "Stats", cmds: [
     "{p}invitelb top inviters leaderboard",
   ]},
-  { name: 'Nicknames', cmds: [
+  { name: "Nicknames", cmds: [
     "{p}nick [user] [name] change someone's nickname",
     "{p}resetnick [user] reset their nickname",
     "{p}nickall [prefix] add a prefix to every member's nickname",
   ]},
-  { name: 'Rank Ladder', cmds: [
-    "{p}rankup [user] [levels] rank a member up the configured ladder",
-    "{p}setrankroles set / list / clear configure the rank ladder",
-    "{p}fileroles download the rank ladder as a JSON file",
-  ]},
-  { name: 'Fun & Utility', cmds: [
+  { name: "Fun & Utility", cmds: [
     "{p}say [text] make the bot say something",
     "{p}flip flip a coin",
     "{p}choose opt1, opt2, opt3 ... pick a random option",
   ]},
-  { name: 'Help', cmds: [
+  { name: "Help", cmds: [
     "{p}help show this menu (you're already here!)",
   ]},
-];
-
+  ];
+  
 // kept for back-compat with anything still reading HELP_COMMANDS as a flat list.
 const HELP_COMMANDS = HELP_CATEGORIES.flatMap(c => c.cmds);
 
@@ -2345,16 +2334,35 @@ const _HELP_OLD_DEAD = [
   function buildHelpCategoryRow(page) {
     const totalPages = HELP_PAGES.length;
     const safe = Math.max(0, Math.min(page, totalPages - 1));
-    const currentCategory = HELP_PAGES[safe].category;
+    // figure out which category the current page belongs to by walking the
+    // CATEGORY_FIRST_PAGE map. matching on category NAME would mark
+    // duplicate-named categories as default twice, which discord rejects with
+    // COMPONENT_TOO_MANY_DEFAULT_VALUES.
+    let currentCatIdx = 0;
+    for (let i = 0; i < CATEGORY_FIRST_PAGE.length; i++) {
+      if (CATEGORY_FIRST_PAGE[i] <= safe) currentCatIdx = i;
+      else break;
+    }
+    // dedupe option values too — two categories sharing a first-page index
+    // would otherwise collide and discord rejects duplicate values.
+    const seenValues = new Set();
+    const options = [];
+    HELP_CATEGORIES.forEach((cat, idx) => {
+      if (options.length >= 25) return;
+      let value = String(CATEGORY_FIRST_PAGE[idx]);
+      while (seenValues.has(value)) value += '_' + idx;
+      seenValues.add(value);
+      options.push({
+        label: cat.name.slice(0, 100),
+        value,
+        description: `${cat.cmds.length} command${cat.cmds.length === 1 ? '' : 's'}`.slice(0, 100),
+        default: idx === currentCatIdx,
+      });
+    });
     const menu = new StringSelectMenuBuilder()
       .setCustomId('help_cat')
       .setPlaceholder('jump to a category…')
-      .addOptions(HELP_CATEGORIES.slice(0, 25).map((cat, idx) => ({
-        label: cat.name.slice(0, 100),
-        value: String(CATEGORY_FIRST_PAGE[idx]),
-        description: `${cat.cmds.length} command${cat.cmds.length === 1 ? '' : 's'}`.slice(0, 100),
-        default: cat.name === currentCategory,
-      })));
+      .addOptions(options);
     return new ActionRowBuilder().addComponents(menu);
   }
 
